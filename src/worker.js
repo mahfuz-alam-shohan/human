@@ -1854,26 +1854,31 @@ function serveSharedHtml(token) {
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <style>
     .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(10px); }
+    body { overflow-x: hidden; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .content-shell { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    @media (min-width: 768px) { .content-shell { padding: 2.25rem 2.5rem; } }
+    .info-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+    .info-value { text-align: right; word-break: break-word; }
   </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100">
-  <div class="max-w-5xl mx-auto p-4 md:p-8">
-    <header class="flex items-center justify-between mb-6">
+<body class="min-h-screen bg-slate-950 text-slate-100 overflow-x-hidden">
+  <div class="content-shell">
+    <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
       <div>
         <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Secure Share</p>
         <h1 class="text-2xl font-black text-white">View-Only Dossier</h1>
       </div>
-      <div class="text-right">
+      <div class="text-left md:text-right">
         <p class="text-xs text-slate-500">Link ID</p>
-        <p class="font-mono text-sm text-indigo-300">${token}</p>
+        <p class="font-mono text-sm text-indigo-300 break-all">${token}</p>
       </div>
     </header>
 
     <div id="status" class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
 
-    <section id="content" class="hidden space-y-6">
-      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row gap-4">
-        <img id="avatar" class="w-24 h-24 rounded-2xl object-cover border border-slate-800" alt="Subject portrait">
+    <section id="content" class="hidden space-y-5 sm:space-y-6">
+      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row gap-4 items-start">
+        <img id="avatar" class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border border-slate-800 flex-shrink-0" alt="Subject portrait">
         <div class="flex-1">
           <p class="text-xs uppercase text-slate-500">Subject</p>
           <h2 id="name" class="text-2xl font-bold text-white"></h2>
@@ -1887,13 +1892,13 @@ function serveSharedHtml(token) {
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-3">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Core Details</h3>
-          <div class="text-sm text-slate-300" id="core"></div>
+          <div class="text-sm text-slate-300 space-y-2" id="core"></div>
         </div>
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-3">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Contact & Digital</h3>
-          <div class="text-sm text-slate-300" id="contact"></div>
+          <div class="text-sm text-slate-300 space-y-2" id="contact"></div>
         </div>
       </div>
 
@@ -1929,6 +1934,9 @@ function serveSharedHtml(token) {
       else img.src = 'https://ui-avatars.com/api/?name=Subject&background=random';
     };
 
+    const infoRow = (label, value, highlight = false) =>
+      '<div class="info-row"><span class="text-slate-400">' + label + '</span><span class="info-value ' + (highlight ? 'text-indigo-300' : 'text-white') + '">' + value + '</span></div>';
+
     const addList = (el, items, emptyText, renderer) => {
       if (!items.length) {
         el.innerHTML = '<p class="text-sm text-slate-500">' + emptyText + '</p>';
@@ -1955,16 +1963,16 @@ function serveSharedHtml(token) {
         setAvatar(data.avatar_path);
 
         document.getElementById('core').innerHTML =
-          '<div class="flex justify-between"><span class="text-slate-400">DOB</span><span class="text-white">' + (data.dob || '—') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">Last Sighted</span><span class="text-white">' + (data.last_sighted || 'Unknown') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">Nationality</span><span class="text-white">' + (data.nationality || '—') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">MBTI</span><span class="text-white">' + (data.mbti || '—') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">Alignment</span><span class="text-white">' + (data.alignment || '—') + '</span></div>';
+          infoRow('DOB', data.dob || '—') +
+          infoRow('Last Sighted', data.last_sighted || 'Unknown') +
+          infoRow('Nationality', data.nationality || '—') +
+          infoRow('MBTI', data.mbti || '—') +
+          infoRow('Alignment', data.alignment || '—');
 
         document.getElementById('contact').innerHTML =
-          '<div class="flex justify-between"><span class="text-slate-400">Contact</span><span class="text-white">' + (data.contact || '—') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">Social Links</span><span class="text-indigo-300">' + (data.social_links || '—') + '</span></div>' +
-          '<div class="flex justify-between"><span class="text-slate-400">Digital IDs</span><span class="text-indigo-300">' + (data.digital_identifiers || '—') + '</span></div>';
+          infoRow('Contact', data.contact || '—') +
+          infoRow('Social Links', data.social_links || '—', true) +
+          infoRow('Digital IDs', data.digital_identifiers || '—', true);
 
         addList(document.getElementById('intel'), data.dataPoints || [], 'No intelligence entries yet.', (item) => {
           const card = document.createElement('div');
