@@ -1,6 +1,9 @@
+name = "human-observation"
+main = "src/worker.js"
+compatibility_date = "2024-07-20"
 
-
-
+[placement]
+mode = "smart"
 
 [[d1_databases]]
 binding = "DB"
