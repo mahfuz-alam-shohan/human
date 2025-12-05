@@ -1,16 +1,11 @@
 const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
-const ALLOWED_ORIGINS = ['*']; // Adjust for production security
-const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB limit check
+const ALLOWED_ORIGINS = ['*']; 
+const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB limit
 
 // --- Schema Definitions ---
-// We define the tables here to ensure they exist.
-// New features: 'parent_id' in data_points for nesting, 'avatar_path' in subjects.
-
 const MIGRATIONS = [
-  // 1. Ensure basic tables exist (Idempotent checks done in ensureSchema)
-  // 2. Add new columns if they are missing (Safe Migration)
   "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
   "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
   "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0"
@@ -52,7 +47,6 @@ function errorResponse(msg, status = 500) {
 
 async function ensureSchema(db) {
   try {
-      // Core Tables
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
@@ -76,7 +70,7 @@ async function ensureSchema(db) {
         )`)
       ]);
 
-      // Apply Migrations (Safe Alter)
+      // Safe Migrations
       for (const query of MIGRATIONS) {
         try { await db.prepare(query).run(); } catch(e) { /* Ignore if column exists */ }
       }
@@ -88,7 +82,6 @@ async function ensureSchema(db) {
 // --- API Handlers ---
 
 async function handleGetGraph(db, adminId) {
-    // Fetches all nodes and edges for the graph view
     const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
     const rels = await db.prepare(`
         SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
@@ -106,7 +99,6 @@ async function handleGetSubjectFull(db, id) {
 
     const [media, dataPoints, events, relationships] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-        // Get all data points, UI will handle nesting
         db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         db.prepare(`
@@ -125,7 +117,31 @@ async function handleGetSubjectFull(db, id) {
     });
 }
 
-// --- Frontend Application (Served via Template String) ---
+async function handleUpdateSubject(req, db, id) {
+    const p = await req.json();
+    const allowed = ['full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 'religion', 'location', 'contact', 'habits', 'notes'];
+    const updates = Object.keys(p).filter(k => allowed.includes(k));
+    
+    if (updates.length === 0) return response({ success: true });
+
+    const setClause = updates.map((k, i) => `${k} = ?${i+1}`).join(', ');
+    const values = updates.map(k => p[k]);
+    // Append timestamp and ID for WHERE clause
+    values.push(isoTimestamp(), id);
+
+    // Dynamic query construction
+    const query = `UPDATE subjects SET ${setClause}, updated_at = ?${values.length-1} WHERE id = ?${values.length}`;
+    await db.prepare(query).bind(...values).run();
+    return response({ success: true });
+}
+
+async function handleDeleteItem(req, db, table, id) {
+    // Basic security check could go here
+    await db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+    return response({ success: true });
+}
+
+// --- Frontend Application ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -137,68 +153,29 @@ function serveHtml() {
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <!-- Vue 3 -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-  <!-- Vis.js for Graph -->
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   
   <style>
     body { font-family: 'Inter', sans-serif; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
-    
-    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
-    
-    /* Animations */
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
-    
     .slide-up-enter-active { transition: all 0.3s ease-out; }
     .slide-up-enter-from { opacity: 0; transform: translateY(20px); }
-
-    /* Graph Container */
     #network-graph { width: 100%; height: 100%; outline: none; }
-    
-    /* Image Grid Frames */
-    .evidence-frame {
-        aspect-ratio: 1 / 1;
-        overflow: hidden;
-        position: relative;
-        cursor: zoom-in;
-    }
-    .evidence-frame img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        transition: transform 0.5s ease;
-    }
+    .evidence-frame { aspect-ratio: 1 / 1; overflow: hidden; position: relative; cursor: zoom-in; }
+    .evidence-frame img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s ease; }
     .evidence-frame:hover img { transform: scale(1.05); }
-
-    /* Nested Tree Lines */
-    .tree-line {
-        position: absolute;
-        left: -18px;
-        top: 0;
-        bottom: 0;
-        width: 2px;
-        background-color: #e2e8f0;
-    }
-    .tree-branch {
-        position: absolute;
-        left: -18px;
-        top: 18px;
-        width: 16px;
-        height: 2px;
-        background-color: #e2e8f0;
-    }
   </style>
 </head>
 <body class="h-full text-slate-800 antialiased overflow-hidden">
   <div id="app" class="h-full flex flex-col">
 
-    <!-- Lightbox (Global) -->
+    <!-- Lightbox -->
     <transition name="fade">
         <div v-if="lightbox.active" @click="lightbox.active = null" class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4">
             <img :src="lightbox.url" class="max-h-full max-w-full rounded-lg shadow-2xl object-contain" />
@@ -209,7 +186,7 @@ function serveHtml() {
         </div>
     </transition>
 
-    <!-- App Content -->
+    <!-- Auth View -->
     <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white relative">
         <div class="w-full max-w-md p-8">
             <div class="text-center mb-10">
@@ -230,17 +207,16 @@ function serveHtml() {
         </div>
     </div>
 
+    <!-- Main App -->
     <div v-else class="flex-1 flex h-full overflow-hidden">
-        <!-- Sidebar -->
         <aside class="w-20 lg:w-64 flex flex-col bg-white border-r border-slate-200 z-20 shadow-xl">
             <div class="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-slate-100">
                 <i class="fa-solid fa-dna text-indigo-600 text-xl lg:mr-3"></i>
                 <span class="hidden lg:block font-bold text-slate-800 tracking-tight">OBSERVER</span>
             </div>
-            
             <nav class="flex-1 p-3 space-y-2 overflow-y-auto">
                 <template v-for="item in menuItems">
-                    <a @click="currentTab = item.id; if(item.action) item.action()" 
+                    <a @click="switchTab(item.id, item.action)" 
                        :class="currentTab === item.id ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'"
                        class="flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all group select-none">
                         <div class="w-8 flex justify-center"><i :class="item.icon" class="text-lg transition-transform group-hover:scale-110"></i></div>
@@ -248,7 +224,6 @@ function serveHtml() {
                     </a>
                 </template>
             </nav>
-            
             <div class="p-4 border-t border-slate-100">
                 <button @click="logout" class="flex items-center w-full px-3 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all">
                     <i class="fa-solid fa-power-off w-8"></i>
@@ -257,13 +232,11 @@ function serveHtml() {
             </div>
         </aside>
 
-        <!-- Main Viewport -->
         <main class="flex-1 flex flex-col relative bg-slate-100 overflow-hidden">
             
-            <!-- Graph View (Canvas) -->
+            <!-- Graph View -->
             <div v-show="currentTab === 'graph'" class="absolute inset-0 z-0 bg-slate-100">
-                <div id="network-graph" class="w-full h-full"></div>
-                <!-- Graph Controls -->
+                <div id="network-graph"></div>
                 <div class="absolute top-4 left-4 bg-white/90 backdrop-blur p-4 rounded-xl shadow-lg border border-slate-200 z-10 w-72">
                     <h3 class="font-bold text-slate-700 mb-2 flex items-center"><i class="fa-solid fa-diagram-project mr-2 text-indigo-500"></i> Relation Map</h3>
                     <input v-model="graphSearch" placeholder="Search entity..." class="w-full text-sm p-2 border border-slate-300 rounded-lg bg-slate-50 mb-2">
@@ -274,24 +247,30 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- Dashboard / List View -->
+            <!-- Subject Directory -->
             <div v-if="currentTab === 'subjects'" class="flex-1 overflow-y-auto p-6 md:p-8">
                 <div class="max-w-7xl mx-auto">
-                    <div class="flex justify-between items-center mb-8">
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
                         <div>
                             <h1 class="text-3xl font-extrabold text-slate-900">Subject Directory</h1>
                             <p class="text-slate-500 text-sm mt-1">Manage profiles and avatars.</p>
                         </div>
-                        <button @click="currentTab = 'add'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 flex items-center transition-all">
-                            <i class="fa-solid fa-plus mr-2"></i> New Profile
-                        </button>
+                        <div class="flex gap-3 w-full md:w-auto">
+                            <input v-model="searchQuery" placeholder="Filter subjects..." class="bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none flex-1 md:w-64">
+                            <button @click="currentTab = 'add'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 flex items-center transition-all whitespace-nowrap">
+                                <i class="fa-solid fa-plus mr-2"></i> New
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-if="filteredSubjects.length === 0" class="text-center py-20 text-slate-400">
+                        <i class="fa-solid fa-user-slash text-4xl mb-4 opacity-50"></i>
+                        <p>No subjects found.</p>
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
                              class="bg-white group hover:-translate-y-1 hover:shadow-xl transition-all duration-300 cursor-pointer rounded-2xl border border-slate-200 overflow-hidden relative">
-                             
-                             <!-- Avatar Header -->
                              <div class="h-32 bg-slate-100 relative">
                                 <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
                                 <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-slate-200">
@@ -299,23 +278,18 @@ function serveHtml() {
                                 </div>
                                 <div class="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-black/60 to-transparent"></div>
                              </div>
-
                              <div class="p-5 relative -mt-8">
                                 <div class="bg-white w-14 h-14 rounded-xl shadow-lg flex items-center justify-center absolute -top-8 right-5 border-2 border-white">
                                     <span class="text-xl font-bold text-indigo-600">{{ s.full_name.charAt(0) }}</span>
                                 </div>
-                                
                                 <h3 class="text-lg font-bold text-slate-900 leading-tight pr-10 truncate">{{ s.full_name }}</h3>
                                 <p class="text-xs text-slate-500 font-mono mt-1 mb-3">ID-{{ String(s.id).padStart(4, '0') }}</p>
-                                
                                 <div class="space-y-1.5">
                                     <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
-                                        <i class="fa-solid fa-briefcase w-5 text-indigo-400"></i>
-                                        <span class="truncate">{{ s.occupation || 'No Occupation' }}</span>
+                                        <i class="fa-solid fa-briefcase w-5 text-indigo-400"></i><span class="truncate">{{ s.occupation || '—' }}</span>
                                     </div>
                                     <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
-                                        <i class="fa-solid fa-location-dot w-5 text-rose-400"></i>
-                                        <span class="truncate">{{ s.location || 'Unknown Location' }}</span>
+                                        <i class="fa-solid fa-location-dot w-5 text-rose-400"></i><span class="truncate">{{ s.location || '—' }}</span>
                                     </div>
                                 </div>
                              </div>
@@ -326,8 +300,6 @@ function serveHtml() {
 
             <!-- Detail View -->
             <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 overflow-hidden flex flex-col md:flex-row">
-                
-                <!-- Left Panel: Identity & Controls (Fixed) -->
                 <div class="w-full md:w-96 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0 z-10 shadow-lg">
                     <div class="p-6">
                         <button @click="currentTab = 'subjects'" class="text-xs font-bold text-slate-400 hover:text-indigo-600 flex items-center mb-6 transition-colors">
@@ -348,25 +320,23 @@ function serveHtml() {
                         </div>
 
                         <div class="mt-4">
-                            <h2 class="text-2xl font-black text-slate-900">{{ selectedSubject.full_name }}</h2>
+                            <h2 class="text-2xl font-black text-slate-900 break-words">{{ selectedSubject.full_name }}</h2>
                             <div class="flex flex-wrap gap-2 mt-2">
-                                <span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold border border-indigo-100">{{ selectedSubject.occupation || 'N/A' }}</span>
-                                <span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold border border-slate-200">Age: {{ selectedSubject.age || '?' }}</span>
+                                <span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold border border-indigo-100 cursor-pointer hover:bg-indigo-100" @click="editCore('occupation', 'Occupation')">{{ selectedSubject.occupation || 'Add Occupation' }}</span>
+                                <span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold border border-slate-200 cursor-pointer hover:bg-slate-200" @click="editCore('age', 'Age')">Age: {{ selectedSubject.age || '?' }}</span>
                             </div>
                         </div>
 
                         <div class="mt-8 space-y-6">
-                            <!-- Core Fields Editing -->
-                            <div v-for="field in ['Nationality', 'Religion', 'Location', 'Contact']" :key="field">
+                            <div v-for="field in ['Nationality', 'Religion', 'Location', 'Contact', 'Education']" :key="field">
                                 <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{{ field }}</label>
-                                <div class="text-sm font-medium text-slate-800 border-b border-slate-100 pb-1 flex justify-between group">
-                                    <span>{{ selectedSubject[field.toLowerCase()] || '—' }}</span>
-                                    <i @click="editCore(field.toLowerCase())" class="fa-solid fa-pen text-slate-300 hover:text-indigo-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                                <div class="text-sm font-medium text-slate-800 border-b border-slate-100 pb-1 flex justify-between group cursor-pointer" @click="editCore(field.toLowerCase(), field)">
+                                    <span class="truncate pr-2">{{ selectedSubject[field.toLowerCase()] || '—' }}</span>
+                                    <i class="fa-solid fa-pen text-slate-300 hover:text-indigo-500 transition-colors"></i>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Action Buttons -->
                         <div class="grid grid-cols-2 gap-3 mt-8">
                             <button @click="openAddModal('media')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
                                 <i class="fa-solid fa-camera text-xl text-emerald-500"></i> Evidence
@@ -384,10 +354,8 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- Right Panel: Deep Data & Evidence -->
                 <div class="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-8">
-                    
-                    <!-- Evidence Grid (Fixed Frames) -->
+                    <!-- Evidence -->
                     <section v-if="selectedSubject.media && selectedSubject.media.length" class="mb-10">
                         <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
                             <i class="fa-solid fa-images mr-2"></i> Visual Evidence
@@ -408,45 +376,46 @@ function serveHtml() {
                             <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center">
                                 <i class="fa-solid fa-fingerprint mr-2"></i> Deep Details
                             </h3>
-                            <span class="text-[10px] text-slate-400">Click items to elaborate</span>
+                            <span class="text-[10px] text-slate-400">Click items to elaborate • Click <i class="fa-solid fa-trash text-rose-400"></i> to remove</span>
                         </div>
 
                         <div class="space-y-4">
-                            <!-- Recursive Tree Component Logic handled in template via v-for -->
                             <div v-for="node in dataTree" :key="node.id" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                                <!-- Top Level Item -->
-                                <div class="p-4 flex justify-between items-start hover:bg-indigo-50/30 transition-colors cursor-pointer" @click="toggleNode(node.id)">
-                                    <div>
+                                <div class="p-4 flex justify-between items-start hover:bg-indigo-50/30 transition-colors cursor-pointer select-none" @click="toggleNode(node.id)">
+                                    <div class="flex-1">
                                         <div class="flex items-center gap-2">
+                                            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400 transition-transform duration-200" :class="{'rotate-90': expandedState[node.id] !== false}"></i>
                                             <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 uppercase border border-slate-200">{{ node.category }}</span>
                                             <h4 class="font-bold text-slate-800 text-sm">{{ node.label }}</h4>
                                         </div>
-                                        <div class="mt-1 text-slate-700 text-sm font-mono">{{ node.value }}</div>
-                                        <div v-if="node.analysis" class="mt-2 text-xs text-indigo-600 italic border-l-2 border-indigo-200 pl-2">
-                                            "{{ node.analysis }}"
-                                        </div>
+                                        <div class="mt-1 ml-6 text-slate-700 text-sm font-mono whitespace-pre-wrap">{{ node.value }}</div>
+                                        <div v-if="node.analysis" class="mt-2 ml-6 text-xs text-indigo-600 italic border-l-2 border-indigo-200 pl-2">"{{ node.analysis }}"</div>
                                     </div>
-                                    <button @click.stop="openAddModal('data', node.id)" class="text-slate-300 hover:text-indigo-600 transition-colors" title="Add nested detail">
-                                        <i class="fa-solid fa-plus-circle text-lg"></i>
-                                    </button>
+                                    <div class="flex items-center gap-2">
+                                        <button @click.stop="openAddModal('data', node.id)" class="text-slate-300 hover:text-indigo-600 transition-colors p-2" title="Add sub-detail">
+                                            <i class="fa-solid fa-plus-circle text-lg"></i>
+                                        </button>
+                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="text-slate-300 hover:text-rose-500 transition-colors p-2" title="Delete">
+                                            <i class="fa-solid fa-trash text-sm"></i>
+                                        </button>
+                                    </div>
                                 </div>
 
-                                <!-- Children (Recursive Render) -->
-                                <div v-if="node.children && node.children.length && node.expanded" class="bg-slate-50 border-t border-slate-100 p-2 pl-6 space-y-2 relative">
+                                <div v-if="node.children && node.children.length && expandedState[node.id] !== false" class="bg-slate-50 border-t border-slate-100 p-2 pl-6 space-y-2 relative">
                                     <div v-for="child in node.children" :key="child.id" class="relative pl-4 pt-2">
-                                        <!-- Visual Tree Lines -->
                                         <div class="absolute left-0 top-0 bottom-0 w-[1px] bg-indigo-200"></div>
                                         <div class="absolute left-0 top-5 w-3 h-[1px] bg-indigo-200"></div>
-                                        
                                         <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm relative group">
-                                            <div class="flex justify-between">
-                                                <span class="text-xs font-bold text-indigo-600">{{ child.label }}</span>
-                                                <button @click.stop="openAddModal('data', child.id)" class="text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <i class="fa-solid fa-reply fa-flip-horizontal"></i>
-                                                </button>
+                                            <div class="flex justify-between items-start">
+                                                <div>
+                                                    <span class="text-xs font-bold text-indigo-600 block">{{ child.label }}</span>
+                                                    <span class="text-sm text-slate-800 mt-1 block whitespace-pre-wrap">{{ child.value }}</span>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button @click.stop="openAddModal('data', child.id)" class="text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-reply fa-flip-horizontal"></i></button>
+                                                    <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
+                                                </div>
                                             </div>
-                                            <p class="text-sm text-slate-800 mt-1">{{ child.value }}</p>
-                                            <!-- Recursion limit: 2 levels deep for UI simplicity, but backend supports infinite -->
                                             <div v-if="child.children && child.children.length" class="mt-2 pl-2 border-l border-slate-200 text-xs text-slate-500">
                                                 <div v-for="grand in child.children" class="mt-1">
                                                     <strong class="text-slate-700">{{ grand.label }}:</strong> {{ grand.value }}
@@ -459,7 +428,7 @@ function serveHtml() {
                         </div>
                     </section>
 
-                    <!-- Events & Timeline -->
+                    <!-- Timeline -->
                      <section>
                         <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
                             <i class="fa-solid fa-clock-rotate-left mr-2"></i> Timeline
@@ -467,8 +436,11 @@ function serveHtml() {
                         <div class="relative border-l-2 border-slate-200 ml-3 space-y-8 pb-10">
                             <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-8">
                                 <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-white border-2 border-amber-400"></div>
-                                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-                                    <span class="text-xs font-mono text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded">{{ e.event_date }}</span>
+                                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow group">
+                                    <div class="flex justify-between">
+                                        <span class="text-xs font-mono text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded">{{ e.event_date }}</span>
+                                        <button @click="deleteItem('subject_events', e.id)" class="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                                    </div>
                                     <h4 class="font-bold text-slate-900 mt-2">{{ e.title }}</h4>
                                     <p class="text-sm text-slate-600 mt-1">{{ e.description }}</p>
                                 </div>
@@ -521,6 +493,13 @@ function serveHtml() {
                 </div>
                 
                 <div class="p-6">
+                    <!-- Edit Core Field Modal -->
+                    <form v-if="modal.type === 'edit-core'" @submit.prevent="submitEditCore" class="space-y-4">
+                        <label class="text-xs font-bold text-slate-500 uppercase">{{ modal.fieldLabel }}</label>
+                        <input v-model="forms.edit.value" class="w-full border border-slate-300 rounded-lg p-3 text-lg" :placeholder="'Enter ' + modal.fieldLabel" autofocus>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700">Update Profile</button>
+                    </form>
+
                     <!-- Data Point Form -->
                     <form v-if="modal.type === 'data'" @submit.prevent="submitData" class="space-y-4">
                         <div v-if="modal.parentId" class="bg-indigo-50 p-3 rounded-lg text-xs text-indigo-700 flex items-center mb-4">
@@ -582,6 +561,23 @@ function serveHtml() {
                         </div>
                          <button type="submit" class="w-full bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600">Connect</button>
                     </form>
+
+                     <!-- Event Form -->
+                    <form v-if="modal.type === 'event'" @submit.prevent="submitEvent" class="space-y-4">
+                        <div>
+                            <label class="text-xs font-bold text-slate-500 uppercase">Date</label>
+                            <input type="date" v-model="forms.event.date" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-500 uppercase">Title</label>
+                            <input v-model="forms.event.title" placeholder="e.g. Graduated" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
+                        </div>
+                        <div>
+                             <label class="text-xs font-bold text-slate-500 uppercase">Description</label>
+                            <textarea v-model="forms.event.desc" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1 h-20"></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-amber-500 text-white py-3 rounded-xl font-bold hover:bg-amber-600">Log Event</button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -590,7 +586,7 @@ function serveHtml() {
   </div>
 
   <script>
-    const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
 
     createApp({
       setup() {
@@ -600,24 +596,29 @@ function serveHtml() {
         const loading = ref(false);
         const uploading = ref(false);
         const subjects = ref([]);
+        const searchQuery = ref('');
         const selectedSubject = ref(null);
         const lightbox = reactive({ active: false, url: '', desc: '' });
         
-        // Graph State
+        // Graph
         const graphSearch = ref('');
         let network = null;
 
         // Auth
         const auth = reactive({ email: '', password: '' });
         
-        // Modal State
-        const modal = reactive({ type: null, parentId: null });
+        // Modals
+        const modal = reactive({ type: null, parentId: null, field: null, fieldLabel: null });
         const modalTitle = computed(() => {
             if(modal.type === 'data') return modal.parentId ? 'Add Sub-Detail' : 'Add Detail';
             if(modal.type === 'media') return 'Upload Evidence';
             if(modal.type === 'rel') return 'Add Connection';
+            if(modal.type === 'edit-core') return 'Edit Profile';
+            if(modal.type === 'event') return 'Log Event';
             return 'Action';
         });
+
+        const expandedState = reactive({}); // Tracks tree expansion
 
         // Forms
         const newSubject = reactive({ fullName: '', occupation: '', location: '' });
@@ -625,51 +626,49 @@ function serveHtml() {
             data: { category: 'Physical', label: '', value: '', analysis: '' },
             media: { data: null, desc: '', preview: null, filename: '', type: '' },
             rel: { subjectB: '', type: '' },
-            event: { title: '', date: '', desc: '' }
+            event: { title: '', date: '', desc: '' },
+            edit: { value: '' }
         });
 
-        // Helpers
         const menuItems = [
             { id: 'subjects', label: 'Directory', icon: 'fa-solid fa-folder-open' },
             { id: 'graph', label: 'Relations Graph', icon: 'fa-solid fa-diagram-project', action: loadGraph },
         ];
 
-        // API Wrapper
+        // API
         const api = async (url, opts = {}) => {
-            const res = await fetch(url, opts);
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Request failed');
-            return data;
+            try {
+                const res = await fetch(url, opts);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Request failed');
+                return data;
+            } catch (e) {
+                alert(e.message);
+                throw e;
+            }
         };
 
-        // --- Data Logic ---
+        // Data Logic
+        const filteredSubjects = computed(() => {
+            if (!searchQuery.value) return subjects.value;
+            const q = searchQuery.value.toLowerCase();
+            return subjects.value.filter(s => s.full_name.toLowerCase().includes(q) || (s.occupation && s.occupation.toLowerCase().includes(q)));
+        });
 
         const dataTree = computed(() => {
             if (!selectedSubject.value || !selectedSubject.value.dataPoints) return [];
             const raw = selectedSubject.value.dataPoints;
             const map = {};
             const roots = [];
-            
-            // First pass: create nodes
+            raw.forEach(item => map[item.id] = { ...item, children: [] });
             raw.forEach(item => {
-                map[item.id] = { ...item, children: [], expanded: true }; // Expanded by default
-            });
-            
-            // Second pass: link parents
-            raw.forEach(item => {
-                if (item.parent_id && map[item.parent_id]) {
-                    map[item.parent_id].children.push(map[item.id]);
-                } else {
-                    roots.push(map[item.id]);
-                }
+                if (item.parent_id && map[item.parent_id]) map[item.parent_id].children.push(map[item.id]);
+                else roots.push(map[item.id]);
             });
             return roots;
         });
-        
-        const filteredSubjects = computed(() => subjects.value); // Add search later if needed
 
-        // --- Methods ---
-
+        // Actions
         const handleAuth = async () => {
             loading.value = true;
             try {
@@ -678,7 +677,7 @@ function serveHtml() {
                 localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
                 fetchSubjects();
-            } catch (e) { alert(e.message); } 
+            } catch (e) {} 
             finally { loading.value = false; }
         };
 
@@ -688,10 +687,7 @@ function serveHtml() {
         };
 
         const createSubject = async () => {
-            await api('/api/subjects', {
-                method: 'POST',
-                body: JSON.stringify({ ...newSubject, adminId: localStorage.getItem('admin_id') })
-            });
+            await api('/api/subjects', { method: 'POST', body: JSON.stringify({ ...newSubject, adminId: localStorage.getItem('admin_id') }) });
             newSubject.fullName = '';
             fetchSubjects();
             currentTab.value = 'subjects';
@@ -702,13 +698,41 @@ function serveHtml() {
             currentTab.value = 'detail';
         };
 
-        const toggleNode = (id) => {
-             // Logic to toggle expansion could go here, relying on reactive map in real implementation
-             // For now we just default expand all
+        const switchTab = (tab, action) => {
+            currentTab.value = tab;
+            if (action) action();
         };
 
-        // --- Image Compression & Upload ---
-        // Solves "Data Upload Errors" by resizing large images client-side
+        const toggleNode = (id) => {
+            // Toggle explicit state, default is undefined (which we treat as true/open)
+            if (expandedState[id] === undefined) expandedState[id] = false;
+            else expandedState[id] = !expandedState[id];
+        };
+
+        const editCore = (field, label) => {
+            modal.type = 'edit-core';
+            modal.field = field;
+            modal.fieldLabel = label;
+            forms.edit.value = selectedSubject.value[field];
+        };
+
+        const submitEditCore = async () => {
+            await api('/api/subjects/' + selectedSubject.value.id, {
+                method: 'PATCH',
+                body: JSON.stringify({ [modal.field]: forms.edit.value })
+            });
+            const field = modal.field;
+            selectedSubject.value[field] = forms.edit.value; // Optimistic update
+            closeModal();
+            fetchSubjects(); // Refresh list background
+        };
+
+        const deleteItem = async (table, id) => {
+            if(!confirm("Are you sure you want to delete this item permanently?")) return;
+            await api('/api/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
+            viewSubject(selectedSubject.value.id); // Refresh
+        };
+
         const compressImage = (file) => {
             return new Promise((resolve) => {
                 const reader = new FileReader();
@@ -718,14 +742,13 @@ function serveHtml() {
                     img.src = e.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        const MAX_WIDTH = 1200; // Reasonable limit
-                        const scale = MAX_WIDTH / img.width;
-                        canvas.width = scale < 1 ? MAX_WIDTH : img.width;
-                        canvas.height = scale < 1 ? img.height * scale : img.height;
-                        
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.8).split(',')[1]); // Send base64
+                        const MAX = 1200; 
+                        let w = img.width, h = img.height;
+                        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } } 
+                        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
                     };
                 };
             });
@@ -758,130 +781,97 @@ function serveHtml() {
                 });
                 closeModal();
                 viewSubject(selectedSubject.value.id);
-            } catch(e) { alert("Upload failed: " + e.message); }
-            finally { uploading.value = false; }
+            } catch(e) {} finally { uploading.value = false; }
         };
 
-        // --- Graph Logic (Vis.js) ---
+        // Graph Logic
         async function loadGraph() {
             const id = localStorage.getItem('admin_id');
             const data = await api('/api/graph?adminId=' + id);
-            
             const container = document.getElementById('network-graph');
+            if(!container) return; // Tab switch race condition check
+            
             const nodes = data.nodes.map(n => ({
                 id: n.id,
                 label: n.full_name,
                 shape: 'circularImage',
                 image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name,
-                size: 30,
-                borderWidth: 2,
-                color: { border: '#6366f1', background: '#ffffff' }
+                size: 30, borderWidth: 2, color: { border: '#6366f1', background: '#fff' }
             }));
-            
             const edges = data.edges.map(e => ({
-                from: e.from_id,
-                to: e.to_id,
-                label: e.label,
-                arrows: 'to',
-                color: { color: '#cbd5e1' },
-                font: { size: 10, align: 'middle' },
-                smooth: { type: 'curvedCW', roundness: 0.2 }
+                from: e.from_id, to: e.to_id, label: e.label, arrows: 'to',
+                color: { color: '#cbd5e1' }, font: { size: 10, align: 'middle' }
             }));
-
-            const opts = {
+            
+            network = new vis.Network(container, { nodes, edges }, {
                 physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },
-                interaction: { hover: true, tooltipDelay: 200 }
-            };
-            
-            network = new vis.Network(container, { nodes, edges }, opts);
-            
-            network.on('click', (params) => {
-                if(params.nodes.length) viewSubject(params.nodes[0]);
+                interaction: { hover: true }
             });
+            network.on('click', (p) => { if(p.nodes.length) viewSubject(p.nodes[0]); });
         }
-
         const fitGraph = () => network && network.fit();
         const refreshGraph = () => loadGraph();
-
-        watch(graphSearch, (val) => {
-            // Simple visual search in graph
+        watch(graphSearch, (v) => {
             if(!network) return;
             const nodes = network.body.data.nodes.get();
-            const matches = nodes.filter(n => n.label.toLowerCase().includes(val.toLowerCase())).map(n => n.id);
+            const matches = nodes.filter(n => n.label.toLowerCase().includes(v.toLowerCase())).map(n => n.id);
             network.selectNodes(matches);
         });
 
-        // --- Modals & Avatars ---
+        // Modals
         const openAddModal = (type, parentId = null) => {
             modal.type = type;
             modal.parentId = parentId;
-            // Reset forms
             forms.data = { category: 'Physical', label: '', value: '', analysis: '' };
             forms.media = { data: null, desc: '', preview: null };
             forms.rel = { subjectB: '', type: '' };
+            forms.event = { title: '', date: '', desc: '' };
         };
-
         const closeModal = () => { modal.type = null; };
 
+        // Submits
         const submitData = async () => {
             uploading.value = true;
-            await api('/api/data-point', {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    ...forms.data, 
-                    subjectId: selectedSubject.value.id,
-                    parentId: modal.parentId // Support Nesting
-                })
-            });
-            uploading.value = false;
-            closeModal();
-            viewSubject(selectedSubject.value.id);
+            await api('/api/data-point', { method: 'POST', body: JSON.stringify({ ...forms.data, subjectId: selectedSubject.value.id, parentId: modal.parentId }) });
+            uploading.value = false; closeModal(); viewSubject(selectedSubject.value.id);
         };
-
         const submitRel = async () => {
-             await api('/api/relationship', {
-                method: 'POST',
-                body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id })
-            });
-            closeModal();
-            viewSubject(selectedSubject.value.id);
+             await api('/api/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
+             closeModal(); viewSubject(selectedSubject.value.id);
+        };
+        const submitEvent = async () => {
+             await api('/api/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
+             closeModal(); viewSubject(selectedSubject.value.id);
         };
         
-        // Avatar Special Handling
-        const triggerAvatarUpload = () => { document.querySelector('input[type="file"]').click(); };
+        // Avatar
+        const triggerAvatarUpload = () => document.querySelector('input[type="file"]').click();
         const handleAvatarUpload = async (e) => {
             const file = e.target.files[0];
             if(!file) return;
             const b64 = await compressImage(file);
-            await api('/api/upload-avatar', {
-                method: 'POST',
-                body: JSON.stringify({ subjectId: selectedSubject.value.id, data: b64, filename: file.name, contentType: 'image/jpeg' })
-            });
+            await api('/api/upload-avatar', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id, data: b64, filename: file.name, contentType: 'image/jpeg' }) });
             viewSubject(selectedSubject.value.id);
         };
 
-        // Init
         onMounted(async () => {
             try {
                 const status = await api('/api/status');
                 if(!status.adminExists) setupMode.value = true;
-                else {
-                    const saved = localStorage.getItem('admin_id');
-                    if(saved) {
-                        view.value = 'app';
-                        fetchSubjects();
-                    }
+                else if(localStorage.getItem('admin_id')) {
+                    view.value = 'app';
+                    fetchSubjects();
                 }
             } catch(e) {}
         });
 
         return {
-            view, setupMode, currentTab, loading, uploading, subjects, filteredSubjects, selectedSubject,
-            auth, newSubject, modal, modalTitle, forms, lightbox, menuItems, dataTree, graphSearch,
+            view, setupMode, currentTab, loading, uploading, subjects, filteredSubjects, selectedSubject, searchQuery,
+            auth, newSubject, modal, modalTitle, forms, lightbox, menuItems, dataTree, graphSearch, expandedState,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
-            createSubject, viewSubject, openAddModal, closeModal, submitData, submitRel, 
-            submitMedia, handleFileSelect, loadGraph, fitGraph, refreshGraph,
-            triggerAvatarUpload, handleAvatarUpload
+            createSubject, viewSubject, openAddModal, closeModal, submitData, submitRel, submitEvent,
+            submitMedia, handleFileSelect, loadGraph, fitGraph, refreshGraph, switchTab,
+            triggerAvatarUpload, handleAvatarUpload, editCore, submitEditCore, toggleNode, deleteItem
         };
       }
     }).mount('#app');
@@ -916,17 +906,13 @@ async function handleSetup(req, db) {
 
 async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
     const { subjectId, data, filename, contentType, description } = await req.json();
-    // 1. Upload to R2
     const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
     const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
     await bucket.put(key, binary, { httpMetadata: { contentType } });
     
-    // 2. Record in DB
     if (isAvatar) {
-        // Update subject avatar column
         await db.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
     } else {
-        // Add to media gallery
         await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?, ?, ?, ?, ?)')
             .bind(subjectId, key, contentType, description, isoTimestamp()).run();
     }
@@ -941,13 +927,10 @@ export default {
     const path = url.pathname;
 
     try {
-        // 1. serve frontend
         if (req.method === 'GET' && path === '/') return serveHtml();
-        
-        // 2. ensure DB
         if (path.startsWith('/api/')) await ensureSchema(env.DB);
         
-        // 3. route API
+        // Auth & Setup
         if (path === '/api/status') {
             const c = await env.DB.prepare('SELECT COUNT(*) as c FROM admins').first();
             return response({ adminExists: c.c > 0 });
@@ -955,6 +938,7 @@ export default {
         if (path === '/api/setup-admin') return handleSetup(req, env.DB);
         if (path === '/api/login') return handleLogin(req, env.DB);
         
+        // Subject Operations
         if (path === '/api/subjects') {
             if (req.method === 'POST') {
                 const p = await req.json();
@@ -963,17 +947,21 @@ export default {
                 return response({ success: true });
             }
             const adminId = url.searchParams.get('adminId');
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? ORDER BY created_at DESC').bind(adminId).all();
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(adminId).all();
             return response(res.results);
         }
 
-        if (path.match(/^\/api\/subjects\/\d+$/)) {
-             return handleGetSubjectFull(env.DB, path.split('/').pop());
+        // Single Subject Get/Update
+        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (idMatch) {
+             const id = idMatch[1];
+             if (req.method === 'PATCH') return handleUpdateSubject(req, env.DB, id);
+             return handleGetSubjectFull(env.DB, id);
         }
 
+        // Sub-Resources
         if (path === '/api/data-point') {
             const p = await req.json();
-            // p.parentId can be null or an integer
             await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, created_at) VALUES (?,?,?,?,?,?,?)')
                 .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis, isoTimestamp()).run();
             return response({ success: true });
@@ -990,11 +978,18 @@ export default {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
                 .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
-            // Optional: Create inverse relationship automatically?
-            // For now, let's keep it directional as requested.
             return response({ success: true });
         }
 
+        // Delete Handler
+        if (path === '/api/delete') {
+            const { table, id } = await req.json();
+            // Whitelist tables to prevent injection
+            if (!['subject_data_points', 'subject_events', 'subject_relationships'].includes(table)) return errorResponse('Invalid table', 400);
+            return handleDeleteItem(req, env.DB, table, id);
+        }
+
+        // Media
         if (path === '/api/upload-photo') return handleUploadPhoto(req, env.DB, env.BUCKET, false);
         if (path === '/api/upload-avatar') return handleUploadPhoto(req, env.DB, env.BUCKET, true);
 
