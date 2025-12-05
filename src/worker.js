@@ -827,13 +827,23 @@ function serveHtml() {
                             
                              <div class="columns-2 md:columns-3 lg:columns-4 gap-3 space-y-3">
                                 <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden bg-slate-800 shadow-lg cursor-pointer">
-                                    <!-- Render Image -->
-                                    <img v-if="m.media_type !== 'link'" :src="'/api/media/' + m.object_key" class="w-full" loading="lazy" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
+                                    <!-- Video Special Case -->
+                                    <a v-if="m.media_type === 'link' && (m.external_url.includes('youtube') || m.external_url.includes('youtu.be'))" :href="m.external_url" target="_blank" class="block w-full aspect-video bg-slate-900 flex flex-col items-center justify-center p-4 hover:bg-slate-850">
+                                        <i class="fa-brands fa-youtube text-4xl text-red-500 mb-2"></i>
+                                        <p class="text-[10px] text-slate-400 break-all line-clamp-2 text-center">{{ m.external_url }}</p>
+                                    </a>
                                     
-                                    <!-- Render Link -->
-                                    <a v-else :href="m.external_url" target="_blank" class="block w-full aspect-video bg-slate-900 flex flex-col items-center justify-center p-4 hover:bg-slate-850">
-                                        <i class="fa-brands fa-youtube text-4xl text-red-500 mb-2" v-if="m.external_url.includes('youtube') || m.external_url.includes('youtu.be')"></i>
-                                        <i class="fa-solid fa-link text-3xl text-emerald-500 mb-2" v-else></i>
+                                    <!-- Image (Uploaded or External) -->
+                                    <img v-else 
+                                            :src="m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key" 
+                                            class="w-full" 
+                                            loading="lazy" 
+                                            @click="lightbox = {active: true, url: m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key, desc: m.description}"
+                                            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                                            
+                                    <!-- Fallback for broken image links -->
+                                    <a v-if="m.media_type === 'link'" :href="m.external_url" target="_blank" class="hidden w-full aspect-video bg-slate-900 flex-col items-center justify-center p-4 hover:bg-slate-850" style="display: none;">
+                                        <i class="fa-solid fa-link text-3xl text-emerald-500 mb-2"></i>
                                         <p class="text-[10px] text-slate-400 break-all line-clamp-2 text-center">{{ m.external_url }}</p>
                                     </a>
 
