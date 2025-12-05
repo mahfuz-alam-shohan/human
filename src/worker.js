@@ -1358,7 +1358,7 @@ function serveHtml() {
         const activeShareLink = computed(() => (selectedSubject.value?.shareLinks || []).find(l => !l.is_revoked));
         const shareUrl = computed(() => {
             if (!activeShareLink.value) return '';
-            return `${window.location.origin}/share/${activeShareLink.value.token}`;
+            return window.location.origin + '/share/' + activeShareLink.value.token;
         });
 
         const navItems = [
