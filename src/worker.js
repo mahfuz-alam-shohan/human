@@ -607,6 +607,23 @@ function serveHtml() {
                                     </div>
                                 </div>
                             </div>
+                            <div class="glass-panel p-5 rounded-2xl">
+                                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4"><i class="fa-solid fa-address-book mr-1"></i> Contact & Digital</h3>
+                                <div class="space-y-2">
+                                     <div class="flex justify-between items-center bg-slate-800/30 p-2 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase">Contact</span>
+                                        <span class="text-sm font-mono text-white">{{ selectedSubject.contact || 'N/A' }}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center bg-slate-800/30 p-2 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase">Nationality</span>
+                                        <span class="text-sm text-white">{{ selectedSubject.nationality || 'N/A' }}</span>
+                                    </div>
+                                    <div class="bg-slate-800/30 p-3 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase block mb-1">Digital Identifiers</span>
+                                        <p class="text-xs text-indigo-300 font-mono whitespace-pre-wrap">{{ selectedSubject.digital_identifiers || 'None' }}</p>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="flex justify-center pt-4">
                                 <button @click="deleteItem('subjects', selectedSubject.id)" class="text-red-500 text-xs font-bold hover:text-red-400 border border-red-500/30 px-6 py-3 rounded-lg hover:bg-red-500/10 transition-colors w-full md:w-auto">
                                     <i class="fa-solid fa-triangle-exclamation mr-2"></i> ARCHIVE SUBJECT
@@ -637,6 +654,14 @@ function serveHtml() {
                                     <div class="p-3 bg-slate-800/40 rounded-xl">
                                         <div class="text-[10px] text-slate-500 uppercase font-bold">Hair</div>
                                         <div class="text-white">{{ selectedSubject.hair_color || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Sex</div>
+                                        <div class="text-white">{{ selectedSubject.gender || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Blood</div>
+                                        <div class="text-white">{{ selectedSubject.blood_type || '—' }}</div>
                                     </div>
                                 </div>
                                 <div>
@@ -810,7 +835,7 @@ function serveHtml() {
                         
                         <!-- Tabs for Form -->
                         <div class="flex gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
-                            <button type="button" v-for="step in ['Identity', 'Physical', 'Details']" 
+                            <button type="button" v-for="step in ['Identity', 'Physical', 'Social & Data', 'Notes']" 
                                 @click="modalStep = step"
                                 :class="modalStep === step ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'"
                                 class="px-4 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap">
@@ -825,12 +850,28 @@ function serveHtml() {
                             </div>
                             <div class="grid grid-cols-2 gap-4">
                                 <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Sex / Gender</label>
+                                    <select v-model="forms.subject.gender" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                        <option value="">Unknown</option>
+                                        <option>Male</option>
+                                        <option>Female</option>
+                                        <option>Non-Binary</option>
+                                        <option>Other</option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
                                     <input v-model="forms.subject.occupation" class="glass-input w-full p-3 rounded-lg">
                                 </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
                                 <div class="space-y-1">
-                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
-                                    <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Nationality</label>
+                                    <input v-model="forms.subject.nationality" class="glass-input w-full p-3 rounded-lg">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Religion</label>
+                                    <input v-model="forms.subject.religion" class="glass-input w-full p-3 rounded-lg">
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-4">
@@ -852,17 +893,40 @@ function serveHtml() {
 
                         <div v-show="modalStep === 'Physical'" class="space-y-4">
                              <div class="grid grid-cols-2 gap-4">
+                                <input v-model="forms.subject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
                                 <input v-model="forms.subject.height" class="glass-input p-3 rounded-lg" placeholder="Height (cm/ft)">
                                 <input v-model="forms.subject.weight" class="glass-input p-3 rounded-lg" placeholder="Weight (kg/lbs)">
+                                <input v-model="forms.subject.blood_type" class="glass-input p-3 rounded-lg" placeholder="Blood Type">
                                 <input v-model="forms.subject.eye_color" class="glass-input p-3 rounded-lg" placeholder="Eye Color">
                                 <input v-model="forms.subject.hair_color" class="glass-input p-3 rounded-lg" placeholder="Hair Color">
-                                <input v-model="forms.subject.blood_type" class="glass-input p-3 rounded-lg" placeholder="Blood Type">
-                                <input v-model="forms.subject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
                             </div>
                             <textarea v-model="forms.subject.identifying_marks" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="Scars, Tattoos, Birthmarks..."></textarea>
                         </div>
 
-                        <div v-show="modalStep === 'Details'" class="space-y-4">
+                        <div v-show="modalStep === 'Social & Data'" class="space-y-4">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Information</label>
+                                <input v-model="forms.subject.contact" class="glass-input w-full p-3 rounded-lg" placeholder="Phone, Email, PGP Keys...">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Education</label>
+                                <input v-model="forms.subject.education" class="glass-input w-full p-3 rounded-lg" placeholder="Degrees, Schools...">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
+                                <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Social Media Links</label>
+                                <textarea v-model="forms.subject.social_links" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="URLs, Usernames..."></textarea>
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Digital Identifiers</label>
+                                <textarea v-model="forms.subject.digital_identifiers" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="IPs, MAC Addresses, Crypto Wallets..."></textarea>
+                            </div>
+                        </div>
+
+                        <div v-show="modalStep === 'Notes'" class="space-y-4">
                             <div class="grid grid-cols-2 gap-4">
                                 <input v-model="forms.subject.mbti" class="glass-input p-3 rounded-lg" placeholder="MBTI (e.g. INTJ)">
                                 <input v-model="forms.subject.alignment" class="glass-input p-3 rounded-lg" placeholder="Alignment (e.g. Chaotic Neutral)">
@@ -939,7 +1003,10 @@ function serveHtml() {
                         <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
                             <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
                         </select>
-                        <input v-model="forms.rel.type" placeholder="Relationship Type (e.g. Spouse, Rival)" class="glass-input w-full p-3 rounded-lg">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Relationship Label (Displays on Graph)</label>
+                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1">
+                        </div>
                         <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
                      </form>
                 </div>
@@ -1203,7 +1270,8 @@ function serveHtml() {
             
             const edges = data.edges.map(e => ({
                 from: e.from_id, to: e.to_id, label: e.label, arrows: 'to',
-                color: { color: '#475569' }, font: { size: 10, color: '#94a3b8', strokeWidth: 0 }
+                color: { color: '#475569' }, 
+                font: { size: 10, color: '#94a3b8', strokeWidth: 0, align: 'middle', background: '#1e293b' }
             }));
             
             network = new vis.Network(container, { nodes, edges }, {
@@ -1377,7 +1445,12 @@ export default {
         if (path === '/api/subjects') {
             if (req.method === 'POST') {
                 const p = await req.json();
-                await env.DB.prepare('INSERT INTO subjects (admin_id, full_name, occupation, location, dob, status, created_at, height, weight, eye_color, hair_color, blood_type, identifying_marks, mbti, alignment, habits, notes, last_sighted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                await env.DB.prepare(`INSERT INTO subjects (
+                    admin_id, full_name, occupation, location, dob, status, created_at, 
+                    height, weight, eye_color, hair_color, blood_type, identifying_marks, 
+                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality, 
+                    education, religion, contact, social_links, digital_identifiers
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
                     .bind(
                         p.adminId, 
                         p.full_name || 'Unknown Subject', 
@@ -1396,7 +1469,15 @@ export default {
                         p.alignment || null,
                         p.habits || null,
                         p.notes || null,
-                        p.last_sighted || null
+                        p.last_sighted || null,
+                        p.age || null,
+                        p.gender || null,
+                        p.nationality || null,
+                        p.education || null,
+                        p.religion || null,
+                        p.contact || null,
+                        p.social_links || null,
+                        p.digital_identifiers || null
                     ).run();
                 return response({ success: true });
             }
