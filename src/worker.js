@@ -312,8 +312,10 @@ async function handleGetSharedSubject(db, token) {
     const payload = await data.json();
 
     // Remove admin metadata before sharing
-    const { admin_id, is_archived, ...safeSubject } = payload;
-    return response({ ...safeSubject });
+    const { admin_id, is_archived, dataPoints, ...safeSubject } = payload;
+
+    // Hide internal intel entries from public view
+    return response({ ...safeSubject, dataPoints: [] });
 }
 
 // --- Frontend Application ---
@@ -1911,72 +1913,104 @@ function serveSharedHtml(token) {
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <style>
-    .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(10px); }
-    body { overflow-x: hidden; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.07), transparent 25%), radial-gradient(circle at 80% 0%, rgba(16,185,129,0.06), transparent 25%), #020617; color: #e2e8f0; }
     .content-shell { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
     @media (min-width: 768px) { .content-shell { padding: 2.25rem 2.5rem; } }
-    .info-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
-    .info-value { text-align: right; word-break: break-word; }
+    .glass-panel { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border: 1px solid rgba(148, 163, 184, 0.2); box-shadow: 0 20px 60px rgba(0,0,0,0.35); }
+    .pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.02em; }
+    .info-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.75rem; background: rgba(255,255,255,0.02); }
+    .info-label { color: #94a3b8; font-size: 0.8rem; }
+    .info-value { text-align: right; word-break: break-word; color: #e2e8f0; font-weight: 600; }
+    .timeline { position: relative; padding-left: 1.5rem; }
+    .timeline::before { content: ''; position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, rgba(99,102,241,0.5), rgba(14,165,233,0.4)); }
+    .timeline-item { position: relative; padding-left: 1rem; margin-bottom: 1.25rem; }
+    .timeline-item::before { content: ''; position: absolute; left: -0.35rem; top: 0.35rem; width: 12px; height: 12px; background: #6366f1; border: 2px solid rgba(15,23,42,0.9); border-radius: 9999px; box-shadow: 0 0 0 4px rgba(99,102,241,0.25); }
+    .badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.6rem; border-radius: 0.65rem; background: rgba(99,102,241,0.15); color: #c7d2fe; font-size: 0.75rem; }
   </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 overflow-x-hidden">
+<body class="min-h-screen">
   <div class="content-shell">
     <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
       <div>
-        <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Secure Share</p>
-        <h1 class="text-2xl font-black text-white">View-Only Dossier</h1>
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Secure Share</p>
+        <h1 class="text-3xl font-black text-white flex items-center gap-2">
+          Shared Profile
+          <span class="pill bg-indigo-600/30 text-indigo-200 border border-indigo-500/40"><i class="fa-solid fa-shield-halved"></i> View Only</span>
+        </h1>
       </div>
-      <div class="text-left md:text-right">
+      <div class="text-left md:text-right glass-panel rounded-2xl px-4 py-3">
         <p class="text-xs text-slate-500">Link ID</p>
-        <p class="font-mono text-sm text-indigo-300 break-all">${token}</p>
+        <p class="font-mono text-sm text-indigo-200 break-all">${token}</p>
       </div>
     </header>
 
-    <div id="status" class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
+    <div id="status" class="glass-panel rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
 
-    <section id="content" class="hidden space-y-5 sm:space-y-6">
-      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row gap-4 items-start">
-        <img id="avatar" class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover border border-slate-800 flex-shrink-0" alt="Subject portrait">
-        <div class="flex-1">
-          <p class="text-xs uppercase text-slate-500">Subject</p>
-          <h2 id="name" class="text-2xl font-bold text-white"></h2>
-          <p id="occupation" class="text-sm text-slate-400"></p>
-          <p id="location" class="text-sm text-slate-400"></p>
-          <div class="mt-3 flex flex-wrap gap-2">
-            <span id="statusBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"></span>
-            <span id="age" class="px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"></span>
+    <section id="content" class="hidden space-y-5 sm:space-y-6 animate-[fadeIn_0.4s_ease]">
+      <div class="glass-panel rounded-3xl p-5 md:p-6 flex flex-col md:flex-row gap-5 items-start">
+        <div class="relative">
+          <img id="avatar" class="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl object-cover border border-slate-800 shadow-xl" alt="Subject portrait">
+          <span id="statusBadge" class="pill absolute -bottom-3 left-2 bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">Active</span>
+        </div>
+        <div class="flex-1 space-y-2">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p class="text-xs uppercase text-slate-400">Subject</p>
+              <h2 id="name" class="text-3xl font-bold text-white"></h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span id="age" class="pill bg-indigo-500/20 text-indigo-200 border border-indigo-400/40"></span>
+              <span id="lastSighted" class="pill bg-cyan-500/15 text-cyan-200 border border-cyan-400/30"></span>
+            </div>
+          </div>
+          <p id="occupation" class="text-sm text-slate-300"></p>
+          <div class="flex flex-wrap gap-2 text-sm text-slate-400">
+            <span class="badge"><i class="fa-solid fa-location-dot"></i><span id="location">—</span></span>
+            <span class="badge"><i class="fa-solid fa-globe"></i><span id="nationality">—</span></span>
           </div>
         </div>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Core Details</h3>
+        <div class="glass-panel rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Core Details</h3>
+            <span class="text-[10px] text-slate-500">Verified</span>
+          </div>
           <div class="text-sm text-slate-300 space-y-2" id="core"></div>
         </div>
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Contact & Digital</h3>
+        <div class="glass-panel rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Contact & Digital</h3>
+            <span class="text-[10px] text-slate-500">Limited</span>
+          </div>
           <div class="text-sm text-slate-300 space-y-2" id="contact"></div>
         </div>
       </div>
 
-      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Intelligence</h3>
-          <span class="text-[10px] text-slate-500">View-only</span>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="glass-panel rounded-2xl p-4 lg:col-span-2">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Timeline</h3>
+            <span class="text-[10px] text-slate-500">Chronological</span>
+          </div>
+          <div id="events" class="timeline"></div>
         </div>
-        <div id="intel" class="space-y-3"></div>
+        <div class="glass-panel rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Routine</h3>
+            <span class="text-[10px] text-slate-500">Observations</span>
+          </div>
+          <div id="routine" class="space-y-3"></div>
+        </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Timeline</h3>
-          <div id="events" class="space-y-3"></div>
+      <div class="glass-panel rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Media</h3>
+          <span class="text-[10px] text-slate-500">Attachments</span>
         </div>
-        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Media</h3>
-          <div id="media" class="grid grid-cols-1 gap-3"></div>
-        </div>
+        <div id="media" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
       </div>
     </section>
   </div>
@@ -1993,7 +2027,7 @@ function serveSharedHtml(token) {
     };
 
     const infoRow = (label, value, highlight = false) =>
-      '<div class="info-row"><span class="text-slate-400">' + label + '</span><span class="info-value ' + (highlight ? 'text-indigo-300' : 'text-white') + '">' + value + '</span></div>';
+      '<div class="info-row"><span class="info-label">' + label + '</span><span class="info-value ' + (highlight ? 'text-indigo-200' : 'text-white') + '">' + value + '</span></div>';
 
     const addList = (el, items, emptyText, renderer) => {
       if (!items.length) {
@@ -2016,46 +2050,48 @@ function serveSharedHtml(token) {
         document.getElementById('name').textContent = data.full_name || 'Unknown Subject';
         document.getElementById('occupation').textContent = data.occupation || 'Occupation unknown';
         document.getElementById('location').textContent = data.location || 'Location unknown';
+        document.getElementById('nationality').textContent = data.nationality || '—';
         document.getElementById('statusBadge').textContent = data.status || 'Active';
         document.getElementById('age').textContent = data.age ? data.age + ' yrs' : (data.dob || 'Age unknown');
+        document.getElementById('lastSighted').textContent = data.last_sighted ? 'Last sighted ' + data.last_sighted : 'Last sighting unknown';
         setAvatar(data.avatar_path);
 
         document.getElementById('core').innerHTML =
           infoRow('DOB', data.dob || '—') +
-          infoRow('Last Sighted', data.last_sighted || 'Unknown') +
-          infoRow('Nationality', data.nationality || '—') +
+          infoRow('Status', data.status || 'Active', true) +
           infoRow('MBTI', data.mbti || '—') +
-          infoRow('Alignment', data.alignment || '—');
+          infoRow('Alignment', data.alignment || '—') +
+          infoRow('Education', data.education || '—');
 
         document.getElementById('contact').innerHTML =
           infoRow('Contact', data.contact || '—') +
           infoRow('Social Links', data.social_links || '—', true) +
           infoRow('Digital IDs', data.digital_identifiers || '—', true);
 
-        addList(document.getElementById('intel'), data.dataPoints || [], 'No intelligence entries yet.', (item) => {
-          const card = document.createElement('div');
-          card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
-          card.innerHTML = '<div class="flex justify-between text-xs text-slate-400 mb-1"><span>' + item.category + '</span><span>' + (item.confidence || 100) + '%</span></div><p class="text-white font-medium">' + item.label + '</p><p class="text-sm text-slate-300 mt-1 whitespace-pre-wrap">' + item.value + '</p>';
-          return card;
+        addList(document.getElementById('events'), data.events || [], 'No timeline events logged.', (evt) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'timeline-item';
+          wrap.innerHTML = '<p class="text-[11px] text-slate-400">' + (evt.event_date || 'Undated') + '</p><p class="text-white font-semibold">' + evt.title + '</p><p class="text-sm text-slate-300">' + evt.description + '</p>';
+          return wrap;
         });
 
-        addList(document.getElementById('events'), data.events || [], 'No events logged.', (evt) => {
+        addList(document.getElementById('routine'), data.routine || [], 'No routine observations captured.', (r) => {
           const card = document.createElement('div');
-          card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
-          card.innerHTML = '<p class="text-xs text-slate-400">' + (evt.event_date || '') + '</p><p class="text-white font-semibold">' + evt.title + '</p><p class="text-sm text-slate-300">' + evt.description + '</p>';
+          card.className = 'p-3 bg-slate-900/60 rounded-xl border border-slate-800';
+          card.innerHTML = '<div class="flex items-center justify-between"><p class="text-white font-semibold">' + r.activity + '</p><span class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">' + (r.schedule || '—') + '</span></div><p class="text-xs text-indigo-200 mt-1"><i class="fa-solid fa-location-dot mr-1"></i>' + (r.location || '—') + ' <span class="text-slate-500">•</span> ' + (r.duration || '—') + '</p><p class="text-sm text-slate-300 mt-1">' + (r.notes || '') + '</p>';
           return card;
         });
 
         addList(document.getElementById('media'), data.media || [], 'No media attached.', (m) => {
           const wrap = document.createElement('div');
-          wrap.className = 'flex items-center gap-3 p-3 bg-slate-800/60 rounded-lg border border-slate-800';
+          wrap.className = 'flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800';
           const thumb = document.createElement('img');
           thumb.className = 'w-16 h-16 object-cover rounded-lg border border-slate-700';
           thumb.src = m.media_type === 'link' ? 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14/assets/svg/1f517.svg' : (m.object_key ? '/api/media/' + m.object_key : '');
           wrap.appendChild(thumb);
           const text = document.createElement('div');
           const linkHref = m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key;
-          text.innerHTML = '<p class="text-white font-semibold">' + (m.description || 'Attachment') + '</p><a class="text-indigo-400 text-sm" href="' + linkHref + '" target="_blank" rel="noreferrer">Open</a>';
+          text.innerHTML = '<p class="text-white font-semibold">' + (m.description || 'Attachment') + '</p><a class="text-indigo-300 text-sm" href="' + linkHref + '" target="_blank" rel="noreferrer">Open</a>';
           wrap.appendChild(text);
           return wrap;
         });
