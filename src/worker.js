@@ -14,6 +14,7 @@ const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
   "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
   "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
+  "CREATE TABLE IF NOT EXISTS share_links (id INTEGER PRIMARY KEY, subject_id INTEGER, token TEXT UNIQUE, is_revoked INTEGER DEFAULT 0, created_at TEXT, revoked_at TEXT)",
   // Physical Attributes
   "ALTER TABLE subjects ADD COLUMN height TEXT",
   "ALTER TABLE subjects ADD COLUMN weight TEXT",
@@ -179,32 +180,42 @@ async function handleGetGraph(db, adminId) {
     return response({ nodes: subjects.results, edges: rels.results });
 }
 
-async function handleGetSubjectFull(db, id) {
+async function getSubjectFullData(db, id, includeShareLinks = false) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-    if (!subject) return errorResponse("Subject not found", 404);
+    if (!subject) return null;
 
-    const [media, dataPoints, events, relationships, routine] = await Promise.all([
+    const [media, dataPoints, events, relationships, routine, shareLinks] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         // Updated to fetch relationships where this subject is EITHER side A or B
         db.prepare(`
             SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
-            FROM subject_relationships r 
+            FROM subject_relationships r
             JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
         `).bind(id, id, id).all(),
-        db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
+        db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
+        includeShareLinks
+            ? db.prepare('SELECT id, token, is_revoked, created_at, revoked_at FROM share_links WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
+            : Promise.resolve({ results: [] })
     ]);
 
-    return response({ 
-        ...subject, 
-        media: media.results, 
-        dataPoints: dataPoints.results, 
-        events: events.results, 
+    return {
+        ...subject,
+        media: media.results,
+        dataPoints: dataPoints.results,
+        events: events.results,
         relationships: relationships.results,
-        routine: routine.results
-    });
+        routine: routine.results,
+        shareLinks: shareLinks.results
+    };
+}
+
+async function handleGetSubjectFull(db, id) {
+    const data = await getSubjectFullData(db, id, true);
+    if (!data) return errorResponse("Subject not found", 404);
+    return response(data);
 }
 
 async function handleUpdateSubject(req, db, id) {
@@ -260,6 +271,51 @@ async function handleExportCSV(db, adminId) {
     
     const csv = [headers, ...rows].join('\n');
     return csvResponse(csv, `subjects_export_${new Date().toISOString().split('T')[0]}.csv`);
+}
+
+async function handleCreateShareLink(req, db) {
+    const { subjectId } = await req.json();
+    if (!subjectId) return errorResponse('subjectId required', 400);
+
+    await db.prepare('UPDATE share_links SET is_revoked = 1, revoked_at = ? WHERE subject_id = ? AND is_revoked = 0')
+        .bind(isoTimestamp(), subjectId)
+        .run();
+
+    const token = crypto.randomUUID().replace(/-/g, '');
+    await db.prepare('INSERT INTO share_links (subject_id, token, created_at) VALUES (?, ?, ?)')
+        .bind(subjectId, token, isoTimestamp())
+        .run();
+
+    return response({ token });
+}
+
+async function handleRevokeShareLink(req, db) {
+    const { id } = await req.json();
+    if (!id) return errorResponse('id required', 400);
+
+    await db.prepare('UPDATE share_links SET is_revoked = 1, revoked_at = ? WHERE id = ?')
+        .bind(isoTimestamp(), id)
+        .run();
+
+    return response({ success: true });
+}
+
+async function handleGetShareLinks(db, subjectId) {
+    const res = await db.prepare('SELECT id, token, is_revoked, created_at, revoked_at FROM share_links WHERE subject_id = ? ORDER BY created_at DESC')
+        .bind(subjectId)
+        .all();
+    return response(res.results);
+}
+
+async function handleGetSharedSubject(db, token) {
+    const link = await db.prepare('SELECT * FROM share_links WHERE token = ?').bind(token).first();
+    if (!link) return errorResponse('Link not found', 404);
+    if (link.is_revoked) return errorResponse('Link revoked', 410);
+
+    const data = await getSubjectFullData(db, link.subject_id, false);
+    if (!data || data.is_archived) return errorResponse('Subject unavailable', 404);
+
+    return response({ ...data, shared: true });
 }
 
 // --- Frontend Application ---
@@ -584,6 +640,31 @@ function serveHtml() {
                         
                         <!-- Overview Tab -->
                         <div v-if="subTab === 'overview'" class="space-y-6 animate-fade-in">
+                            <div class="glass-panel p-4 rounded-2xl border border-indigo-500/30 bg-indigo-900/10">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div>
+                                        <h3 class="text-xs font-bold text-indigo-200 uppercase tracking-wider">Secure Share Link</h3>
+                                        <p class="text-[11px] text-indigo-100/80">Generate a view-only report link and revoke it anytime.</p>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button v-if="activeShareLink" @click="revokeShareLink(activeShareLink.id)" class="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow shadow-red-500/30">Revoke Link</button>
+                                        <button @click="createShareLink" class="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow shadow-emerald-500/30">
+                                            <i class="fa-solid fa-link mr-1"></i>{{ activeShareLink ? 'Refresh Link' : 'Create Link' }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-if="activeShareLink" class="mt-3">
+                                    <div class="flex flex-col md:flex-row md:items-center gap-2">
+                                        <input :value="shareUrl" readonly class="w-full glass-input p-3 rounded-lg text-sm text-white font-mono" />
+                                        <div class="flex gap-2">
+                                            <button @click="navigator.clipboard?.writeText(shareUrl) && notify('Link copied')" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold text-white"><i class="fa-solid fa-copy mr-1"></i>Copy</button>
+                                            <a :href="shareUrl" target="_blank" class="px-4 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold text-white flex items-center gap-1"><i class="fa-solid fa-up-right-from-square"></i>Open</a>
+                                        </div>
+                                    </div>
+                                    <p class="text-[10px] text-indigo-100/70 mt-2">Created at {{ new Date(activeShareLink.created_at).toLocaleString() }}</p>
+                                </div>
+                            </div>
+
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <!-- Core Card -->
                                 <div class="glass-panel p-5 rounded-2xl relative">
@@ -1274,6 +1355,9 @@ function serveHtml() {
             avatarLink: { url: '' }
         });
 
+        const activeShareLink = computed(() => (selectedSubject.value?.shareLinks || []).find(l => !l.is_revoked));
+        const shareUrl = computed(() => activeShareLink.value ? `${window.location.origin}/share/${activeShareLink.value.token}` : '');
+
         const navItems = [
             { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-chart-pie' },
             { id: 'subjects', label: 'Subjects', icon: 'fa-solid fa-users' },
@@ -1487,6 +1571,20 @@ function serveHtml() {
         const downloadCSV = () => {
             const adminId = localStorage.getItem('admin_id');
             window.location.href = '/api/export-all?adminId=' + adminId;
+        };
+
+        const createShareLink = async () => {
+            const { token } = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id }) });
+            await viewSubject(selectedSubject.value.id);
+            const url = `${window.location.origin}/share/${token}`;
+            navigator.clipboard?.writeText(url).catch(() => {});
+            notify('Share link ready');
+        };
+
+        const revokeShareLink = async (id) => {
+            await api('/share-links/revoke', { method: 'POST', body: JSON.stringify({ id }) });
+            await viewSubject(selectedSubject.value.id);
+            notify('Link revoked');
         };
 
         // Intel Ops
@@ -1718,15 +1816,97 @@ function serveHtml() {
         return {
             view, setupMode, auth, loading, dashboard, subjects, suggestions, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch, modalStep, toasts,
+            expandedState, graphSearch, modalStep, toasts, activeShareLink, shareUrl,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink, submitAvatarLink,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
-            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath,
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath, createShareLink, revokeShareLink,
             fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge, selectedNode
         };
       }
     }).mount('#app');
+  </script>
+</body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+}
+
+function serveSharePage(token) {
+  const html = `<!DOCTYPE html>
+<html lang="en" class="bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shared Report</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.0/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+  <div class="max-w-5xl mx-auto p-6 space-y-6">
+    <header class="flex items-center justify-between">
+      <div>
+        <p class="text-xs uppercase text-slate-400 tracking-[0.2em]">Secure Share Link</p>
+        <h1 class="text-2xl font-black text-white">Subject Report</h1>
+      </div>
+      <span class="px-3 py-1 bg-emerald-600/20 text-emerald-300 rounded-full text-xs font-bold border border-emerald-500/30">View Only</span>
+    </header>
+
+    <div id="status" class="text-sm text-slate-400">Loading...</div>
+    <div id="content" class="hidden space-y-4"></div>
+  </div>
+
+  <script>
+    async function loadShared() {
+      const res = await fetch('/api/shared/${token}');
+      const status = document.getElementById('status');
+      const content = document.getElementById('content');
+
+      if (!res.ok) {
+        status.textContent = 'This link is no longer available.';
+        status.classList.add('text-red-400');
+        return;
+      }
+
+      const data = await res.json();
+      status.classList.add('hidden');
+      content.classList.remove('hidden');
+
+      const core = document.createElement('div');
+      core.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+      core.innerHTML = `
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="flex items-center gap-3 mb-4">
+            <img src="${data.avatar_path ? (data.avatar_path.startsWith('http') ? data.avatar_path : '/api/media/' + data.avatar_path) : 'https://ui-avatars.com/api/?name=' + encodeURIComponent(data.full_name)}" class="w-16 h-16 rounded-full object-cover border border-slate-700" />
+            <div>
+              <p class="text-xs text-slate-500">ID-${String(data.id).padStart(4,'0')}</p>
+              <h2 class="text-xl font-bold text-white">${data.full_name}</h2>
+              <p class="text-xs text-emerald-300">${data.status || 'Active'}</p>
+            </div>
+          </div>
+          <div class="space-y-2 text-sm text-slate-300">
+            <div class="flex justify-between"><span class="text-slate-500">Occupation</span><span>${data.occupation || '—'}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Location</span><span>${data.location || '—'}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">DOB</span><span>${data.dob || '—'}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Last Sighted</span><span>${data.last_sighted || 'Unknown'}</span></div>
+          </div>
+        </div>
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 space-y-3">
+          <h3 class="text-sm font-bold text-white">Recent Events</h3>
+          ${data.events && data.events.length ? data.events.slice(0,5).map(e => `<div class="border border-slate-800 p-3 rounded-lg"><p class="font-semibold text-white">${e.title}</p><p class="text-xs text-slate-400">${e.description}</p><p class="text-[10px] text-slate-500 mt-1">${e.event_date}</p></div>`).join('') : '<p class="text-sm text-slate-500">No events logged.</p>'}
+        </div>
+      `;
+
+      const intel = document.createElement('div');
+      intel.className = 'p-5 rounded-2xl bg-slate-900/70 border border-slate-800';
+      intel.innerHTML = `<h3 class="text-sm font-bold text-white mb-3">Key Intelligence</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          ${data.dataPoints && data.dataPoints.length ? data.dataPoints.slice(0,8).map(i => `<div class="p-3 rounded-lg bg-slate-800/50 border border-slate-800"><p class="text-xs uppercase text-slate-500 font-bold">${i.category}</p><p class="text-white font-semibold">${i.label}</p><p class="text-sm text-slate-400">${i.value}</p></div>`).join('') : '<p class="text-sm text-slate-500">No intelligence captured.</p>'}
+        </div>`;
+
+      content.appendChild(core);
+      content.appendChild(intel);
+    }
+
+    loadShared();
   </script>
 </body>
 </html>`;
@@ -1784,7 +1964,11 @@ export default {
 
     try {
         if (req.method === 'GET' && path === '/') return serveHtml();
-        
+        if (req.method === 'GET' && path.startsWith('/share/')) {
+            const token = path.replace('/share/', '');
+            return serveSharePage(token);
+        }
+
         // REMOVED: await ensureSchema(env.DB); from every single request.
         // It now runs only once per worker instance via caching or setup.
         // However, for first runs on existing instances, we should run it lightly.
@@ -1799,11 +1983,21 @@ export default {
         }
         if (path === '/api/setup-admin') return handleSetup(req, env.DB);
         if (path === '/api/login') return handleLogin(req, env.DB);
-        
+        if (path.startsWith('/api/shared/')) {
+            const token = path.replace('/api/shared/', '');
+            return handleGetSharedSubject(env.DB, token);
+        }
+
         // Data Operations
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+
+        if (path === '/api/share-links') {
+            if (req.method === 'POST') return handleCreateShareLink(req, env.DB);
+            return handleGetShareLinks(env.DB, url.searchParams.get('subjectId'));
+        }
+        if (path === '/api/share-links/revoke') return handleRevokeShareLink(req, env.DB);
 
         // Subject Operations
         if (path === '/api/subjects') {
