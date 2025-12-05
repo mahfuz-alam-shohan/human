@@ -752,6 +752,19 @@ async function serveHome(request, env) {
         const api = async (url, options = {}) => {
             try {
                 const res = await fetch(url, options);
+                
+                // Safe JSON parsing: Check if response is actually JSON
+                const contentType = res.headers.get("content-type");
+                if (!contentType || !contentType.includes("application/json")) {
+                    const text = await res.text();
+                    // If it's HTML (likely an error page), throw a clear error
+                    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+                        throw new Error("Backend connection failed (Database inactive or crashing). Please check worker logs.");
+                    }
+                    // Fallback for other non-JSON text
+                    throw new Error(text || "Unknown server error");
+                }
+
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Server error');
                 return data;
@@ -992,14 +1005,17 @@ async function handleGenericInsert(request, db, table, cols) {
 
 export default {
   async fetch(request, env, ctx) {
-    await env.DB.exec('PRAGMA foreign_keys = ON;');
-    await ensureSchema(env.DB); // Ensure DB structure is ready
-
     const url = new URL(request.url);
     const { pathname } = url;
     
     // Router
     try {
+        // Only run DB checks if NOT requesting the home page asset
+        if (pathname !== '/') {
+            await env.DB.exec('PRAGMA foreign_keys = ON;');
+            await ensureSchema(env.DB); 
+        }
+
         if (request.method === 'GET' && pathname === '/') return serveHome(request, env);
         if (pathname === '/api/status') return handleStatus(env.DB);
         if (pathname === '/api/login') return handleLogin(request, env.DB);
