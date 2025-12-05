@@ -578,7 +578,11 @@ function serveHtml() {
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">DOB / Age</span>
-                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.dob || '—' }} <span v-if="selectedSubject.age">({{selectedSubject.age}})</span></span>
+                                            <span class="text-white font-medium text-sm text-right">
+                                                {{ selectedSubject.dob || '—' }} 
+                                                <span v-if="selectedSubject.dob" class="text-indigo-400 font-bold">({{ calculateRealAge(selectedSubject.dob) }} yrs)</span>
+                                                <span v-else-if="selectedSubject.age">({{ selectedSubject.age }} yrs)</span>
+                                            </span>
                                         </div>
                                          <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">Last Sighted</span>
@@ -781,7 +785,9 @@ function serveHtml() {
                                             <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
                                             <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
                                         </div>
-                                        <p class="text-sm text-slate-400 leading-relaxed bg-slate-800/30 p-3 rounded-lg">{{ e.description }}</p>
+                                        <div v-if="e.description" class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
+                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{ e.description }}</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -897,7 +903,7 @@ function serveHtml() {
                             <div class="grid grid-cols-2 gap-4">
                                 <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">DOB</label>
-                                    <input v-model="forms.subject.dob" class="glass-input w-full p-3 rounded-lg" placeholder="YYYY-MM-DD">
+                                    <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 rounded-lg text-white appearance-none relative" placeholder="YYYY-MM-DD">
                                 </div>
                                 <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Status</label>
@@ -913,8 +919,14 @@ function serveHtml() {
 
                         <div v-show="modalStep === 'Physical'" class="space-y-4">
                              <div class="grid grid-cols-2 gap-4">
-                                <input v-model="forms.subject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
-                                <input v-model="forms.subject.height" class="glass-input p-3 rounded-lg" placeholder="Height (cm/ft)">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Age (Auto-calc if DOB set)</label>
+                                    <input v-model="forms.subject.age" type="number" class="glass-input w-full p-3 rounded-lg" placeholder="Age">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Height</label>
+                                    <input v-model="forms.subject.height" class="glass-input w-full p-3 rounded-lg" placeholder="cm/ft">
+                                </div>
                                 <input v-model="forms.subject.weight" class="glass-input p-3 rounded-lg" placeholder="Weight (kg/lbs)">
                                 <input v-model="forms.subject.blood_type" class="glass-input p-3 rounded-lg" placeholder="Blood Type">
                                 <input v-model="forms.subject.eye_color" class="glass-input p-3 rounded-lg" placeholder="Eye Color">
@@ -1132,6 +1144,25 @@ function serveHtml() {
                 return { url, icon };
             });
         };
+
+        const calculateRealAge = (dob) => {
+            if (!dob) return null;
+            const birthDate = new Date(dob);
+            const today = new Date();
+            let age = today.getFullYear() - birthDate.getFullYear();
+            const m = today.getMonth() - birthDate.getMonth();
+            if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                age--;
+            }
+            return age;
+        };
+
+        // Watchers for Forms
+        watch(() => forms.subject.dob, (newVal) => {
+            if (newVal) {
+                forms.subject.age = calculateRealAge(newVal);
+            }
+        });
 
         // Computeds
         const filteredSubjects = computed(() => {
@@ -1447,7 +1478,7 @@ function serveHtml() {
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
-            fitGraph, refreshGraph, changeTab, parseSocials
+            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge
         };
       }
     }).mount('#app');
