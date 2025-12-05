@@ -625,6 +625,19 @@ function serveHtml() {
                                         <span class="text-xs text-slate-400 font-bold uppercase">Nationality</span>
                                         <span class="text-sm text-white">{{ selectedSubject.nationality || 'N/A' }}</span>
                                     </div>
+
+                                    <!-- Social Links Auto-Detection -->
+                                    <div v-if="selectedSubject.social_links && parseSocials(selectedSubject.social_links).length" class="bg-slate-800/30 p-3 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase block mb-2">Social Footprint</span>
+                                        <div class="flex flex-wrap gap-2">
+                                            <a v-for="(link, idx) in parseSocials(selectedSubject.social_links)" :key="idx" :href="link.url" target="_blank" 
+                                               class="w-8 h-8 rounded bg-slate-900 border border-slate-700 hover:bg-indigo-600 hover:border-indigo-500 text-slate-300 hover:text-white flex items-center justify-center transition-colors shadow-lg"
+                                               :title="link.url">
+                                                <i :class="link.icon"></i>
+                                            </a>
+                                        </div>
+                                    </div>
+
                                     <div class="bg-slate-800/30 p-3 rounded">
                                         <span class="text-xs text-slate-400 font-bold uppercase block mb-1">Digital Identifiers</span>
                                         <p class="text-xs text-indigo-300 font-mono whitespace-pre-wrap">{{ selectedSubject.digital_identifiers || 'None' }}</p>
@@ -1092,6 +1105,34 @@ function serveHtml() {
             }, 3000);
         };
 
+        // Social Link Parser
+        const parseSocials = (text) => {
+            if(!text) return [];
+            // Match URLs starting with http/https, allowing for various separators
+            const urls = text.match(/\bhttps?:\/\/[^\s,]+/gi) || [];
+            return urls.map(url => {
+                const lower = url.toLowerCase();
+                let icon = 'fa-solid fa-link';
+                
+                if(lower.includes('twitter.com') || lower.includes('x.com')) icon = 'fa-brands fa-x-twitter';
+                else if(lower.includes('facebook.com') || lower.includes('fb.com')) icon = 'fa-brands fa-facebook';
+                else if(lower.includes('linkedin.com')) icon = 'fa-brands fa-linkedin';
+                else if(lower.includes('instagram.com')) icon = 'fa-brands fa-instagram';
+                else if(lower.includes('github.com')) icon = 'fa-brands fa-github';
+                else if(lower.includes('youtube.com')) icon = 'fa-brands fa-youtube';
+                else if(lower.includes('tiktok.com')) icon = 'fa-brands fa-tiktok';
+                else if(lower.includes('reddit.com')) icon = 'fa-brands fa-reddit';
+                else if(lower.includes('discord')) icon = 'fa-brands fa-discord';
+                else if(lower.includes('telegram.org') || lower.includes('t.me')) icon = 'fa-brands fa-telegram';
+                else if(lower.includes('whatsapp.com') || lower.includes('wa.me')) icon = 'fa-brands fa-whatsapp';
+                else if(lower.includes('medium.com')) icon = 'fa-brands fa-medium';
+                else if(lower.includes('pinterest.com')) icon = 'fa-brands fa-pinterest';
+                else if(lower.includes('snapchat.com')) icon = 'fa-brands fa-snapchat';
+                
+                return { url, icon };
+            });
+        };
+
         // Computeds
         const filteredSubjects = computed(() => {
             if(!searchQuery.value) return subjects.value;
@@ -1406,7 +1447,7 @@ function serveHtml() {
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
-            fitGraph, refreshGraph, changeTab
+            fitGraph, refreshGraph, changeTab, parseSocials
         };
       }
     }).mount('#app');
