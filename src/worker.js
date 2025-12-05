@@ -1026,7 +1026,7 @@ function serveHtml() {
                      <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
                          <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
                          <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
-                         <textarea v-model="forms.event.desc" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
+                         <textarea v-model="forms.event.description" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
                          <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">Log Timeline Event</button>
                      </form>
 
@@ -1081,7 +1081,7 @@ function serveHtml() {
         const forms = reactive({
             subject: {},
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
-            event: { date: new Date().toISOString().split('T')[0], title: '', desc: '' },
+            event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
             rel: { subjectB: '', type: '' }
         });
 
