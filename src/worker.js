@@ -843,6 +843,7 @@ function serveHtml() {
                                     </div>
                                     <div class="flex flex-col gap-2 justify-center">
                                         <button @click.stop="openModal('add-intel', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-plus text-xs"></i></button>
+                                        <button @click.stop="openModal('edit-intel', node)" class="w-8 h-8 rounded bg-slate-800 hover:bg-amber-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-pen text-[10px]"></i></button>
                                         <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-trash text-[10px]"></i></button>
                                     </div>
                                 </div>
@@ -860,7 +861,10 @@ function serveHtml() {
                                                 <p class="text-xs text-slate-300 leading-relaxed">{{ child.value }}</p>
                                                 <p v-if="child.source" class="text-[10px] text-slate-500 mt-1 italic">Source: {{ child.source }}</p>
                                             </div>
-                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <div class="flex flex-col sm:flex-row gap-1 sm:items-center">
+                                                <button @click.stop="openModal('edit-intel', child)" class="text-slate-600 hover:text-amber-400 p-2"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
+                                                <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            </div>
                                          </div>
                                     </div>
                                 </div>
@@ -924,7 +928,10 @@ function serveHtml() {
                                         <div class="flex items-baseline gap-2 mb-1 flex-wrap">
                                             <span class="text-xs font-mono font-bold text-amber-500 bg-amber-900/20 px-2 py-0.5 rounded">{{ e.event_date }}</span>
                                             <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
-                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <div class="ml-auto flex gap-1">
+                                                <button @click="openModal('edit-event', e)" class="text-slate-600 hover:text-indigo-400 p-2"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
+                                                <button @click="deleteItem('subject_events', e.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            </div>
                                         </div>
                                         <div class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
                                             <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
@@ -1171,7 +1178,7 @@ function serveHtml() {
                      </form>
 
                      <!-- Form: Add Intel -->
-                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note'" @submit.prevent="submitIntel" class="space-y-4">
+                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note' || modal.active === 'edit-intel'" @submit.prevent="submitIntel" class="space-y-4">
                         <div v-if="modal.parentId" class="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
                             <i class="fa-solid fa-level-up-alt rotate-90 mr-2"></i> Appending to thread
                         </div>
@@ -1215,15 +1222,15 @@ function serveHtml() {
                                 <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-3 accent-indigo-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
                             </div>
                         </div>
-                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">Commit Intelligence</button>
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">{{ modal.active === 'edit-intel' ? 'Save Intelligence' : 'Commit Intelligence' }}</button>
                      </form>
 
                      <!-- Event Form -->
-                     <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
+                     <form v-if="modal.active === 'add-event' || modal.active === 'edit-event'" @submit.prevent="submitEvent" class="space-y-4">
                          <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
                          <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
                          <textarea v-model="forms.event.description" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
-                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">Log Timeline Event</button>
+                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">{{ modal.active === 'edit-event' ? 'Save Timeline Event' : 'Log Timeline Event' }}</button>
                      </form>
 
                      <!-- Rel Form -->
@@ -1338,7 +1345,7 @@ function serveHtml() {
 
         const lightbox = reactive({ active: null, url: '', desc: '' });
         const selectedNode = ref(null);
-        const modal = reactive({ active: null, parentId: null });
+        const modal = reactive({ active: null, parentId: null, editId: null });
         const expandedState = reactive({});
         
         // Forms
@@ -1456,12 +1463,14 @@ function serveHtml() {
         });
 
         const modalTitle = computed(() => {
-            const map = { 
-                'add-subject': 'New Subject Profile', 
+            const map = {
+                'add-subject': 'New Subject Profile',
                 'edit-profile': 'Edit Profile',
                 'add-intel': 'Add Intelligence',
+                'edit-intel': 'Edit Intelligence',
                 'quick-note': 'Quick Field Note',
                 'add-event': 'Log Timeline Event',
+                'edit-event': 'Edit Timeline Event',
                 'add-rel': 'Connect Subjects',
                 'add-routine': 'Add Routine Activity',
                 'add-media-link': 'Add External Link',
@@ -1577,12 +1586,18 @@ function serveHtml() {
 
         // Intel Ops
         const submitIntel = async () => {
-            const payload = { ...forms.intel, subjectId: selectedSubject.value.id, parentId: modal.parentId };
-            await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
+            const isEdit = modal.active === 'edit-intel';
+            const payload = { ...forms.intel, subjectId: selectedSubject.value.id };
+            if (!isEdit) payload.parentId = modal.parentId;
+
+            await api('/data-point', {
+                method: isEdit ? 'PATCH' : 'POST',
+                body: JSON.stringify({ ...payload, id: modal.editId })
+            });
             closeModal();
             viewSubject(selectedSubject.value.id);
             fetchDashboard();
-            notify("Intelligence added");
+            notify(isEdit ? "Intelligence updated" : "Intelligence added");
         };
 
         const toggleNode = (id) => {
@@ -1643,8 +1658,12 @@ function serveHtml() {
 
         // Events, Rels, Routine, Links
         const submitEvent = async () => {
-            await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
-            closeModal(); viewSubject(selectedSubject.value.id); notify("Event Logged");
+            const isEdit = modal.active === 'edit-event';
+            await api('/event', {
+                method: isEdit ? 'PATCH' : 'POST',
+                body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id, id: modal.editId })
+            });
+            closeModal(); viewSubject(selectedSubject.value.id); notify(isEdit ? "Event Updated" : "Event Logged");
         };
         const submitRel = async () => {
             await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
@@ -1718,17 +1737,32 @@ function serveHtml() {
         watch(currentTab, (v) => { if(v === 'graph') setTimeout(loadGraph, 100); });
 
         // Utils
-        const openModal = (type, parentId = null) => {
+        const openModal = (type, payload = null) => {
             modal.active = type;
-            modal.parentId = parentId;
+            modal.parentId = null;
+            modal.editId = null;
             modalStep.value = 'Identity';
-            
+
             if(type === 'quick-note') {
                 forms.intel.category = 'General';
                 forms.intel.label = 'Field Note ' + new Date().toLocaleTimeString();
                 forms.intel.confidence = 100;
             } else if (type === 'add-intel') {
                 forms.intel = { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' };
+                modal.parentId = typeof payload === 'number' ? payload : null;
+            } else if (type === 'add-event') {
+                forms.event = { date: new Date().toISOString().split('T')[0], title: '', description: '' };
+            } else if (type === 'edit-intel') {
+                const intel = payload || {};
+                modal.editId = intel.id;
+                forms.intel = {
+                    category: intel.category || 'General',
+                    label: intel.label || '',
+                    value: intel.value || '',
+                    analysis: intel.analysis || '',
+                    confidence: intel.confidence ?? 100,
+                    source: intel.source || ''
+                };
             } else if (type === 'add-subject') {
                 forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
             } else if (type === 'edit-profile') {
@@ -1739,9 +1773,17 @@ function serveHtml() {
                 forms.mediaLink = { url: '', description: '' };
             } else if (type === 'avatar-link') {
                 forms.avatarLink = { url: selectedSubject.value?.avatar_path?.startsWith('http') ? selectedSubject.value.avatar_path : '' };
+            } else if (type === 'edit-event') {
+                const event = payload || {};
+                modal.editId = event.id;
+                forms.event = {
+                    date: event.event_date || event.date || new Date().toISOString().split('T')[0],
+                    title: event.title || '',
+                    description: event.description || ''
+                };
             }
         };
-        const closeModal = () => modal.active = null;
+        const closeModal = () => { modal.active = null; modal.editId = null; modal.parentId = null; };
         
         const deleteItem = async (table, id) => {
             if(confirm("Permanently delete this item?")) {
@@ -2149,6 +2191,13 @@ export default {
         // Sub-Resources
         if (path === '/api/data-point') {
             const p = await req.json();
+            if (req.method === 'PATCH') {
+                if (!p.id) return errorResponse('Intel id required', 400);
+                await env.DB.prepare('UPDATE subject_data_points SET category = ?, label = ?, value = ?, analysis = ?, confidence = ?, source = ? WHERE id = ?')
+                    .bind(p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', p.id).run();
+                return response({ success: true });
+            }
+
             await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, confidence, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
                 .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', isoTimestamp()).run();
             return response({ success: true });
@@ -2157,6 +2206,12 @@ export default {
         if (path === '/api/event') {
             const p = await req.json();
             const description = (p.description || '').toString().trim() || 'No details provided';
+            if (req.method === 'PATCH') {
+                if (!p.id) return errorResponse('Event id required', 400);
+                await env.DB.prepare('UPDATE subject_events SET title = ?, description = ?, event_date = ? WHERE id = ?')
+                    .bind(p.title, description, p.date || isoTimestamp(), p.id).run();
+                return response({ success: true });
+            }
             await env.DB.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?,?,?,?,?)')
                 .bind(p.subjectId, p.title, description, p.date || isoTimestamp(), isoTimestamp()).run();
             return response({ success: true });
