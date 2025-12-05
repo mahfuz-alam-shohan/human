@@ -513,7 +513,7 @@ function serveHtml() {
                              </div>
                              <div class="flex items-center p-4 gap-4">
                                 <div class="w-16 h-16 rounded-xl bg-slate-800 flex-shrink-0 overflow-hidden border border-slate-700 relative">
-                                    <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover">
+                                    <img v-if="s.avatar_path" :src="resolveImagePath(s.avatar_path)" class="w-full h-full object-cover cursor-zoom-in" @click.stop="openImage(resolveImagePath(s.avatar_path), s.full_name)">
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-2xl font-bold">{{ s.full_name.charAt(0) }}</div>
                                 </div>
                                 <div class="min-w-0">
@@ -550,8 +550,8 @@ function serveHtml() {
                             <i class="fa-solid fa-arrow-left text-slate-400"></i>
                         </button>
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="triggerAvatar">
-                                <img v-if="selectedSubject.avatar_path" :src="'/api/media/' + selectedSubject.avatar_path" class="w-full h-full object-cover">
+                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="openModal('avatar-options')">
+                                <img v-if="selectedSubject.avatar_path" :src="resolveImagePath(selectedSubject.avatar_path)" class="w-full h-full object-cover">
                                 <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                     <i class="fa-solid fa-camera text-xs"></i>
                                 </div>
@@ -889,8 +889,8 @@ function serveHtml() {
                             <div class="grid grid-cols-1 gap-3">
                                 <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-4 rounded-xl flex items-center justify-between">
                                     <div class="flex items-center gap-4">
-                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden">
-                                            <img v-if="r.target_avatar" :src="'/api/media/'+r.target_avatar" class="w-full h-full object-cover">
+                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden cursor-zoom-in" @click.stop="r.target_avatar && openImage(resolveImagePath(r.target_avatar), r.target_name)">
+                                            <img v-if="r.target_avatar" :src="resolveImagePath(r.target_avatar)" class="w-full h-full object-cover">
                                         </div>
                                         <div>
                                             <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
@@ -914,6 +914,19 @@ function serveHtml() {
                     <div class="flex gap-2">
                         <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-2 rounded">Reset View</button>
                         <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-2 rounded">Refresh Data</button>
+                    </div>
+                </div>
+                <div v-if="selectedNode" class="absolute bottom-4 right-4 left-4 md:left-auto md:w-80 glass-panel p-4 rounded-xl border border-slate-800 shadow-2xl animate-slide-up">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-full bg-slate-800 overflow-hidden border border-slate-700 flex-shrink-0 cursor-zoom-in" @click="selectedNode.avatar_path && openImage(resolveImagePath(selectedNode.avatar_path), selectedNode.label)">
+                            <img :src="selectedNode.avatar_path ? resolveImagePath(selectedNode.avatar_path) : selectedNode.image" class="w-full h-full object-cover">
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm font-bold text-white truncate">{{ selectedNode.label }}</div>
+                            <div class="text-[11px] text-slate-400 truncate">{{ selectedNode.occupation || 'Unknown Role' }}</div>
+                            <div class="text-[10px] font-mono text-indigo-400">{{ selectedNode.status }}</div>
+                        </div>
+                        <button @click="viewSubject(selectedNode.id)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] px-3 py-2 rounded-lg font-bold">Details</button>
                     </div>
                 </div>
              </div>
@@ -1169,6 +1182,38 @@ function serveHtml() {
                         </div>
                         <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
                      </form>
+
+                     <!-- Avatar Options -->
+                     <div v-if="modal.active === 'avatar-options'" class="space-y-4">
+                        <div class="flex items-center gap-4">
+                            <div class="w-20 h-20 rounded-2xl bg-slate-800 overflow-hidden border border-slate-700">
+                                <img v-if="selectedSubject.avatar_path" :src="resolveImagePath(selectedSubject.avatar_path)" class="w-full h-full object-cover">
+                                <div v-else class="w-full h-full flex items-center justify-center text-slate-600 font-bold text-2xl">{{ selectedSubject.full_name?.charAt(0) }}</div>
+                            </div>
+                            <div>
+                                <div class="text-white font-bold">{{ selectedSubject.full_name }}</div>
+                                <p class="text-xs text-slate-400">Update or preview the dossier portrait.</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <button :disabled="!selectedSubject.avatar_path" @click="openImage(resolveImagePath(selectedSubject.avatar_path), selectedSubject.full_name)" class="bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-700 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-eye"></i> View</button>
+                            <button @click="closeModal(); triggerAvatar();" class="bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-upload"></i> Upload</button>
+                            <button @click="openModal('avatar-link')" class="bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-link"></i> Use Link</button>
+                        </div>
+                     </div>
+
+                     <!-- Avatar Link Form -->
+                     <form v-if="modal.active === 'avatar-link'" @submit.prevent="submitAvatarLink" class="space-y-4">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Image URL</label>
+                            <input v-model="forms.avatarLink.url" type="url" required placeholder="https://example.com/photo.jpg" class="glass-input w-full p-3 rounded-lg mt-1">
+                        </div>
+                        <p class="text-xs text-slate-500">Provide a direct link to the subject portrait. It will display immediately without uploading to storage.</p>
+                        <div class="flex gap-2">
+                            <button type="button" @click="openModal('avatar-options')" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-lg font-bold">Back</button>
+                            <button type="submit" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold">Save</button>
+                        </div>
+                     </form>
                 </div>
             </div>
         </div>
@@ -1214,6 +1259,7 @@ function serveHtml() {
         const toasts = ref([]);
         
         const lightbox = reactive({ active: null, url: '', desc: '' });
+        const selectedNode = ref(null);
         const modal = reactive({ active: null, parentId: null });
         const expandedState = reactive({});
         
@@ -1224,7 +1270,8 @@ function serveHtml() {
             event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
             rel: { subjectB: '', type: '' },
             routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
-            mediaLink: { url: '', description: '' }
+            mediaLink: { url: '', description: '' },
+            avatarLink: { url: '' }
         });
 
         const navItems = [
@@ -1339,7 +1386,9 @@ function serveHtml() {
                 'add-event': 'Log Timeline Event',
                 'add-rel': 'Connect Subjects',
                 'add-routine': 'Add Routine Activity',
-                'add-media-link': 'Add External Link'
+                'add-media-link': 'Add External Link',
+                'avatar-options': 'Profile Image',
+                'avatar-link': 'Set Profile Image from Link'
             };
             return map[modal.active] || 'System Dialog';
         });
@@ -1524,11 +1573,17 @@ function serveHtml() {
             closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Link Attached");
         };
 
+        const submitAvatarLink = async () => {
+            await api('/avatar-link', { method: 'POST', body: JSON.stringify({ url: forms.avatarLink.url, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Profile image updated");
+        };
+
 
         // Graph
         let network = null;
         const loadGraph = async () => {
             const data = await api('/graph?adminId=' + localStorage.getItem('admin_id'));
+            selectedNode.value = null;
             const container = document.getElementById('network-graph');
             if(!container) return;
             
@@ -1536,8 +1591,11 @@ function serveHtml() {
                 id: n.id,
                 label: n.full_name,
                 shape: 'circularImage',
-                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random',
-                size: 30, borderWidth: 3, 
+                image: n.avatar_path && n.avatar_path.startsWith('http') ? n.avatar_path : (n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random'),
+                avatar_path: n.avatar_path,
+                occupation: n.occupation,
+                status: n.status,
+                size: 30, borderWidth: 3,
                 color: { border: n.status === 'Active' ? '#10b981' : '#64748b', background: '#1e293b' }
             }));
             
@@ -1552,7 +1610,14 @@ function serveHtml() {
                 physics: { stabilization: true, barnesHut: { gravitationalConstant: -4000 } },
                 interaction: { hover: true }
             });
-            network.on('click', (p) => { if(p.nodes.length) viewSubject(p.nodes[0]); });
+            network.on('click', (p) => {
+                if(p.nodes.length) {
+                    const node = nodes.find(n => n.id === p.nodes[0]);
+                    selectedNode.value = node || null;
+                } else {
+                    selectedNode.value = null;
+                }
+            });
         };
 
         const fitGraph = () => network?.fit();
@@ -1586,6 +1651,8 @@ function serveHtml() {
                 forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '' };
             } else if (type === 'add-media-link') {
                 forms.mediaLink = { url: '', description: '' };
+            } else if (type === 'avatar-link') {
+                forms.avatarLink = { url: selectedSubject.value?.avatar_path?.startsWith('http') ? selectedSubject.value.avatar_path : '' };
             }
         };
         const closeModal = () => modal.active = null;
@@ -1605,6 +1672,18 @@ function serveHtml() {
             node.setAttribute("href", dataStr);
             node.setAttribute("download", \`dossier_\${selectedSubject.value.full_name.replace(/\s/g,'_')}.json\`);
             node.click();
+        };
+
+        const resolveImagePath = (path) => {
+            if(!path) return '';
+            return path.startsWith('http') ? path : '/api/media/' + path;
+        };
+
+        const openImage = (url, desc = '') => {
+            if(!url) return;
+            lightbox.url = url;
+            lightbox.desc = desc;
+            lightbox.active = true;
         };
 
         // Keyboard Shortcuts
@@ -1641,10 +1720,10 @@ function serveHtml() {
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
             expandedState, graphSearch, modalStep, toasts,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
-            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink,
+            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink, submitAvatarLink,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
-            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
-            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath,
+            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge, selectedNode
         };
       }
     }).mount('#app');
@@ -1815,6 +1894,13 @@ export default {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, media_type, external_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
                 .bind(p.subjectId, 'link-' + Date.now(), 'link', p.description || 'External Link', 'link', p.url, isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        if (path === '/api/avatar-link') {
+            const p = await req.json();
+            if(!p.url) return errorResponse('Image URL required', 400);
+            await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(p.url, p.subjectId).run();
             return response({ success: true });
         }
 
