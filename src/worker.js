@@ -25,7 +25,12 @@ const MIGRATIONS = [
   "ALTER TABLE subjects ADD COLUMN mbti TEXT",
   "ALTER TABLE subjects ADD COLUMN alignment TEXT",
   "ALTER TABLE subjects ADD COLUMN social_links TEXT",
-  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT"
+  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT",
+  // Routine & Activities
+  "CREATE TABLE IF NOT EXISTS subject_routine (id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT)",
+  // Media Links
+  "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
+  "ALTER TABLE subject_media ADD COLUMN external_url TEXT"
 ];
 
 // --- Helper Functions ---
@@ -107,7 +112,11 @@ async function ensureSchema(db) {
           id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
-          id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT,
+          media_type TEXT DEFAULT 'file', external_url TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_routine (
+          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
         )`)
       ]);
 
@@ -145,6 +154,19 @@ async function handleGetDashboard(db, adminId) {
     return response({ feed: recent.results, stats });
 }
 
+async function handleGetSuggestions(db, adminId) {
+    // Fetch unique values for autocomplete
+    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ? AND occupation IS NOT NULL AND occupation != ''").bind(adminId).all();
+    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ? AND nationality IS NOT NULL AND nationality != ''").bind(adminId).all();
+    const religions = await db.prepare("SELECT DISTINCT religion FROM subjects WHERE admin_id = ? AND religion IS NOT NULL AND religion != ''").bind(adminId).all();
+    
+    return response({
+        occupations: occupations.results.map(r => r.occupation),
+        nationalities: nationalities.results.map(r => r.nationality),
+        religions: religions.results.map(r => r.religion)
+    });
+}
+
 async function handleGetGraph(db, adminId) {
     const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation, status FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
     const rels = await db.prepare(`
@@ -161,7 +183,7 @@ async function handleGetSubjectFull(db, id) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
     if (!subject) return errorResponse("Subject not found", 404);
 
-    const [media, dataPoints, events, relationships] = await Promise.all([
+    const [media, dataPoints, events, relationships, routine] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
         db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
@@ -169,7 +191,8 @@ async function handleGetSubjectFull(db, id) {
             SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
             FROM subject_relationships r JOIN subjects s ON r.subject_b_id = s.id 
             WHERE r.subject_a_id = ?
-        `).bind(id).all()
+        `).bind(id).all(),
+        db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
     return response({ 
@@ -177,7 +200,8 @@ async function handleGetSubjectFull(db, id) {
         media: media.results, 
         dataPoints: dataPoints.results, 
         events: events.results, 
-        relationships: relationships.results 
+        relationships: relationships.results,
+        routine: routine.results
     });
 }
 
@@ -204,7 +228,7 @@ async function handleUpdateSubject(req, db, id) {
 
 async function handleDeleteItem(req, db, table, id) {
     // Validate table name to prevent SQL injection
-    const allowedTables = ['subjects', 'subject_data_points', 'subject_events', 'subject_relationships'];
+    const allowedTables = ['subjects', 'subject_data_points', 'subject_events', 'subject_relationships', 'subject_routine', 'subject_media'];
     if(!allowedTables.includes(table)) return errorResponse("Invalid table", 400);
 
     if(table === 'subjects') {
@@ -326,7 +350,7 @@ function serveHtml() {
             <div class="mt-4 text-center max-w-md w-full px-4">
                 <p class="text-white/90 font-mono text-sm">{{ lightbox.desc || 'No description' }}</p>
                 <div class="flex gap-4 justify-center mt-4">
-                     <a :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase p-2"><i class="fa-solid fa-download mr-1"></i> Save</a>
+                     <a v-if="lightbox.url.startsWith('/api')" :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase p-2"><i class="fa-solid fa-download mr-1"></i> Save</a>
                      <button @click="lightbox.active = null" class="text-xs text-slate-400 hover:text-white font-bold uppercase p-2"><i class="fa-solid fa-xmark mr-1"></i> Close</button>
                 </div>
             </div>
@@ -544,7 +568,7 @@ function serveHtml() {
 
                 <!-- Detail Tabs -->
                 <div class="flex bg-charcoal border-b border-slate-800 overflow-x-auto custom-scrollbar">
-                    <button v-for="t in ['overview', 'intel', 'physical', 'timeline', 'media', 'relations']" 
+                    <button v-for="t in ['overview', 'routine', 'intel', 'physical', 'timeline', 'media', 'relations']" 
                             @click="subTab = t"
                             :class="subTab === t ? 'text-indigo-400 border-indigo-500 bg-slate-800/30' : 'text-slate-500 border-transparent hover:text-slate-300'"
                             class="px-5 py-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap flex-shrink-0 touch-target">
@@ -654,6 +678,38 @@ function serveHtml() {
                                 </button>
                             </div>
                         </div>
+
+                        <!-- Routine Tab (NEW) -->
+                        <div v-if="subTab === 'routine'" class="space-y-4 animate-fade-in">
+                            <div class="flex justify-between items-center">
+                                <h3 class="font-bold text-white">Daily Activities & Schedule</h3>
+                                <button @click="openModal('add-routine')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-bold shadow shadow-indigo-500/20 touch-target">
+                                    <i class="fa-solid fa-plus mr-1"></i> Add Activity
+                                </button>
+                            </div>
+
+                            <div v-if="!selectedSubject.routine || selectedSubject.routine.length === 0" class="glass-panel p-12 text-center rounded-2xl">
+                                <i class="fa-solid fa-clock text-4xl text-slate-700 mb-3"></i>
+                                <p class="text-slate-500 text-sm">No specific routine activities recorded.</p>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-3">
+                                <div v-for="r in selectedSubject.routine" :key="r.id" class="glass-panel p-4 rounded-xl flex items-start gap-4 group">
+                                    <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-indigo-400 shrink-0">
+                                        <i class="fa-solid" :class="r.activity.toLowerCase().includes('gym') ? 'fa-dumbbell' : r.activity.toLowerCase().includes('school') ? 'fa-school' : r.activity.toLowerCase().includes('work') ? 'fa-briefcase' : 'fa-clipboard-list'"></i>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex justify-between items-start">
+                                            <h4 class="font-bold text-white text-sm">{{ r.activity }}</h4>
+                                            <span class="text-[10px] font-mono bg-slate-800 px-2 py-1 rounded text-slate-400">{{ r.schedule }}</span>
+                                        </div>
+                                        <div class="text-xs text-indigo-300 mt-0.5"><i class="fa-solid fa-location-dot mr-1"></i> {{ r.location }} <span class="text-slate-500 mx-1">•</span> {{ r.duration }}</div>
+                                        <p v-if="r.notes" class="text-xs text-slate-400 mt-2 bg-slate-800/30 p-2 rounded">{{ r.notes }}</p>
+                                    </div>
+                                    <button @click="deleteItem('subject_routine', r.id)" class="text-slate-600 hover:text-red-500 p-2 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
+                                </div>
+                            </div>
+                        </div>
                         
                         <!-- Physical Attributes Tab -->
                         <div v-if="subTab === 'physical'" class="space-y-6 animate-fade-in">
@@ -756,16 +812,34 @@ function serveHtml() {
 
                         <!-- Media Gallery -->
                         <div v-if="subTab === 'media'" class="space-y-4 animate-fade-in">
-                            <div class="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target" @click="triggerMediaUpload">
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-500 group-hover:text-indigo-400 mb-3"></i>
-                                <p class="text-sm text-slate-400 font-bold">Tap to upload evidence</p>
-                                <p class="text-xs text-slate-600 mt-1">Images, Scans, Documents</p>
+                            <div class="flex gap-4">
+                                <div class="flex-1 border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target flex flex-col items-center justify-center" @click="triggerMediaUpload">
+                                    <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-500 group-hover:text-indigo-400 mb-3"></i>
+                                    <p class="text-sm text-slate-400 font-bold">Upload Evidence</p>
+                                    <p class="text-[10px] text-slate-600 mt-1">Images, Scans</p>
+                                </div>
+                                <div class="flex-1 border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target flex flex-col items-center justify-center" @click="openModal('add-media-link')">
+                                    <i class="fa-solid fa-link text-3xl text-slate-500 group-hover:text-emerald-400 mb-3"></i>
+                                    <p class="text-sm text-slate-400 font-bold">Add Link</p>
+                                    <p class="text-[10px] text-slate-600 mt-1">Articles, Videos</p>
+                                </div>
                             </div>
+                            
                              <div class="columns-2 md:columns-3 lg:columns-4 gap-3 space-y-3">
-                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden cursor-zoom-in bg-slate-800 shadow-lg" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
-                                    <img :src="'/api/media/' + m.object_key" class="w-full" loading="lazy">
-                                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                                        <p class="text-[10px] text-white truncate w-full">{{ m.description || 'No Description' }}</p>
+                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden bg-slate-800 shadow-lg cursor-pointer">
+                                    <!-- Render Image -->
+                                    <img v-if="m.media_type !== 'link'" :src="'/api/media/' + m.object_key" class="w-full" loading="lazy" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
+                                    
+                                    <!-- Render Link -->
+                                    <a v-else :href="m.external_url" target="_blank" class="block w-full aspect-video bg-slate-900 flex flex-col items-center justify-center p-4 hover:bg-slate-850">
+                                        <i class="fa-brands fa-youtube text-4xl text-red-500 mb-2" v-if="m.external_url.includes('youtube') || m.external_url.includes('youtu.be')"></i>
+                                        <i class="fa-solid fa-link text-3xl text-emerald-500 mb-2" v-else></i>
+                                        <p class="text-[10px] text-slate-400 break-all line-clamp-2 text-center">{{ m.external_url }}</p>
+                                    </a>
+
+                                    <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <p class="text-[10px] text-white truncate flex-1 mr-2">{{ m.description || 'No Description' }}</p>
+                                        <button @click.stop="deleteItem('subject_media', m.id)" class="text-red-400 hover:text-white"><i class="fa-solid fa-trash text-xs"></i></button>
                                     </div>
                                 </div>
                             </div>
@@ -887,17 +961,17 @@ function serveHtml() {
                                 </div>
                                 <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
-                                    <input v-model="forms.subject.occupation" class="glass-input w-full p-3 rounded-lg">
+                                    <input v-model="forms.subject.occupation" list="list-occupations" class="glass-input w-full p-3 rounded-lg">
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-4">
                                 <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Nationality</label>
-                                    <input v-model="forms.subject.nationality" class="glass-input w-full p-3 rounded-lg">
+                                    <input v-model="forms.subject.nationality" list="list-nationalities" class="glass-input w-full p-3 rounded-lg">
                                 </div>
                                 <div class="space-y-1">
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Religion</label>
-                                    <input v-model="forms.subject.religion" class="glass-input w-full p-3 rounded-lg">
+                                    <input v-model="forms.subject.religion" list="list-religions" class="glass-input w-full p-3 rounded-lg">
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-4">
@@ -974,6 +1048,46 @@ function serveHtml() {
                         </button>
                     </form>
 
+                     <!-- Form: Add Routine -->
+                     <form v-if="modal.active === 'add-routine'" @submit.prevent="submitRoutine" class="space-y-4">
+                         <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Activity *</label>
+                             <input v-model="forms.routine.activity" placeholder="e.g. Gym, School, Work" class="glass-input w-full p-3 rounded-lg" required>
+                         </div>
+                         <div class="grid grid-cols-2 gap-4">
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location *</label>
+                                <input v-model="forms.routine.location" placeholder="e.g. Gold's Gym" class="glass-input w-full p-3 rounded-lg" required>
+                             </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Duration</label>
+                                <input v-model="forms.routine.duration" placeholder="e.g. 1.5 Hours" class="glass-input w-full p-3 rounded-lg">
+                             </div>
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Schedule</label>
+                            <input v-model="forms.routine.schedule" placeholder="e.g. Mon/Wed/Fri 6:00 PM" class="glass-input w-full p-3 rounded-lg">
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Notes</label>
+                            <textarea v-model="forms.routine.notes" placeholder="Additional details..." class="glass-input w-full p-3 rounded-lg" rows="2"></textarea>
+                         </div>
+                         <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Add Routine Activity</button>
+                     </form>
+
+                     <!-- Form: Add Media Link -->
+                     <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
+                        <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Link URL *</label>
+                             <input v-model="forms.mediaLink.url" type="url" placeholder="https://..." class="glass-input w-full p-3 rounded-lg" required>
+                        </div>
+                        <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Description</label>
+                             <input v-model="forms.mediaLink.description" placeholder="e.g. News Article, YouTube Video" class="glass-input w-full p-3 rounded-lg">
+                        </div>
+                         <button type="submit" class="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold touch-target">Attach Link</button>
+                     </form>
+
                      <!-- Form: Add Intel -->
                      <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note'" @submit.prevent="submitIntel" class="space-y-4">
                         <div v-if="modal.parentId" class="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
@@ -1046,6 +1160,17 @@ function serveHtml() {
         </div>
     </transition>
 
+    <!-- Suggestion Datalists -->
+    <datalist id="list-occupations">
+        <option v-for="item in suggestions.occupations" :value="item"></option>
+    </datalist>
+    <datalist id="list-nationalities">
+        <option v-for="item in suggestions.nationalities" :value="item"></option>
+    </datalist>
+    <datalist id="list-religions">
+        <option v-for="item in suggestions.religions" :value="item"></option>
+    </datalist>
+
     <!-- Hidden File Inputs -->
     <input type="file" ref="mediaInput" @change="handleMediaUpload" class="hidden" accept="image/*">
     <input type="file" ref="avatarInput" @change="handleAvatarUpload" class="hidden" accept="image/*">
@@ -1070,6 +1195,7 @@ function serveHtml() {
         const auth = reactive({ email: '', password: '' });
         const dashboard = reactive({ stats: {}, feed: [] });
         const subjects = ref([]);
+        const suggestions = reactive({ occupations: [], nationalities: [], religions: [] });
         const selectedSubject = ref(null);
         const toasts = ref([]);
         
@@ -1082,7 +1208,9 @@ function serveHtml() {
             subject: {},
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
             event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
-            rel: { subjectB: '', type: '' }
+            rel: { subjectB: '', type: '' },
+            routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
+            mediaLink: { url: '', description: '' }
         });
 
         const navItems = [
@@ -1195,7 +1323,9 @@ function serveHtml() {
                 'add-intel': 'Add Intelligence',
                 'quick-note': 'Quick Field Note',
                 'add-event': 'Log Timeline Event',
-                'add-rel': 'Connect Subjects'
+                'add-rel': 'Connect Subjects',
+                'add-routine': 'Add Routine Activity',
+                'add-media-link': 'Add External Link'
             };
             return map[modal.active] || 'System Dialog';
         });
@@ -1223,7 +1353,7 @@ function serveHtml() {
                 currentTab.value = tab;
             }
             
-            await Promise.all([fetchDashboard(), fetchSubjects()]);
+            await Promise.all([fetchDashboard(), fetchSubjects(), fetchSuggestions()]);
             
             if(tab === 'detail' && id) {
                  await viewSubject(id);
@@ -1248,6 +1378,13 @@ function serveHtml() {
             subjects.value = await api('/subjects?adminId=' + localStorage.getItem('admin_id'));
         };
 
+        const fetchSuggestions = async () => {
+            const data = await api('/suggestions?adminId=' + localStorage.getItem('admin_id'));
+            suggestions.occupations = data.occupations;
+            suggestions.nationalities = data.nationalities;
+            suggestions.religions = data.religions;
+        };
+
         const viewSubject = async (id) => {
             selectedSubject.value = await api('/subjects/' + id);
             currentTab.value = 'detail';
@@ -1267,6 +1404,7 @@ function serveHtml() {
                 closeModal();
                 fetchSubjects();
                 fetchDashboard();
+                fetchSuggestions();
                 notify("Subject Created Successfully");
             } finally { loading.value = false; }
         };
@@ -1278,6 +1416,7 @@ function serveHtml() {
                 await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
                 selectedSubject.value = { ...selectedSubject.value, ...payload };
                 closeModal();
+                fetchSuggestions();
                 notify("Profile Updated");
              } finally { loading.value = false; }
         };
@@ -1353,7 +1492,7 @@ function serveHtml() {
              if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-avatar');
         };
 
-        // Events & Rels
+        // Events, Rels, Routine, Links
         const submitEvent = async () => {
             await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
             closeModal(); viewSubject(selectedSubject.value.id); notify("Event Logged");
@@ -1362,6 +1501,15 @@ function serveHtml() {
             await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
             closeModal(); viewSubject(selectedSubject.value.id); notify("Connection Established");
         };
+        const submitRoutine = async () => {
+            await api('/routine', { method: 'POST', body: JSON.stringify({ ...forms.routine, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Routine Added");
+        };
+        const submitMediaLink = async () => {
+            await api('/media-link', { method: 'POST', body: JSON.stringify({ ...forms.mediaLink, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Link Attached");
+        };
+
 
         // Graph
         let network = null;
@@ -1420,12 +1568,16 @@ function serveHtml() {
                 forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
             } else if (type === 'edit-profile') {
                 forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
+            } else if (type === 'add-routine') {
+                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '' };
+            } else if (type === 'add-media-link') {
+                forms.mediaLink = { url: '', description: '' };
             }
         };
         const closeModal = () => modal.active = null;
         
         const deleteItem = async (table, id) => {
-            if(confirm("Permanently delete this intelligence?")) {
+            if(confirm("Permanently delete this item?")) {
                 await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
                 if(table === 'subjects') { currentTab.value = 'subjects'; fetchSubjects(); }
                 else viewSubject(selectedSubject.value.id);
@@ -1471,11 +1623,11 @@ function serveHtml() {
         });
 
         return {
-            view, setupMode, auth, loading, dashboard, subjects, currentTab, subTab, navItems,
+            view, setupMode, auth, loading, dashboard, subjects, suggestions, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
             expandedState, graphSearch, modalStep, toasts,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
-            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
+            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
             fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge
@@ -1558,6 +1710,7 @@ export default {
         // Data Operations
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
 
         // Subject Operations
         if (path === '/api/subjects') {
@@ -1631,6 +1784,22 @@ export default {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
                 .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        // Routine
+        if (path === '/api/routine') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, created_at) VALUES (?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        // Media Links
+        if (path === '/api/media-link') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, media_type, external_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                .bind(p.subjectId, 'link-' + Date.now(), 'link', p.description || 'External Link', 'link', p.url, isoTimestamp()).run();
             return response({ success: true });
         }
 
