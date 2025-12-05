@@ -618,15 +618,6 @@ function serveHtml() {
                                         <span class="text-xs text-slate-400 font-bold uppercase">Nationality</span>
                                         <span class="text-sm text-white">{{ selectedSubject.nationality || 'N/A' }}</span>
                                     </div>
-                                    <div class="bg-slate-800/30 p-3 rounded" v-if="parsedSocials.length">
-                                        <span class="text-xs text-slate-400 font-bold uppercase block mb-2">Social Identity</span>
-                                        <div class="flex flex-wrap gap-3">
-                                            <a v-for="s in parsedSocials" :href="s.url" target="_blank" :title="s.name" 
-                                               class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors shadow-lg border border-slate-700/50">
-                                                <i :class="[s.icon, s.color]" class="text-lg"></i>
-                                            </a>
-                                        </div>
-                                    </div>
                                     <div class="bg-slate-800/30 p-3 rounded">
                                         <span class="text-xs text-slate-400 font-bold uppercase block mb-1">Digital Identifiers</span>
                                         <p class="text-xs text-indigo-300 font-mono whitespace-pre-wrap">{{ selectedSubject.digital_identifiers || 'None' }}</p>
@@ -1113,29 +1104,6 @@ function serveHtml() {
             return roots;
         });
 
-        const getSocialPlatform = (url) => {
-            const u = url.toLowerCase();
-            if(u.includes('twitter.com') || u.includes('x.com')) return { icon: 'fa-brands fa-x-twitter', color: 'text-slate-200', name: 'X' };
-            if(u.includes('github.com')) return { icon: 'fa-brands fa-github', color: 'text-white', name: 'GitHub' };
-            if(u.includes('linkedin.com')) return { icon: 'fa-brands fa-linkedin', color: 'text-blue-400', name: 'LinkedIn' };
-            if(u.includes('facebook.com')) return { icon: 'fa-brands fa-facebook', color: 'text-blue-500', name: 'Facebook' };
-            if(u.includes('instagram.com')) return { icon: 'fa-brands fa-instagram', color: 'text-pink-500', name: 'Instagram' };
-            if(u.includes('youtube.com')) return { icon: 'fa-brands fa-youtube', color: 'text-red-500', name: 'YouTube' };
-            if(u.includes('tiktok.com')) return { icon: 'fa-brands fa-tiktok', color: 'text-pink-400', name: 'TikTok' };
-            if(u.includes('t.me') || u.includes('telegram')) return { icon: 'fa-brands fa-telegram', color: 'text-sky-400', name: 'Telegram' };
-            if(u.includes('discord')) return { icon: 'fa-brands fa-discord', color: 'text-indigo-400', name: 'Discord' };
-            if(u.includes('mailto:')) return { icon: 'fa-solid fa-envelope', color: 'text-emerald-400', name: 'Email' };
-            return { icon: 'fa-solid fa-link', color: 'text-slate-400', name: 'Website' };
-        };
-
-        const parsedSocials = computed(() => {
-            if(!selectedSubject.value || !selectedSubject.value.social_links) return [];
-            return selectedSubject.value.social_links.split(/[\n,]+/).map(s => s.trim()).filter(s => s).map(url => ({
-                 url,
-                 ...getSocialPlatform(url)
-            }));
-        });
-
         const modalTitle = computed(() => {
             const map = { 
                 'add-subject': 'New Subject Profile', 
@@ -1394,7 +1362,7 @@ function serveHtml() {
         return {
             view, setupMode, auth, loading, dashboard, subjects, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch, modalStep, toasts, parsedSocials,
+            expandedState, graphSearch, modalStep, toasts,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
