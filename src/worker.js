@@ -222,7 +222,7 @@ async function serveHome(request, env, ctx) {
       });
       if (res.ok) {
         const payload = await res.json();
-        status.textContent = `Subject saved with ID ${payload.id}.`;
+        status.textContent = 'Subject saved with ID ' + payload.id + '.';
         event.target.reset();
       } else {
         const body = await res.json();
