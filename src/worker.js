@@ -320,7 +320,7 @@ async function handleGetSharedSubject(db, token) {
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-950">
+<html lang="en" class="h-full bg-slate-50">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -357,30 +357,46 @@ function serveHtml() {
   </script>
 
   <style>
-    body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    :root {
+      --page-bg: #f8fafc;
+      --panel-bg: rgba(255, 255, 255, 0.88);
+      --panel-border: rgba(148, 163, 184, 0.5);
+      --input-bg: rgba(255, 255, 255, 0.95);
+      --input-border: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+    }
+
+    body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background: var(--page-bg); color: var(--text-primary); }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
-    
-    .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); }
-    .glass-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); color: white; }
-    .glass-input:focus { border-color: #6366f1; outline: none; background: rgba(30, 41, 59, 0.8); }
-    
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    .glass-panel { background: var(--panel-bg); backdrop-filter: blur(12px); border: 1px solid var(--panel-border); box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+    .glass-input { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-primary); }
+    .glass-input:focus { border-color: #6366f1; outline: none; background: #eef2ff; }
+
+    .text-slate-200, .text-slate-300 { color: var(--text-primary) !important; }
+    .text-slate-400, .text-slate-500 { color: var(--text-secondary) !important; }
+    .glass-panel .text-white { color: var(--text-primary) !important; }
+    .glass-panel button.text-white, .glass-panel a.text-white { color: #fff !important; }
+    .bg-obsidian, .bg-slate-950 { background-color: var(--page-bg) !important; }
+
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
-    
+
     .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
     .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(10px); }
 
     #network-graph { width: 100%; height: 100%; }
     .touch-target { min-height: 44px; min-width: 44px; }
-    
-    .loader { border: 2px solid #334155; border-top: 2px solid #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
+
+    .loader { border: 2px solid #cbd5e1; border-top: 2px solid #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
-<body class="h-full text-slate-200 antialiased overflow-hidden bg-obsidian selection:bg-indigo-500/30">
+<body class="h-full text-slate-800 antialiased overflow-hidden bg-white selection:bg-indigo-100">
   <div id="app" class="h-full flex flex-col">
 
     <!-- Toast Notifications -->
