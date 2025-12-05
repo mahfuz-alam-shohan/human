@@ -75,7 +75,12 @@ function errorResponse(msg, status = 500) {
 
 // --- Database Layer ---
 
+// GLOBAL CACHE: Prevents running schema checks on every single request
+let schemaInitialized = false;
+
 async function ensureSchema(db) {
+  if (schemaInitialized) return; // Skip if already done in this worker instance
+
   try {
       // Enforce foreign keys for data integrity
       await db.prepare("PRAGMA foreign_keys = ON;").run();
@@ -110,6 +115,8 @@ async function ensureSchema(db) {
       for (const query of MIGRATIONS) {
         try { await db.prepare(query).run(); } catch(e) { /* Ignore if column exists */ }
       }
+      
+      schemaInitialized = true; // Mark as initialized
   } catch (err) {
       console.error("Schema Init Error:", err);
   }
@@ -369,7 +376,7 @@ function serveHtml() {
             </div>
             <nav class="flex-1 p-4 space-y-2">
                 <template v-for="item in navItems">
-                    <a @click="currentTab = item.id" 
+                    <a @click="changeTab(item.id)" 
                        :class="currentTab === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
                        class="flex items-center px-4 py-3 rounded-xl cursor-pointer transition-all group font-medium text-sm">
                         <i :class="item.icon" class="w-6 text-center mr-2 text-base transition-transform group-hover:scale-110"></i>
@@ -513,7 +520,7 @@ function serveHtml() {
                 <!-- Detail Header -->
                 <header class="bg-charcoal/90 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xl">
                     <div class="flex items-center gap-3">
-                        <button @click="currentTab = 'subjects'" class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors touch-target">
+                        <button @click="changeTab('subjects')" class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors touch-target">
                             <i class="fa-solid fa-arrow-left text-slate-400"></i>
                         </button>
                         <div class="flex items-center gap-3">
@@ -809,7 +816,7 @@ function serveHtml() {
         <!-- Mobile Navigation Bar -->
         <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-charcoal/90 backdrop-blur-xl border-t border-slate-800 z-40 pb-safe shadow-2xl">
             <div class="flex justify-around items-center h-16">
-                <a v-for="item in navItems" :key="item.id" @click="currentTab = item.id"
+                <a v-for="item in navItems" :key="item.id" @click="changeTab(item.id)"
                    :class="currentTab === item.id ? 'text-indigo-400' : 'text-slate-500'" 
                    class="flex flex-col items-center justify-center w-full h-full space-y-1 active:scale-95 transition-transform touch-target">
                     <i :class="item.icon" class="text-lg"></i>
@@ -1059,16 +1066,21 @@ function serveHtml() {
             { id: 'graph', label: 'Graph', icon: 'fa-solid fa-share-nodes', action: 'loadGraph' }
         ];
 
-        // API Helper
+        // API Helper with Timeout
         const api = async (ep, opts = {}) => {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 15000); // 15s timeout
             try {
-                const res = await fetch('/api' + ep, opts);
+                const res = await fetch('/api' + ep, { ...opts, signal: controller.signal });
+                clearTimeout(id);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Operation failed');
                 return data;
             } catch (e) {
-                notify(e.message, 'error');
+                notify(e.name === 'AbortError' ? 'Request timed out' : e.message, 'error');
                 throw e;
+            } finally {
+                clearTimeout(id);
             }
         };
 
@@ -1130,7 +1142,28 @@ function serveHtml() {
         };
 
         const initApp = async () => {
+            // Restore state from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const tab = urlParams.get('tab');
+            const id = urlParams.get('id');
+
+            if(tab && ['dashboard', 'subjects', 'graph', 'detail'].includes(tab)) {
+                currentTab.value = tab;
+            }
+            
             await Promise.all([fetchDashboard(), fetchSubjects()]);
+            
+            if(tab === 'detail' && id) {
+                 await viewSubject(id);
+            }
+        };
+
+        const changeTab = (tab) => {
+            currentTab.value = tab;
+            const url = new URL(window.location);
+            url.searchParams.set('tab', tab);
+            url.searchParams.delete('id');
+            window.history.pushState({}, '', url);
         };
 
         const fetchDashboard = async () => {
@@ -1147,6 +1180,12 @@ function serveHtml() {
             selectedSubject.value = await api('/subjects/' + id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
+            
+            // Sync URL
+            const url = new URL(window.location);
+            url.searchParams.set('tab', 'detail');
+            url.searchParams.set('id', id);
+            window.history.pushState({}, '', url);
         };
 
         const createSubject = async () => {
@@ -1367,7 +1406,7 @@ function serveHtml() {
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
-            fitGraph, refreshGraph
+            fitGraph, refreshGraph, changeTab
         };
       }
     }).mount('#app');
@@ -1395,6 +1434,9 @@ async function handleSetup(req, db) {
     const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
     if (count.c > 0) return errorResponse('Admin already exists', 403);
     
+    // Setup runs ensureschema
+    await ensureSchema(db);
+
     const hash = await hashPassword(password);
     const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
     return response({ id: res.meta.last_row_id });
@@ -1426,8 +1468,12 @@ export default {
     try {
         if (req.method === 'GET' && path === '/') return serveHtml();
         
-        // Ensure DB schema before any API Op
-        if (path.startsWith('/api/')) await ensureSchema(env.DB);
+        // REMOVED: await ensureSchema(env.DB); from every single request.
+        // It now runs only once per worker instance via caching or setup.
+        // However, for first runs on existing instances, we should run it lightly.
+        if (path.startsWith('/api/') && !schemaInitialized) {
+             await ensureSchema(env.DB);
+        }
         
         // Auth & Setup
         if (path === '/api/status') {
