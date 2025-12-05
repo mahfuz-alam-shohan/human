@@ -30,7 +30,8 @@ const MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS subject_routine (id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT)",
   // Media Links
   "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
-  "ALTER TABLE subject_media ADD COLUMN external_url TEXT"
+  "ALTER TABLE subject_media ADD COLUMN external_url TEXT",
+  "CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, created_at TEXT)"
 ];
 
 // --- Helper Functions ---
@@ -52,6 +53,12 @@ function sanitizeFileName(name) {
     .replace(/[^a-z0-9.-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '') || 'upload';
+}
+
+function generateShareToken() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function response(data, status = 200) {
@@ -117,6 +124,9 @@ async function ensureSchema(db) {
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_routine (
           id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
+          id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, created_at TEXT
         )`)
       ]);
 
@@ -260,6 +270,50 @@ async function handleExportCSV(db, adminId) {
     
     const csv = [headers, ...rows].join('\n');
     return csvResponse(csv, `subjects_export_${new Date().toISOString().split('T')[0]}.csv`);
+}
+
+async function handleCreateShareLink(req, db, origin) {
+    const { subjectId } = await req.json();
+    if (!subjectId) return errorResponse('subjectId required', 400);
+
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
+    if (!subject) return errorResponse('Subject not found', 404);
+
+    const token = generateShareToken();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, created_at) VALUES (?, ?, ?)')
+        .bind(subjectId, token, isoTimestamp()).run();
+
+    return response({ token, url: `${origin}/share/${token}` });
+}
+
+async function handleListShareLinks(db, subjectId, origin) {
+    if (!subjectId) return errorResponse('subjectId required', 400);
+    const res = await db.prepare('SELECT token, created_at, is_active FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC')
+        .bind(subjectId).all();
+    const links = res.results.map((row) => ({ ...row, url: `${origin}/share/${row.token}` }));
+    return response({ links });
+}
+
+async function handleRevokeShareLink(req, db) {
+    const { token } = await req.json();
+    if (!token) return errorResponse('token required', 400);
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
+}
+
+async function handleGetSharedSubject(db, token) {
+    const link = await db.prepare('SELECT subject_id FROM subject_shares WHERE token = ? AND is_active = 1').bind(token).first();
+    if (!link) return errorResponse('Share link invalid or disabled', 404);
+
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND is_archived = 0').bind(link.subject_id).first();
+    if (!subject) return errorResponse('Subject not found', 404);
+
+    const data = await handleGetSubjectFull(db, subject.id);
+    const payload = await data.json();
+
+    // Remove admin metadata before sharing
+    const { admin_id, is_archived, ...safeSubject } = payload;
+    return response({ ...safeSubject });
 }
 
 // --- Frontend Application ---
@@ -564,6 +618,7 @@ function serveHtml() {
                     </div>
                     <div class="flex gap-2">
                         <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target" title="Quick Note"><i class="fa-solid fa-pen-nib text-sm"></i></button>
+                        <button @click="openModal('share-link')" class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 hover:scale-105 transition-transform touch-target" title="Share View-Only Link"><i class="fa-solid fa-share-nodes text-sm"></i></button>
                         <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target" title="Export JSON"><i class="fa-solid fa-download text-sm"></i></button>
                     </div>
                 </header>
@@ -1214,6 +1269,28 @@ function serveHtml() {
                             <button type="submit" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold">Save</button>
                         </div>
                      </form>
+
+                     <!-- Shareable Link Manager -->
+                     <div v-if="modal.active === 'share-link'" class="space-y-4">
+                        <p class="text-sm text-slate-400 leading-relaxed">Generate a view-only dossier link. Anyone with the link can see this subject, but cannot edit. Disable a link anytime to cut access.</p>
+                        <button @click="createShareLink" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-link"></i> Create New Link
+                        </button>
+                        <div v-if="shareLinks.length" class="space-y-3">
+                            <div v-for="link in shareLinks" :key="link.token" class="glass-panel border border-slate-800 p-3 rounded-xl">
+                                <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+                                    <span>Created {{ new Date(link.created_at).toLocaleString() }}</span>
+                                    <span class="font-bold" :class="link.is_active ? 'text-emerald-400' : 'text-amber-400'">{{ link.is_active ? 'Active' : 'Disabled' }}</span>
+                                </div>
+                                <div class="bg-slate-900/60 p-2 rounded font-mono text-xs text-indigo-300 break-all">{{ link.url }}</div>
+                                <div class="flex gap-2 mt-3">
+                                    <button @click="copyShareLink(link.url)" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 rounded-lg text-xs font-bold"><i class="fa-solid fa-copy mr-1"></i> Copy</button>
+                                    <button @click="revokeShareLink(link.token)" :disabled="!link.is_active" class="flex-1 bg-red-600/80 hover:bg-red-600 text-white py-2 rounded-lg text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"><i class="fa-solid fa-ban mr-1"></i> Disable</button>
+                                </div>
+                            </div>
+                        </div>
+                        <p v-else class="text-center text-slate-500 text-sm">No share links created yet.</p>
+                     </div>
                 </div>
             </div>
         </div>
@@ -1257,7 +1334,8 @@ function serveHtml() {
         const suggestions = reactive({ occupations: [], nationalities: [], religions: [] });
         const selectedSubject = ref(null);
         const toasts = ref([]);
-        
+        const shareLinks = ref([]);
+
         const lightbox = reactive({ active: null, url: '', desc: '' });
         const selectedNode = ref(null);
         const modal = reactive({ active: null, parentId: null });
@@ -1388,7 +1466,8 @@ function serveHtml() {
                 'add-routine': 'Add Routine Activity',
                 'add-media-link': 'Add External Link',
                 'avatar-options': 'Profile Image',
-                'avatar-link': 'Set Profile Image from Link'
+                'avatar-link': 'Set Profile Image from Link',
+                'share-link': 'Share View-Only Dossier'
             };
             return map[modal.active] || 'System Dialog';
         });
@@ -1448,11 +1527,18 @@ function serveHtml() {
             suggestions.religions = data.religions;
         };
 
+        const loadShareLinks = async (subjectId) => {
+            const res = await api('/share-links?subjectId=' + subjectId);
+            shareLinks.value = res.links || [];
+        };
+
         const viewSubject = async (id) => {
             selectedSubject.value = await api('/subjects/' + id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
-            
+
+            await loadShareLinks(id);
+
             // Sync URL
             const url = new URL(window.location);
             url.searchParams.set('tab', 'detail');
@@ -1674,6 +1760,29 @@ function serveHtml() {
             node.click();
         };
 
+        const createShareLink = async () => {
+            if (!selectedSubject.value) return;
+            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id }) });
+            await loadShareLinks(selectedSubject.value.id);
+            notify('Share link created');
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(res.url).catch(() => {});
+            }
+        };
+
+        const revokeShareLink = async (token) => {
+            await api('/share-links/revoke', { method: 'POST', body: JSON.stringify({ token }) });
+            await loadShareLinks(selectedSubject.value.id);
+            notify('Link disabled');
+        };
+
+        const copyShareLink = async (url) => {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+                notify('Link copied');
+            }
+        };
+
         const resolveImagePath = (path) => {
             if(!path) return '';
             return path.startsWith('http') ? path : '/api/media/' + path;
@@ -1718,15 +1827,179 @@ function serveHtml() {
         return {
             view, setupMode, auth, loading, dashboard, subjects, suggestions, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch, modalStep, toasts,
+            expandedState, graphSearch, modalStep, toasts, shareLinks,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink, submitAvatarLink,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath,
+            createShareLink, revokeShareLink, copyShareLink,
             fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge, selectedNode
         };
       }
     }).mount('#app');
+  </script>
+</body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+}
+
+function serveSharedHtml(token) {
+  const html = `<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shared Dossier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <style>
+    .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(10px); }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <div class="max-w-5xl mx-auto p-4 md:p-8">
+    <header class="flex items-center justify-between mb-6">
+      <div>
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-500">Secure Share</p>
+        <h1 class="text-2xl font-black text-white">View-Only Dossier</h1>
+      </div>
+      <div class="text-right">
+        <p class="text-xs text-slate-500">Link ID</p>
+        <p class="font-mono text-sm text-indigo-300">${token}</p>
+      </div>
+    </header>
+
+    <div id="status" class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
+
+    <section id="content" class="hidden space-y-6">
+      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col md:flex-row gap-4">
+        <img id="avatar" class="w-24 h-24 rounded-2xl object-cover border border-slate-800" alt="Subject portrait">
+        <div class="flex-1">
+          <p class="text-xs uppercase text-slate-500">Subject</p>
+          <h2 id="name" class="text-2xl font-bold text-white"></h2>
+          <p id="occupation" class="text-sm text-slate-400"></p>
+          <p id="location" class="text-sm text-slate-400"></p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span id="statusBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"></span>
+            <span id="age" class="px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Core Details</h3>
+          <div class="text-sm text-slate-300" id="core"></div>
+        </div>
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Contact & Digital</h3>
+          <div class="text-sm text-slate-300" id="contact"></div>
+        </div>
+      </div>
+
+      <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Intelligence</h3>
+          <span class="text-[10px] text-slate-500">View-only</span>
+        </div>
+        <div id="intel" class="space-y-3"></div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Timeline</h3>
+          <div id="events" class="space-y-3"></div>
+        </div>
+        <div class="glass-panel bg-slate-900/70 border border-slate-800 rounded-2xl p-4">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Media</h3>
+          <div id="media" class="grid grid-cols-1 gap-3"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const token = '${token}';
+    const statusEl = document.getElementById('status');
+    const content = document.getElementById('content');
+
+    const setAvatar = (src) => {
+      const img = document.getElementById('avatar');
+      if (src) img.src = src.startsWith('http') ? src : '/api/media/' + src;
+      else img.src = 'https://ui-avatars.com/api/?name=Subject&background=random';
+    };
+
+    const addList = (el, items, emptyText, renderer) => {
+      if (!items.length) {
+        el.innerHTML = `<p class="text-sm text-slate-500">${emptyText}</p>`;
+        return;
+      }
+      el.innerHTML = '';
+      items.forEach((item) => el.appendChild(renderer(item)));
+    };
+
+    (async () => {
+      try {
+        const res = await fetch('/api/shared/' + token);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Unable to load dossier');
+
+        statusEl.classList.add('hidden');
+        content.classList.remove('hidden');
+
+        document.getElementById('name').textContent = data.full_name || 'Unknown Subject';
+        document.getElementById('occupation').textContent = data.occupation || 'Occupation unknown';
+        document.getElementById('location').textContent = data.location || 'Location unknown';
+        document.getElementById('statusBadge').textContent = data.status || 'Active';
+        document.getElementById('age').textContent = data.age ? data.age + ' yrs' : (data.dob || 'Age unknown');
+        setAvatar(data.avatar_path);
+
+        document.getElementById('core').innerHTML = `
+          <div class="flex justify-between"><span class="text-slate-400">DOB</span><span class="text-white">${data.dob || '—'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Last Sighted</span><span class="text-white">${data.last_sighted || 'Unknown'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Nationality</span><span class="text-white">${data.nationality || '—'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">MBTI</span><span class="text-white">${data.mbti || '—'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Alignment</span><span class="text-white">${data.alignment || '—'}</span></div>
+        `;
+
+        document.getElementById('contact').innerHTML = `
+          <div class="flex justify-between"><span class="text-slate-400">Contact</span><span class="text-white">${data.contact || '—'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Social Links</span><span class="text-indigo-300">${data.social_links || '—'}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Digital IDs</span><span class="text-indigo-300">${data.digital_identifiers || '—'}</span></div>
+        `;
+
+        addList(document.getElementById('intel'), data.dataPoints || [], 'No intelligence entries yet.', (item) => {
+          const card = document.createElement('div');
+          card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
+          card.innerHTML = `<div class="flex justify-between text-xs text-slate-400 mb-1"><span>${item.category}</span><span>${item.confidence || 100}%</span></div><p class="text-white font-medium">${item.label}</p><p class="text-sm text-slate-300 mt-1 whitespace-pre-wrap">${item.value}</p>`;
+          return card;
+        });
+
+        addList(document.getElementById('events'), data.events || [], 'No events logged.', (evt) => {
+          const card = document.createElement('div');
+          card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
+          card.innerHTML = `<p class="text-xs text-slate-400">${evt.event_date || ''}</p><p class="text-white font-semibold">${evt.title}</p><p class="text-sm text-slate-300">${evt.description}</p>`;
+          return card;
+        });
+
+        addList(document.getElementById('media'), data.media || [], 'No media attached.', (m) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'flex items-center gap-3 p-3 bg-slate-800/60 rounded-lg border border-slate-800';
+          const thumb = document.createElement('img');
+          thumb.className = 'w-16 h-16 object-cover rounded-lg border border-slate-700';
+          thumb.src = m.media_type === 'link' ? 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14/assets/svg/1f517.svg' : (m.object_key ? '/api/media/' + m.object_key : '');
+          wrap.appendChild(thumb);
+          const text = document.createElement('div');
+          text.innerHTML = `<p class="text-white font-semibold">${m.description || 'Attachment'}</p><a class="text-indigo-400 text-sm" href="${m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key}" target="_blank" rel="noreferrer">Open</a>`;
+          wrap.appendChild(text);
+          return wrap;
+        });
+
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.className = 'glass-panel bg-red-900/40 border border-red-700 rounded-2xl p-4 text-sm text-red-200';
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -1782,13 +2055,16 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
 
+    const sharePage = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+
     try {
         if (req.method === 'GET' && path === '/') return serveHtml();
-        
+        if (req.method === 'GET' && sharePage) return serveSharedHtml(sharePage[1]);
+
         // REMOVED: await ensureSchema(env.DB); from every single request.
         // It now runs only once per worker instance via caching or setup.
         // However, for first runs on existing instances, we should run it lightly.
-        if (path.startsWith('/api/') && !schemaInitialized) {
+        if ((path.startsWith('/api/') || path.startsWith('/share/')) && !schemaInitialized) {
              await ensureSchema(env.DB);
         }
         
@@ -1804,6 +2080,11 @@ export default {
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/share-links') {
+            if (req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), url.origin);
+        }
+        if (path === '/api/share-links/revoke') return handleRevokeShareLink(req, env.DB);
 
         // Subject Operations
         if (path === '/api/subjects') {
@@ -1896,6 +2177,9 @@ export default {
                 .bind(p.subjectId, 'link-' + Date.now(), 'link', p.description || 'External Link', 'link', p.url, isoTimestamp()).run();
             return response({ success: true });
         }
+
+        const sharedSubject = path.match(/^\/api\/shared\/([a-zA-Z0-9]+)$/);
+        if (sharedSubject) return handleGetSharedSubject(env.DB, sharedSubject[1]);
 
         if (path === '/api/avatar-link') {
             const p = await req.json();
