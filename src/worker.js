@@ -1356,7 +1356,10 @@ function serveHtml() {
         });
 
         const activeShareLink = computed(() => (selectedSubject.value?.shareLinks || []).find(l => !l.is_revoked));
-        const shareUrl = computed(() => activeShareLink.value ? `${window.location.origin}/share/${activeShareLink.value.token}` : '');
+        const shareUrl = computed(() => {
+            if (!activeShareLink.value) return '';
+            return `${window.location.origin}/share/${activeShareLink.value.token}`;
+        });
 
         const navItems = [
             { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-chart-pie' },
