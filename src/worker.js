@@ -28,8 +28,8 @@ function sanitizeFileName(name) {
 // --- Database Operations ---
 
 async function ensureSchema(db) {
-  // Added religion, occupation, age, gender, location
   const statements = [
+    // 1. Admins
     db.prepare(
       'CREATE TABLE IF NOT EXISTS admins (\n' +
         'id INTEGER PRIMARY KEY,\n' +
@@ -38,6 +38,7 @@ async function ensureSchema(db) {
         'created_at TEXT NOT NULL\n' +
         ')'
     ),
+    // 2. Subjects (Core Identity)
     db.prepare(
       'CREATE TABLE IF NOT EXISTS subjects (\n' +
         'id INTEGER PRIMARY KEY,\n' +
@@ -55,19 +56,56 @@ async function ensureSchema(db) {
         'updated_at TEXT NOT NULL\n' +
         ')'
     ),
+    // 3. Data Points (Deep Analysis for any attribute)
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS subject_data_points (\n' +
+        'id INTEGER PRIMARY KEY,\n' +
+        'subject_id INTEGER NOT NULL REFERENCES subjects(id),\n' +
+        'category TEXT NOT NULL,\n' + // e.g., 'Identity', 'Social', 'Psychology'
+        'label TEXT NOT NULL,\n' + // e.g., 'Name Origin', 'Facebook Profile'
+        'value TEXT,\n' + // The raw data
+        'analysis TEXT,\n' + // Researcher's thoughts/analysis on this specific point
+        'created_at TEXT NOT NULL\n' +
+        ')'
+    ),
+    // 4. Life Events (Timeline)
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS subject_events (\n' +
+        'id INTEGER PRIMARY KEY,\n' +
+        'subject_id INTEGER NOT NULL REFERENCES subjects(id),\n' +
+        'title TEXT NOT NULL,\n' +
+        'description TEXT,\n' +
+        'event_date TEXT,\n' + // YYYY-MM-DD
+        'created_at TEXT NOT NULL\n' +
+        ')'
+    ),
+    // 5. Relationships (Network)
+    db.prepare(
+      'CREATE TABLE IF NOT EXISTS subject_relationships (\n' +
+        'id INTEGER PRIMARY KEY,\n' +
+        'subject_a_id INTEGER NOT NULL REFERENCES subjects(id),\n' +
+        'subject_b_id INTEGER NOT NULL REFERENCES subjects(id),\n' +
+        'relationship_type TEXT NOT NULL,\n' + // e.g., 'Mother', 'Friend', 'Rival'
+        'notes TEXT,\n' +
+        'created_at TEXT NOT NULL\n' +
+        ')'
+    ),
+    // 6. Media
     db.prepare(
       'CREATE TABLE IF NOT EXISTS subject_media (\n' +
         'id INTEGER PRIMARY KEY,\n' +
         'subject_id INTEGER NOT NULL REFERENCES subjects(id),\n' +
         'object_key TEXT NOT NULL UNIQUE,\n' +
         'content_type TEXT NOT NULL,\n' +
+        'description TEXT,\n' +
         'created_at TEXT NOT NULL\n' +
         ')'
     ),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_admins_email ON admins(email)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_subjects_admin ON subjects(admin_id)'),
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_subjects_name ON subjects(full_name)'),
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_media_subject ON subject_media(subject_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_data_subject ON subject_data_points(subject_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_events_subject ON subject_events(subject_id)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_rel_subject_a ON subject_relationships(subject_a_id)'),
   ];
 
   await db.batch(statements);
@@ -103,7 +141,6 @@ async function createAdmin(db, email, password) {
 }
 
 async function getSubjects(db, adminId) {
-    // Return summary list
     const stmt = db.prepare(`
         SELECT id, full_name, occupation, age, location, created_at 
         FROM subjects 
@@ -114,16 +151,30 @@ async function getSubjects(db, adminId) {
     return results;
 }
 
-async function getSubjectDetail(db, subjectId, bucket) {
-    const stmtSubject = db.prepare('SELECT * FROM subjects WHERE id = ?');
-    const subject = await stmtSubject.bind(subjectId).first();
-
+async function getSubjectDetail(db, subjectId) {
+    // Core Info
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(subjectId).first();
     if (!subject) return null;
 
-    const stmtMedia = db.prepare('SELECT object_key, content_type, created_at FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC');
-    const { results: media } = await stmtMedia.bind(subjectId).all();
+    // Media
+    const { results: media } = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
+    
+    // Data Points
+    const { results: dataPoints } = await db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
 
-    return { ...subject, media };
+    // Events
+    const { results: events } = await db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(subjectId).all();
+
+    // Relationships (Outgoing)
+    // In a real app you might want bidirectional, but let's stick to simple linking for now
+    const { results: relationships } = await db.prepare(`
+        SELECT r.*, s.full_name as target_name 
+        FROM subject_relationships r 
+        JOIN subjects s ON r.subject_b_id = s.id 
+        WHERE r.subject_a_id = ?
+    `).bind(subjectId).all();
+
+    return { ...subject, media, dataPoints, events, relationships };
 }
 
 async function addSubject(db, payload) {
@@ -153,329 +204,360 @@ async function addSubject(db, payload) {
   return { id: result.meta.last_row_id, createdAt };
 }
 
-async function recordMedia(db, subjectId, objectKey, contentType) {
-  const createdAt = isoTimestamp();
-  const stmt = db.prepare(
-    'INSERT INTO subject_media (subject_id, object_key, content_type, created_at) VALUES (?1, ?2, ?3, ?4)'
-  );
-  await stmt.bind(subjectId, objectKey, contentType, createdAt).run();
+// --- Specific Insert Functions ---
+
+async function addDataPoint(db, { subjectId, category, label, value, analysis }) {
+    return await db.prepare('INSERT INTO subject_data_points (subject_id, category, label, value, analysis, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(subjectId, category, label, value, analysis, isoTimestamp())
+        .run();
+}
+
+async function addEvent(db, { subjectId, title, description, eventDate }) {
+    return await db.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(subjectId, title, description, eventDate, isoTimestamp())
+        .run();
+}
+
+async function addRelationship(db, { subjectA, subjectB, type, notes }) {
+    return await db.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, notes, created_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(subjectA, subjectB, type, notes, isoTimestamp())
+        .run();
+}
+
+async function recordMedia(db, subjectId, objectKey, contentType, description) {
+  return await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(subjectId, objectKey, contentType, description || null, isoTimestamp())
+      .run();
 }
 
 // --- Frontend Application (Served as HTML) ---
 
 async function serveHome(request, env, ctx) {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-50">
+<html lang="en" class="h-full bg-slate-100">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-  <title>Human Observation Platform</title>
+  <title>Deep Human Research</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <style>
     body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
-    /* Hide scrollbar for Chrome, Safari and Opera */
     .no-scrollbar::-webkit-scrollbar { display: none; }
-    /* Hide scrollbar for IE, Edge and Firefox */
     .no-scrollbar { -ms-overflow-style: none;  scrollbar-width: none; }
   </style>
 </head>
 <body class="h-full text-slate-800 antialiased">
   <div id="app" class="h-full flex flex-col">
     
-    <!-- Setup / Login View -->
+    <!-- Auth View -->
     <div v-if="view === 'auth'" class="flex-1 flex flex-col justify-center items-center p-6 bg-slate-900 text-white">
         <div class="w-full max-w-md space-y-8">
             <div class="text-center">
-                <div class="mx-auto h-16 w-16 bg-indigo-500 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-indigo-500/30">
-                    <i class="fa-solid fa-fingerprint text-3xl"></i>
+                <div class="mx-auto h-20 w-20 bg-indigo-500 rounded-2xl flex items-center justify-center mb-6 shadow-2xl shadow-indigo-500/20">
+                    <i class="fa-solid fa-brain text-4xl text-white"></i>
                 </div>
-                <h2 class="text-3xl font-bold tracking-tight text-white">{{ setupMode ? 'Initialize System' : 'Researcher Access' }}</h2>
-                <p class="mt-2 text-slate-400">Human Behavior & Psychology Database</p>
+                <h2 class="text-3xl font-bold tracking-tight">{{ setupMode ? 'Initialize Protocol' : 'Research Access' }}</h2>
+                <p class="mt-2 text-slate-400">Deep Psychological Observation Database</p>
             </div>
-
             <form @submit.prevent="handleAuth" class="mt-8 space-y-6 bg-slate-800 p-8 rounded-xl border border-slate-700 shadow-xl">
                 <div class="space-y-4">
-                    <div>
-                        <label for="email" class="block text-sm font-medium text-slate-300">Email Address</label>
-                        <input id="email" v-model="authForm.email" type="email" required class="mt-1 block w-full rounded-lg bg-slate-900 border-slate-700 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3">
-                    </div>
-                    <div>
-                        <label for="password" class="block text-sm font-medium text-slate-300">Password</label>
-                        <input id="password" v-model="authForm.password" type="password" required class="mt-1 block w-full rounded-lg bg-slate-900 border-slate-700 text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3">
-                    </div>
+                    <input v-model="authForm.email" type="email" placeholder="Researcher ID (Email)" required class="block w-full rounded-lg bg-slate-900 border-slate-700 text-white p-3 focus:ring-indigo-500 focus:border-indigo-500">
+                    <input v-model="authForm.password" type="password" placeholder="Passcode" required class="block w-full rounded-lg bg-slate-900 border-slate-700 text-white p-3 focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
-
-                <div v-if="authError" class="text-red-400 text-sm text-center bg-red-900/20 p-2 rounded">{{ authError }}</div>
-
-                <button type="submit" :disabled="loading" class="group relative flex w-full justify-center rounded-lg bg-indigo-600 px-3 py-3 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 transition-all">
-                    <span v-if="loading"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Processing...</span>
-                    <span v-else>{{ setupMode ? 'Create Admin & Initialize' : 'Enter Dashboard' }}</span>
+                <div v-if="authError" class="text-red-400 text-sm text-center">{{ authError }}</div>
+                <button type="submit" :disabled="loading" class="w-full rounded-lg bg-indigo-600 py-3 font-semibold text-white hover:bg-indigo-500 transition-all">
+                    {{ loading ? 'Authenticating...' : (setupMode ? 'Initialize System' : 'Enter Secure Environment') }}
                 </button>
             </form>
         </div>
     </div>
 
-    <!-- Main App Interface -->
+    <!-- App Interface -->
     <div v-else class="flex h-full overflow-hidden bg-slate-50">
-        
-        <!-- Sidebar (Desktop) -->
-        <aside class="hidden md:flex md:w-64 md:flex-col bg-white border-r border-slate-200 shadow-sm z-10">
-            <div class="flex items-center justify-center h-16 border-b border-slate-100 px-4">
-                <i class="fa-solid fa-dna text-indigo-600 text-xl mr-2"></i>
-                <span class="font-bold text-lg text-slate-800">HumanResearch</span>
+        <!-- Sidebar -->
+        <aside class="hidden md:flex md:w-72 md:flex-col bg-slate-900 border-r border-slate-800 shadow-xl z-20 text-slate-300">
+            <div class="h-16 flex items-center px-6 border-b border-slate-800 font-bold text-white tracking-wider">
+                <i class="fa-solid fa-eye text-indigo-500 mr-3"></i> PSYCH_LAB
             </div>
-            <nav class="flex-1 overflow-y-auto p-4 space-y-1">
-                <a @click="currentTab = 'dashboard'" :class="{'bg-indigo-50 text-indigo-700': currentTab === 'dashboard', 'text-slate-600 hover:bg-slate-50': currentTab !== 'dashboard'}" class="group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg cursor-pointer transition-colors">
-                    <i :class="{'text-indigo-600': currentTab === 'dashboard', 'text-slate-400': currentTab !== 'dashboard'}" class="fa-solid fa-chart-pie mr-3 w-5 text-center"></i>
-                    Dashboard
+            <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
+                <p class="px-3 text-xs font-bold text-slate-500 uppercase tracking-widest mt-4 mb-2">Modules</p>
+                <a @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'" class="flex items-center px-3 py-2 rounded-lg cursor-pointer transition-colors">
+                    <i class="fa-solid fa-chart-network w-6"></i> Dashboard
                 </a>
-                <a @click="currentTab = 'subjects'; fetchSubjects()" :class="{'bg-indigo-50 text-indigo-700': currentTab === 'subjects', 'text-slate-600 hover:bg-slate-50': currentTab !== 'subjects'}" class="group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg cursor-pointer transition-colors">
-                    <i :class="{'text-indigo-600': currentTab === 'subjects', 'text-slate-400': currentTab !== 'subjects'}" class="fa-solid fa-users mr-3 w-5 text-center"></i>
-                    Subjects
+                <a @click="currentTab = 'subjects'; fetchSubjects()" :class="currentTab === 'subjects' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'" class="flex items-center px-3 py-2 rounded-lg cursor-pointer transition-colors">
+                    <i class="fa-solid fa-users-viewfinder w-6"></i> Subjects Directory
                 </a>
-                <a @click="currentTab = 'add'" :class="{'bg-indigo-50 text-indigo-700': currentTab === 'add', 'text-slate-600 hover:bg-slate-50': currentTab !== 'add'}" class="group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg cursor-pointer transition-colors">
-                    <i :class="{'text-indigo-600': currentTab === 'add', 'text-slate-400': currentTab !== 'add'}" class="fa-solid fa-user-plus mr-3 w-5 text-center"></i>
-                    Add Person
+                <a @click="currentTab = 'add'" :class="currentTab === 'add' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'" class="flex items-center px-3 py-2 rounded-lg cursor-pointer transition-colors">
+                    <i class="fa-solid fa-user-plus w-6"></i> New Subject
                 </a>
             </nav>
-            <div class="p-4 border-t border-slate-100">
-                <button @click="logout" class="flex items-center w-full px-3 py-2 text-sm font-medium text-slate-600 rounded-lg hover:bg-slate-50 hover:text-red-600 transition-colors">
-                    <i class="fa-solid fa-right-from-bracket mr-3 w-5 text-center text-slate-400 group-hover:text-red-500"></i>
-                    Sign Out
+            <div class="p-4 border-t border-slate-800">
+                <button @click="logout" class="flex items-center w-full px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
+                    <i class="fa-solid fa-power-off w-6"></i> Terminate Session
                 </button>
             </div>
         </aside>
 
-        <!-- Main Content -->
-        <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Main Area -->
+        <main class="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50 relative">
             <!-- Mobile Header -->
-            <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 px-4 h-16 shrink-0">
-                <div class="flex items-center font-bold text-slate-800">
-                    <i class="fa-solid fa-dna text-indigo-600 text-lg mr-2"></i> HumanResearch
-                </div>
-                <button @click="logout" class="text-slate-500"><i class="fa-solid fa-right-from-bracket"></i></button>
+            <div class="md:hidden flex items-center justify-between bg-slate-900 text-white px-4 h-16 shrink-0 z-30">
+                <span class="font-bold"><i class="fa-solid fa-eye text-indigo-500 mr-2"></i> PSYCH_LAB</span>
+                <button @click="logout"><i class="fa-solid fa-power-off"></i></button>
             </div>
 
+            <!-- Content Container -->
             <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
                 
-                <!-- Dashboard Tab -->
-                <div v-if="currentTab === 'dashboard'" class="max-w-5xl mx-auto space-y-6">
-                    <h1 class="text-2xl font-bold text-slate-900">Research Overview</h1>
+                <!-- Dashboard -->
+                <div v-if="currentTab === 'dashboard'" class="max-w-6xl mx-auto space-y-8">
+                    <header>
+                        <h1 class="text-3xl font-bold text-slate-900">Research Console</h1>
+                        <p class="text-slate-500">System Status: Active Monitoring</p>
+                    </header>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center">
-                            <div class="p-3 rounded-full bg-blue-50 text-blue-600 mr-4"><i class="fa-solid fa-users text-2xl"></i></div>
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Total Subjects</p>
-                                <p class="text-2xl font-bold text-slate-900">{{ subjects.length }}</p>
-                            </div>
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="text-slate-500 text-sm font-medium uppercase">Total Subjects</div>
+                            <div class="text-4xl font-bold text-slate-900 mt-2">{{ subjects.length }}</div>
                         </div>
-                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center">
-                            <div class="p-3 rounded-full bg-emerald-50 text-emerald-600 mr-4"><i class="fa-solid fa-calendar-check text-2xl"></i></div>
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Last Active</p>
-                                <p class="text-2xl font-bold text-slate-900">Today</p>
-                            </div>
+                        <div class="bg-indigo-600 p-6 rounded-xl shadow-lg text-white">
+                            <div class="text-indigo-200 text-sm font-medium uppercase">Active Analysis</div>
+                            <div class="text-2xl font-bold mt-2">Data Collection Mode</div>
+                            <p class="text-indigo-200 text-sm mt-2">Ready for granular input.</p>
                         </div>
-                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center">
-                            <div class="p-3 rounded-full bg-purple-50 text-purple-600 mr-4"><i class="fa-solid fa-database text-2xl"></i></div>
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Data Points</p>
-                                <p class="text-2xl font-bold text-slate-900">Active</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="bg-indigo-600 rounded-2xl p-8 text-white shadow-lg relative overflow-hidden">
-                        <div class="relative z-10">
-                            <h3 class="text-lg font-bold mb-2">Welcome Back, Researcher.</h3>
-                            <p class="text-indigo-100 max-w-xl">"Understanding human behavior is the key to unlocking the potential of our society." Continue your observations today.</p>
-                            <button @click="currentTab = 'add'" class="mt-6 bg-white text-indigo-600 px-6 py-2 rounded-lg font-semibold hover:bg-indigo-50 transition-colors shadow-md">Record New Observation</button>
-                        </div>
-                        <i class="fa-solid fa-brain absolute -bottom-6 -right-6 text-9xl text-indigo-500 opacity-20 transform rotate-12"></i>
                     </div>
                 </div>
 
-                <!-- Subjects List Tab -->
-                <div v-if="currentTab === 'subjects'" class="max-w-6xl mx-auto">
-                    <div class="flex justify-between items-center mb-6">
-                        <h1 class="text-2xl font-bold text-slate-900">Subject Directory</h1>
-                        <button @click="fetchSubjects" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium"><i class="fa-solid fa-rotate mr-1"></i> Refresh</button>
+                <!-- Subjects List -->
+                <div v-if="currentTab === 'subjects'" class="max-w-7xl mx-auto">
+                    <div class="flex justify-between items-center mb-8">
+                        <h1 class="text-3xl font-bold text-slate-900">Directory</h1>
+                        <button @click="fetchSubjects" class="text-indigo-600 hover:text-indigo-800"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
+                    </div>
+                    <div v-if="loading" class="py-12 text-center text-slate-400"><i class="fa-solid fa-circle-notch fa-spin text-2xl"></i></div>
+                    <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div v-for="s in subjects" :key="s.id" @click="viewSubject(s.id)" class="bg-white group hover:ring-2 hover:ring-indigo-500 transition-all cursor-pointer rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                            <div class="p-6">
+                                <div class="flex items-center justify-between mb-4">
+                                    <div class="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center text-lg font-bold text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                                        {{ s.full_name.charAt(0) }}
+                                    </div>
+                                    <span class="text-xs font-mono text-slate-400">#{{ String(s.id).padStart(4, '0') }}</span>
+                                </div>
+                                <h3 class="text-lg font-bold text-slate-900 truncate">{{ s.full_name }}</h3>
+                                <p class="text-sm text-slate-500 truncate">{{ s.occupation || 'No occupation' }}</p>
+                                <div class="mt-4 flex gap-2 text-xs text-slate-400">
+                                    <span v-if="s.gender" class="px-2 py-1 bg-slate-50 rounded">{{ s.gender }}</span>
+                                    <span v-if="s.age" class="px-2 py-1 bg-slate-50 rounded">{{ s.age }}y</span>
+                                </div>
+                            </div>
+                            <div class="bg-slate-50 px-6 py-3 border-t border-slate-100 text-xs text-slate-500 flex justify-between">
+                                <span>Updated {{ new Date(s.created_at).toLocaleDateString() }}</span>
+                                <span class="group-hover:text-indigo-600 font-medium">View Analysis &rarr;</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add Subject (Simple Entry) -->
+                <div v-if="currentTab === 'add'" class="max-w-2xl mx-auto">
+                    <h1 class="text-2xl font-bold text-slate-900 mb-6">Initialize New Subject</h1>
+                    <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200">
+                        <form @submit.prevent="createSubject" class="space-y-6">
+                            <div class="grid grid-cols-2 gap-6">
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-slate-700">Full Name</label>
+                                    <input v-model="newSubject.fullName" type="text" required class="mt-1 block w-full rounded-md border-slate-300 bg-slate-50 border p-3 focus:ring-indigo-500 focus:border-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700">Age</label>
+                                    <input v-model="newSubject.age" type="number" class="mt-1 block w-full rounded-md border-slate-300 bg-slate-50 border p-3">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700">Gender</label>
+                                    <input v-model="newSubject.gender" type="text" class="mt-1 block w-full rounded-md border-slate-300 bg-slate-50 border p-3">
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-slate-700">Initial Occupation</label>
+                                    <input v-model="newSubject.occupation" type="text" class="mt-1 block w-full rounded-md border-slate-300 bg-slate-50 border p-3">
+                                </div>
+                            </div>
+                            <div class="pt-4 flex justify-end">
+                                <button type="submit" :disabled="loading" class="bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 transition-colors">
+                                    {{ loading ? 'Creating...' : 'Create & Start Observing' }}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- DEEP DETAIL VIEW -->
+                <div v-if="currentTab === 'detail' && selectedSubject" class="max-w-6xl mx-auto pb-20">
+                    <!-- Header -->
+                    <div class="flex items-start justify-between mb-6">
+                        <div>
+                            <button @click="currentTab = 'subjects'" class="text-sm text-slate-500 hover:text-indigo-600 mb-2"><i class="fa-solid fa-arrow-left"></i> Back to Directory</button>
+                            <h1 class="text-4xl font-bold text-slate-900">{{ selectedSubject.full_name }}</h1>
+                            <div class="flex items-center gap-4 mt-2 text-slate-500">
+                                <span><i class="fa-solid fa-briefcase mr-1"></i> {{ selectedSubject.occupation || 'N/A' }}</span>
+                                <span><i class="fa-solid fa-location-dot mr-1"></i> {{ selectedSubject.location || 'Unknown Loc' }}</span>
+                                <span class="font-mono text-xs bg-slate-200 px-2 py-0.5 rounded text-slate-600">ID: {{ selectedSubject.id }}</span>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                             <!-- Action Buttons could go here -->
+                        </div>
                     </div>
 
-                    <div v-if="loading" class="flex justify-center py-12"><i class="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-600"></i></div>
-                    
-                    <div v-else-if="subjects.length === 0" class="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-300">
-                        <i class="fa-solid fa-user-ghost text-4xl text-slate-300 mb-3"></i>
-                        <p class="text-slate-500 mb-4">No subjects recorded yet.</p>
-                        <button @click="currentTab = 'add'" class="text-indigo-600 font-medium hover:underline">Add your first subject</button>
+                    <!-- Tabs -->
+                    <div class="flex border-b border-slate-200 mb-6 space-x-6 overflow-x-auto">
+                        <button @click="detailTab = 'overview'" :class="detailTab === 'overview' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'" class="pb-3 border-b-2 font-medium whitespace-nowrap">Overview</button>
+                        <button @click="detailTab = 'analysis'" :class="detailTab === 'analysis' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'" class="pb-3 border-b-2 font-medium whitespace-nowrap"> <i class="fa-solid fa-microscope mr-1"></i> Deep Analysis</button>
+                        <button @click="detailTab = 'timeline'" :class="detailTab === 'timeline' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'" class="pb-3 border-b-2 font-medium whitespace-nowrap"> <i class="fa-solid fa-timeline mr-1"></i> Life Timeline</button>
+                        <button @click="detailTab = 'network'" :class="detailTab === 'network' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'" class="pb-3 border-b-2 font-medium whitespace-nowrap"> <i class="fa-solid fa-circle-nodes mr-1"></i> Relationships</button>
+                        <button @click="detailTab = 'media'" :class="detailTab === 'media' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'" class="pb-3 border-b-2 font-medium whitespace-nowrap"> <i class="fa-solid fa-images mr-1"></i> Media</button>
                     </div>
 
-                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div v-for="person in subjects" :key="person.id" @click="viewSubject(person.id)" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer group">
-                            <div class="flex items-start justify-between">
-                                <div class="flex items-center space-x-3">
-                                    <div class="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-lg group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
-                                        {{ person.full_name.charAt(0) }}
+                    <!-- OVERVIEW TAB -->
+                    <div v-if="detailTab === 'overview'" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div class="lg:col-span-2 space-y-8">
+                            <!-- Basic Data Card -->
+                            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                                <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Core Identity</h3>
+                                <div class="grid grid-cols-2 gap-y-4">
+                                    <div class="group cursor-pointer">
+                                        <div class="text-xs text-slate-400">Age</div>
+                                        <div class="font-medium">{{ selectedSubject.age || '--' }}</div>
+                                    </div>
+                                    <div class="group cursor-pointer">
+                                        <div class="text-xs text-slate-400">Gender</div>
+                                        <div class="font-medium">{{ selectedSubject.gender || '--' }}</div>
+                                    </div>
+                                    <div class="group cursor-pointer">
+                                        <div class="text-xs text-slate-400">Religion</div>
+                                        <div class="font-medium">{{ selectedSubject.religion || '--' }}</div>
+                                    </div>
+                                    <div class="group cursor-pointer">
+                                        <div class="text-xs text-slate-400">Contact</div>
+                                        <div class="font-medium truncate">{{ selectedSubject.contact || '--' }}</div>
+                                    </div>
+                                </div>
+                                <div class="mt-6 bg-amber-50 border border-amber-100 rounded-lg p-4">
+                                    <div class="text-xs text-amber-600 font-bold mb-1">GENERAL NOTES</div>
+                                    <p class="text-slate-700 whitespace-pre-line">{{ selectedSubject.notes || 'No general notes.' }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-6">
+                            <!-- Quick Stats -->
+                            <div class="bg-slate-900 text-white rounded-xl p-6 shadow-lg">
+                                <h3 class="font-bold mb-4">Observation Stats</h3>
+                                <div class="space-y-3 text-sm">
+                                    <div class="flex justify-between"><span>Data Points</span> <span class="font-mono text-indigo-400">{{ selectedSubject.dataPoints?.length || 0 }}</span></div>
+                                    <div class="flex justify-between"><span>Events Logged</span> <span class="font-mono text-indigo-400">{{ selectedSubject.events?.length || 0 }}</span></div>
+                                    <div class="flex justify-between"><span>Connections</span> <span class="font-mono text-indigo-400">{{ selectedSubject.relationships?.length || 0 }}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ANALYSIS TAB (Data Points) -->
+                    <div v-if="detailTab === 'analysis'" class="space-y-6">
+                        <div class="bg-indigo-50 border border-indigo-100 p-4 rounded-lg flex justify-between items-center">
+                            <div>
+                                <h3 class="font-bold text-indigo-900">Granular Analysis</h3>
+                                <p class="text-indigo-700 text-sm">Add specific details with psychological context (e.g., "Why this name?", "Facebook Link").</p>
+                            </div>
+                            <button @click="showAddDataModal = true" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fa-solid fa-plus mr-1"></i> Add Data Point</button>
+                        </div>
+
+                        <div v-if="!selectedSubject.dataPoints || selectedSubject.dataPoints.length === 0" class="text-center py-12 border-2 border-dashed border-slate-200 rounded-xl">
+                            <p class="text-slate-400">No deep data points recorded yet.</p>
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-4">
+                            <div v-for="dp in selectedSubject.dataPoints" :key="dp.id" class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                                <div class="flex items-start justify-between">
+                                    <div>
+                                        <span class="inline-block px-2 py-1 bg-slate-100 text-slate-600 text-xs font-bold uppercase rounded mb-2">{{ dp.category }}</span>
+                                        <h4 class="text-lg font-bold text-slate-800">{{ dp.label }}</h4>
+                                        <div class="font-mono text-slate-900 bg-slate-50 inline-block px-2 py-1 rounded mt-1 border border-slate-200">{{ dp.value }}</div>
+                                    </div>
+                                    <span class="text-xs text-slate-400">{{ new Date(dp.created_at).toLocaleDateString() }}</span>
+                                </div>
+                                <div v-if="dp.analysis" class="mt-4 pt-4 border-t border-slate-100">
+                                    <p class="text-sm font-bold text-slate-400 mb-1"><i class="fa-solid fa-comment-dots mr-1"></i> RESEARCHER THOUGHTS</p>
+                                    <p class="text-slate-700 italic">"{{ dp.analysis }}"</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TIMELINE TAB -->
+                    <div v-if="detailTab === 'timeline'" class="max-w-3xl">
+                        <div class="flex justify-end mb-4">
+                            <button @click="showAddEventModal = true" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fa-solid fa-calendar-plus mr-1"></i> Log Event</button>
+                        </div>
+                        <div class="relative border-l-2 border-slate-200 ml-4 space-y-8">
+                            <div v-for="evt in selectedSubject.events" :key="evt.id" class="relative pl-8">
+                                <div class="absolute -left-2 top-0 h-4 w-4 rounded-full bg-indigo-600 border-2 border-white shadow"></div>
+                                <div class="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
+                                    <span class="text-xs font-bold text-indigo-600 uppercase">{{ evt.event_date || 'Unknown Date' }}</span>
+                                    <h4 class="text-lg font-bold text-slate-900 mt-1">{{ evt.title }}</h4>
+                                    <p class="text-slate-600 mt-2">{{ evt.description }}</p>
+                                </div>
+                            </div>
+                            <div v-if="!selectedSubject.events?.length" class="pl-8 text-slate-400 italic">No events logged.</div>
+                        </div>
+                    </div>
+
+                    <!-- NETWORK TAB -->
+                    <div v-if="detailTab === 'network'">
+                        <div class="flex justify-end mb-4">
+                            <button @click="showAddRelModal = true" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"><i class="fa-solid fa-link mr-1"></i> Add Connection</button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div v-for="rel in selectedSubject.relationships" :key="rel.id" class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold mr-3">
+                                        {{ rel.target_name.charAt(0) }}
                                     </div>
                                     <div>
-                                        <h3 class="font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors">{{ person.full_name }}</h3>
-                                        <p class="text-xs text-slate-500 uppercase tracking-wide">{{ person.occupation || 'Unknown' }}</p>
+                                        <p class="font-bold text-slate-900">{{ rel.target_name }}</p>
+                                        <p class="text-xs text-slate-500">is {{ selectedSubject.full_name }}'s <span class="font-bold text-indigo-600">{{ rel.relationship_type }}</span></p>
                                     </div>
                                 </div>
+                                <button @click="viewSubject(rel.subject_b_id)" class="text-sm text-indigo-600 hover:underline">View</button>
                             </div>
-                            <div class="mt-4 flex items-center space-x-4 text-sm text-slate-500">
-                                <span v-if="person.age"><i class="fa-solid fa-cake-candles mr-1.5 text-slate-400"></i> {{ person.age }}y</span>
-                                <span v-if="person.location"><i class="fa-solid fa-location-dot mr-1.5 text-slate-400"></i> {{ person.location }}</span>
-                            </div>
-                            <div class="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-400 flex justify-between">
-                                <span>ID: #{{ String(person.id).padStart(4, '0') }}</span>
-                                <span>Added: {{ new Date(person.created_at).toLocaleDateString() }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Add Subject Tab -->
-                <div v-if="currentTab === 'add'" class="max-w-2xl mx-auto">
-                    <h1 class="text-2xl font-bold text-slate-900 mb-6">New Subject Entry</h1>
-                    <form @submit.prevent="createSubject" class="bg-white shadow-sm border border-slate-200 rounded-xl p-6 md:p-8 space-y-6">
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-slate-700">Full Name</label>
-                                <input v-model="newSubject.fullName" type="text" required class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-medium text-slate-700">Age</label>
-                                <input v-model="newSubject.age" type="number" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-medium text-slate-700">Gender</label>
-                                <select v-model="newSubject.gender" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                                    <option value="">Select...</option>
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                    <option value="Non-binary">Non-binary</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-medium text-slate-700">Occupation (What they do)</label>
-                                <input v-model="newSubject.occupation" type="text" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-medium text-slate-700">Religion/Beliefs</label>
-                                <input v-model="newSubject.religion" type="text" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                             <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-slate-700">Location/Address</label>
-                                <input v-model="newSubject.location" type="text" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                            <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-slate-700">Contact Info</label>
-                                <input v-model="newSubject.contact" type="text" placeholder="Phone, Email, Socials..." class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500">
-                            </div>
-
-                            <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-slate-700">Observed Habits</label>
-                                <textarea v-model="newSubject.habits" rows="3" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
-                            </div>
-
-                            <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-slate-700">Detailed Notes</label>
-                                <textarea v-model="newSubject.notes" rows="5" class="mt-1 block w-full rounded-lg border-slate-300 bg-slate-50 border p-2.5 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
-                            </div>
-                        </div>
-
-                        <div class="pt-4 border-t border-slate-100 flex justify-end space-x-3">
-                            <button type="button" @click="currentTab = 'dashboard'" class="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">Cancel</button>
-                            <button type="submit" :disabled="loading" class="px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                                {{ loading ? 'Saving...' : 'Save Record' }}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- Subject Detail View -->
-                <div v-if="currentTab === 'detail' && selectedSubject" class="max-w-4xl mx-auto pb-20">
-                    <button @click="currentTab = 'subjects'" class="mb-4 text-sm text-slate-500 hover:text-indigo-600 flex items-center"><i class="fa-solid fa-arrow-left mr-2"></i> Back to Directory</button>
-                    
-                    <div class="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden mb-6">
-                        <div class="bg-slate-50 p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                            <div>
-                                <h1 class="text-3xl font-bold text-slate-900">{{ selectedSubject.full_name }}</h1>
-                                <p class="text-slate-500 mt-1 flex items-center gap-3">
-                                    <span v-if="selectedSubject.occupation"><i class="fa-solid fa-briefcase text-slate-400"></i> {{ selectedSubject.occupation }}</span>
-                                    <span v-if="selectedSubject.location"><i class="fa-solid fa-map-pin text-slate-400"></i> {{ selectedSubject.location }}</span>
-                                </p>
-                            </div>
-                            <div class="flex gap-2">
-                                <span class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold uppercase tracking-wide">Subject #{{ selectedSubject.id }}</span>
-                                <span v-if="selectedSubject.gender" class="px-3 py-1 bg-slate-100 text-slate-700 rounded-full text-xs font-bold uppercase tracking-wide">{{ selectedSubject.gender }}</span>
-                            </div>
-                        </div>
-
-                        <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div>
-                                <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Personal Details</h3>
-                                <dl class="space-y-3">
-                                    <div v-if="selectedSubject.age" class="flex justify-between border-b border-slate-50 pb-2"><dt class="text-slate-500">Age</dt><dd class="font-medium text-slate-900">{{ selectedSubject.age }}</dd></div>
-                                    <div v-if="selectedSubject.religion" class="flex justify-between border-b border-slate-50 pb-2"><dt class="text-slate-500">Religion</dt><dd class="font-medium text-slate-900">{{ selectedSubject.religion }}</dd></div>
-                                    <div v-if="selectedSubject.contact" class="flex justify-between border-b border-slate-50 pb-2"><dt class="text-slate-500">Contact</dt><dd class="font-medium text-slate-900">{{ selectedSubject.contact }}</dd></div>
-                                </dl>
-                            </div>
-
-                            <div>
-                                <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Habits & Patterns</h3>
-                                <div class="bg-slate-50 p-4 rounded-lg text-slate-700 text-sm leading-relaxed whitespace-pre-line">
-                                    {{ selectedSubject.habits || 'No habits recorded.' }}
-                                </div>
-                            </div>
-
-                            <div class="md:col-span-2">
-                                <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Research Notes</h3>
-                                <div class="bg-amber-50 p-5 rounded-lg border border-amber-100 text-slate-800 leading-relaxed whitespace-pre-line font-serif text-lg">
-                                    {{ selectedSubject.notes || 'No detailed notes recorded.' }}
-                                </div>
-                            </div>
+                            <div v-if="!selectedSubject.relationships?.length" class="col-span-2 text-center py-8 text-slate-400">No relationships mapped.</div>
                         </div>
                     </div>
 
-                    <!-- Media Gallery -->
-                    <div class="bg-white shadow-sm border border-slate-200 rounded-2xl p-6">
-                        <div class="flex justify-between items-center mb-6">
-                            <h3 class="text-lg font-bold text-slate-900">Visual Evidence</h3>
-                            <label class="cursor-pointer bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors">
-                                <i class="fa-solid fa-camera mr-2"></i> Upload Photo
+                    <!-- MEDIA TAB -->
+                    <div v-if="detailTab === 'media'">
+                        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
+                             <label class="cursor-pointer bg-slate-100 border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center hover:bg-slate-50 transition-colors">
+                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400 mb-2"></i>
+                                <span class="font-medium text-slate-600">Upload Evidence Photo</span>
                                 <input type="file" @change="uploadPhoto" class="hidden" accept="image/*">
                             </label>
+                            <div v-if="uploading" class="mt-4 text-center text-indigo-600"><i class="fa-solid fa-circle-notch fa-spin"></i> Processing encrypted upload...</div>
                         </div>
-                        
-                        <div v-if="uploading" class="mb-4 bg-blue-50 text-blue-700 p-3 rounded-lg text-sm flex items-center">
-                            <i class="fa-solid fa-circle-notch fa-spin mr-3"></i> Uploading media to secure storage...
-                        </div>
-
-                        <div v-if="selectedSubject.media && selectedSubject.media.length > 0" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div v-for="img in selectedSubject.media" :key="img.object_key" class="aspect-square bg-slate-100 rounded-lg overflow-hidden relative group">
-                                <img :src="'/api/media/' + img.object_key" class="w-full h-full object-cover">
-                                <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <a :href="'/api/media/' + img.object_key" target="_blank" class="text-white bg-white/20 p-2 rounded-full hover:bg-white/40"><i class="fa-solid fa-expand"></i></a>
+                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div v-for="img in selectedSubject.media" :key="img.object_key" class="group relative aspect-square bg-black rounded-lg overflow-hidden">
+                                <img :src="'/api/media/' + img.object_key" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
+                                <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 translate-y-full group-hover:translate-y-0 transition-transform">
+                                    <p class="text-white text-xs truncate">{{ img.description || 'No caption' }}</p>
+                                    <a :href="'/api/media/' + img.object_key" target="_blank" class="text-indigo-300 text-xs hover:text-white mt-1 inline-block">Full Size &rarr;</a>
                                 </div>
                             </div>
-                        </div>
-                        <div v-else class="text-center py-8 text-slate-400 italic">
-                            No visual records available.
                         </div>
                     </div>
 
@@ -483,20 +565,110 @@ async function serveHome(request, env, ctx) {
 
             </div>
             
-            <!-- Mobile Navigation Bottom Bar -->
-            <div class="md:hidden bg-white border-t border-slate-200 flex justify-around py-3 pb-safe shrink-0 text-xs font-medium text-slate-500">
-                <button @click="currentTab = 'dashboard'" :class="{'text-indigo-600': currentTab === 'dashboard'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-chart-pie text-xl mb-1"></i> Dashboard
-                </button>
-                <button @click="currentTab = 'subjects'; fetchSubjects()" :class="{'text-indigo-600': currentTab === 'subjects'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-users text-xl mb-1"></i> Subjects
-                </button>
-                <button @click="currentTab = 'add'" :class="{'text-indigo-600': currentTab === 'add'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-circle-plus text-xl mb-1"></i> Add
-                </button>
+            <!-- Mobile Nav -->
+            <div class="md:hidden bg-slate-900 text-slate-400 flex justify-around py-3 pb-safe shrink-0 border-t border-slate-800">
+                <button @click="currentTab = 'dashboard'" :class="{'text-white': currentTab === 'dashboard'}"><i class="fa-solid fa-chart-pie text-xl"></i></button>
+                <button @click="currentTab = 'subjects'; fetchSubjects()" :class="{'text-white': currentTab === 'subjects'}"><i class="fa-solid fa-users text-xl"></i></button>
+                <button @click="currentTab = 'add'" :class="{'text-white': currentTab === 'add'}"><i class="fa-solid fa-plus-circle text-xl"></i></button>
             </div>
         </main>
     </div>
+
+    <!-- Modals -->
+    <!-- Add Data Point Modal -->
+    <div v-if="showAddDataModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+            <h3 class="text-lg font-bold mb-4">Add Detailed Observation</h3>
+            <form @submit.prevent="saveDataPoint">
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Category</label>
+                        <select v-model="newDataPoint.category" class="w-full border rounded p-2 mt-1">
+                            <option>Identity</option>
+                            <option>Psychology</option>
+                            <option>Social</option>
+                            <option>Background</option>
+                            <option>Physical</option>
+                            <option>Other</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Label (e.g. "Name Origin")</label>
+                        <input v-model="newDataPoint.label" required class="w-full border rounded p-2 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Value (The Fact)</label>
+                        <input v-model="newDataPoint.value" required class="w-full border rounded p-2 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Analysis (Your Thoughts)</label>
+                        <textarea v-model="newDataPoint.analysis" rows="3" class="w-full border rounded p-2 mt-1" placeholder="Why is this significant?"></textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="showAddDataModal = false" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Save Observation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Event Modal -->
+    <div v-if="showAddEventModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+            <h3 class="text-lg font-bold mb-4">Log Life Event</h3>
+            <form @submit.prevent="saveEvent">
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Event Date</label>
+                        <input type="date" v-model="newEvent.eventDate" required class="w-full border rounded p-2 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Title</label>
+                        <input v-model="newEvent.title" required class="w-full border rounded p-2 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Description</label>
+                        <textarea v-model="newEvent.description" rows="3" class="w-full border rounded p-2 mt-1"></textarea>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="showAddEventModal = false" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Log Event</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Relationship Modal -->
+    <div v-if="showAddRelModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+            <h3 class="text-lg font-bold mb-4">Add Connection</h3>
+            <form @submit.prevent="saveRelationship">
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Connect With</label>
+                        <select v-model="newRel.subjectB" required class="w-full border rounded p-2 mt-1">
+                            <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Relationship Type (is a ... of)</label>
+                        <input v-model="newRel.type" placeholder="e.g. Mother, Friend, Enemy" required class="w-full border rounded p-2 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 uppercase">Notes</label>
+                        <input v-model="newRel.notes" class="w-full border rounded p-2 mt-1">
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="showAddRelModal = false" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Link Subjects</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
   </div>
 
   <script>
@@ -504,32 +676,35 @@ async function serveHome(request, env, ctx) {
 
     createApp({
       setup() {
-        // State
-        const view = ref('auth'); // auth, app
-        const currentTab = ref('dashboard'); // dashboard, subjects, add, detail
+        // Core State
+        const view = ref('auth');
+        const currentTab = ref('dashboard');
+        const detailTab = ref('overview');
         const setupMode = ref(false);
         const loading = ref(false);
         const uploading = ref(false);
         const authError = ref('');
         const subjects = ref([]);
         const selectedSubject = ref(null);
-        
-        const authForm = reactive({ email: '', password: '' });
-        const newSubject = reactive({
-            fullName: '', age: '', gender: '', occupation: '', religion: '', 
-            location: '', contact: '', habits: '', notes: ''
-        });
 
-        // Computed / Methods
+        // Modals
+        const showAddDataModal = ref(false);
+        const showAddEventModal = ref(false);
+        const showAddRelModal = ref(false);
+
+        // Forms
+        const authForm = reactive({ email: '', password: '' });
+        const newSubject = reactive({ fullName: '', age: '', gender: '', occupation: '' }); // Simplified initial creation
+        const newDataPoint = reactive({ category: 'Identity', label: '', value: '', analysis: '' });
+        const newEvent = reactive({ title: '', description: '', eventDate: '' });
+        const newRel = reactive({ subjectB: '', type: '', notes: '' });
+
         const checkStatus = async () => {
             try {
                 const res = await fetch('/api/status');
                 const data = await res.json();
-                if (!data.adminExists) {
-                    setupMode.value = true;
-                } else {
-                    setupMode.value = false;
-                    // Check if already logged in locally
+                if (!data.adminExists) setupMode.value = true;
+                else {
                     const storedUser = localStorage.getItem('human_admin_id');
                     if (storedUser) {
                         view.value = 'app';
@@ -542,55 +717,38 @@ async function serveHome(request, env, ctx) {
         const handleAuth = async () => {
             loading.value = true;
             authError.value = '';
-            
             const endpoint = setupMode.value ? '/api/setup-admin' : '/api/login';
-            
             try {
                 const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(authForm)
                 });
-                
                 const data = await res.json();
-                
                 if (res.ok) {
-                    if (data.id) localStorage.setItem('human_admin_id', data.id);
+                    localStorage.setItem('human_admin_id', data.id);
                     view.value = 'app';
-                    if (setupMode.value) {
-                         // Reset setup mode after successful creation
-                         setupMode.value = false;
-                    }
+                    setupMode.value = false;
                     fetchSubjects();
                 } else {
                     authError.value = data.error || 'Authentication failed';
                 }
-            } catch (e) {
-                authError.value = 'Network error occurred';
-            } finally {
-                loading.value = false;
-            }
+            } catch (e) { authError.value = 'Network error occurred'; }
+            finally { loading.value = false; }
         };
 
         const logout = () => {
             localStorage.removeItem('human_admin_id');
-            authForm.email = '';
-            authForm.password = '';
             view.value = 'auth';
         };
 
         const fetchSubjects = async () => {
             const adminId = localStorage.getItem('human_admin_id');
             if (!adminId) return;
-            
-            loading.value = true;
             try {
                 const res = await fetch('/api/subjects?adminId=' + adminId);
-                if (res.ok) {
-                    subjects.value = await res.json();
-                }
+                if (res.ok) subjects.value = await res.json();
             } catch(e) { console.error(e); }
-            finally { loading.value = false; }
         };
 
         const viewSubject = async (id) => {
@@ -600,6 +758,7 @@ async function serveHome(request, env, ctx) {
                 if (res.ok) {
                     selectedSubject.value = await res.json();
                     currentTab.value = 'detail';
+                    detailTab.value = 'overview';
                 }
             } catch(e) { console.error(e); }
             finally { loading.value = false; }
@@ -607,8 +766,6 @@ async function serveHome(request, env, ctx) {
 
         const createSubject = async () => {
             const adminId = localStorage.getItem('human_admin_id');
-            if (!adminId) return;
-
             loading.value = true;
             try {
                 const payload = { ...newSubject, adminId: parseInt(adminId) };
@@ -617,31 +774,74 @@ async function serveHome(request, env, ctx) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
                 if (res.ok) {
-                    // Reset form
                     Object.keys(newSubject).forEach(k => newSubject[k] = '');
                     await fetchSubjects();
                     currentTab.value = 'subjects';
-                } else {
-                    alert('Error saving subject');
                 }
             } catch (e) { console.error(e); }
             finally { loading.value = false; }
         };
 
+        // --- Deep Data Functions ---
+
+        const saveDataPoint = async () => {
+            if(!selectedSubject.value) return;
+            try {
+                const res = await fetch('/api/data-point', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...newDataPoint, subjectId: selectedSubject.value.id })
+                });
+                if(res.ok) {
+                    showAddDataModal.value = false;
+                    // Reset
+                    newDataPoint.label = ''; newDataPoint.value = ''; newDataPoint.analysis = '';
+                    await viewSubject(selectedSubject.value.id);
+                }
+            } catch(e) { console.error(e); }
+        };
+
+        const saveEvent = async () => {
+             if(!selectedSubject.value) return;
+            try {
+                const res = await fetch('/api/event', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...newEvent, subjectId: selectedSubject.value.id })
+                });
+                if(res.ok) {
+                    showAddEventModal.value = false;
+                    newEvent.title = ''; newEvent.description = '';
+                    await viewSubject(selectedSubject.value.id);
+                }
+            } catch(e) { console.error(e); }
+        };
+
+        const saveRelationship = async () => {
+             if(!selectedSubject.value) return;
+            try {
+                const res = await fetch('/api/relationship', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...newRel, subjectA: selectedSubject.value.id })
+                });
+                if(res.ok) {
+                    showAddRelModal.value = false;
+                    newRel.subjectB = ''; newRel.type = ''; newRel.notes = '';
+                    await viewSubject(selectedSubject.value.id);
+                }
+            } catch(e) { console.error(e); }
+        };
+
         const uploadPhoto = async (e) => {
             const file = e.target.files[0];
             if (!file || !selectedSubject.value) return;
-
             uploading.value = true;
-            
-            // Convert to base64
             const reader = new FileReader();
             reader.readAsDataURL(file);
             reader.onload = async () => {
                 const base64 = reader.result.split(',')[1];
-                
                 try {
                     const res = await fetch('/api/upload-photo', {
                         method: 'POST',
@@ -650,16 +850,11 @@ async function serveHome(request, env, ctx) {
                             subjectId: selectedSubject.value.id,
                             filename: file.name,
                             contentType: file.type,
-                            data: base64
+                            data: base64,
+                            description: 'Research Evidence' 
                         })
                     });
-
-                    if (res.ok) {
-                        // Refresh details to show new image
-                        await viewSubject(selectedSubject.value.id);
-                    } else {
-                        alert('Upload failed');
-                    }
+                    if (res.ok) await viewSubject(selectedSubject.value.id);
                 } catch(e) { console.error(e); }
                 finally { uploading.value = false; }
             };
@@ -670,9 +865,11 @@ async function serveHome(request, env, ctx) {
         });
 
         return {
-            view, currentTab, setupMode, loading, uploading, authForm, authError,
-            subjects, selectedSubject, newSubject,
-            handleAuth, logout, fetchSubjects, viewSubject, createSubject, uploadPhoto
+            view, currentTab, detailTab, setupMode, loading, uploading, authForm, authError,
+            subjects, selectedSubject, newSubject, newDataPoint, newEvent, newRel,
+            showAddDataModal, showAddEventModal, showAddRelModal,
+            handleAuth, logout, fetchSubjects, viewSubject, createSubject, uploadPhoto,
+            saveDataPoint, saveEvent, saveRelationship
         };
       }
     }).mount('#app');
@@ -739,8 +936,8 @@ async function handleGetSubjects(request, db) {
     return Response.json(results);
 }
 
-async function handleGetSubjectDetail(request, db, bucket, id) {
-    const result = await getSubjectDetail(db, id, bucket);
+async function handleGetSubjectDetail(request, db, id) {
+    const result = await getSubjectDetail(db, id);
     if (!result) return Response.json({ error: 'Not found' }, { status: 404 });
     return Response.json(result);
 }
@@ -760,14 +957,36 @@ async function handleCreateSubject(request, db) {
     age: payload.age,
     gender: payload.gender,
     occupation: payload.occupation,
-    religion: payload.religion,
-    location: payload.location,
-    contact: payload.contact?.trim() || null,
-    habits: payload.habits?.trim() || null,
-    notes: payload.notes?.trim() || null,
+    // Other fields can be updated later via data points, 
+    // but we support basic init here
+    religion: payload.religion || null,
+    location: payload.location || null,
   });
 
   return Response.json({ id: result.id, createdAt: result.createdAt });
+}
+
+// --- New Deep Data Handlers ---
+
+async function handleAddDataPoint(request, db) {
+    const payload = await request.json();
+    if (!payload.subjectId || !payload.label) return Response.json({ error: 'Missing data' }, { status: 400 });
+    await addDataPoint(db, payload);
+    return Response.json({ success: true });
+}
+
+async function handleAddEvent(request, db) {
+    const payload = await request.json();
+    if (!payload.subjectId || !payload.title) return Response.json({ error: 'Missing data' }, { status: 400 });
+    await addEvent(db, payload);
+    return Response.json({ success: true });
+}
+
+async function handleAddRelationship(request, db) {
+    const payload = await request.json();
+    if (!payload.subjectA || !payload.subjectB || !payload.type) return Response.json({ error: 'Missing data' }, { status: 400 });
+    await addRelationship(db, payload);
+    return Response.json({ success: true });
 }
 
 async function handleUploadPhoto(request, db, bucket) {
@@ -776,6 +995,7 @@ async function handleUploadPhoto(request, db, bucket) {
   const rawName = (payload.filename || '').trim();
   const contentType = (payload.contentType || '').trim();
   const base64 = payload.data;
+  const description = payload.description || '';
 
   if (!subjectId || subjectId < 1 || !rawName || !base64 || !contentType) {
     return Response.json(
@@ -789,7 +1009,7 @@ async function handleUploadPhoto(request, db, bucket) {
   const binary = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
   await bucket.put(key, binary, { httpMetadata: { contentType } });
-  await recordMedia(db, subjectId, key, contentType);
+  await recordMedia(db, subjectId, key, contentType, description);
 
   return Response.json({ key });
 }
@@ -815,7 +1035,6 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // CORS Headers for API (optional if serving from same origin, but good practice)
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -843,13 +1062,11 @@ export default {
                 return handleSetupAdmin(request, env.DB);
             }
             if (request.method === 'GET' && pathname === '/api/subjects') {
-                // Check if it's a list or detail
-                // List: /api/subjects
+                if (pathname.match(/^\/api\/subjects\/\d+$/)) {
+                     const id = pathname.split('/').pop();
+                     return handleGetSubjectDetail(request, env.DB, id);
+                }
                 return handleGetSubjects(request, env.DB);
-            }
-            if (request.method === 'GET' && pathname.match(/^\/api\/subjects\/\d+$/)) {
-                 const id = pathname.split('/').pop();
-                 return handleGetSubjectDetail(request, env.DB, env.BUCKET, id);
             }
             if (request.method === 'POST' && pathname === '/api/subjects') {
                 return handleCreateSubject(request, env.DB);
@@ -860,6 +1077,17 @@ export default {
             if (request.method === 'GET' && pathname.startsWith('/api/media/')) {
                 const key = pathname.replace('/api/media/', '');
                 return handleServeMedia(request, env.BUCKET, key);
+            }
+            
+            // New Endpoints
+            if (request.method === 'POST' && pathname === '/api/data-point') {
+                return handleAddDataPoint(request, env.DB);
+            }
+            if (request.method === 'POST' && pathname === '/api/event') {
+                return handleAddEvent(request, env.DB);
+            }
+            if (request.method === 'POST' && pathname === '/api/relationship') {
+                return handleAddRelationship(request, env.DB);
             }
         }
 
