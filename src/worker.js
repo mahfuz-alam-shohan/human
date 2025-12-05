@@ -5,7 +5,7 @@ const ALLOWED_ORIGINS = ['*'];
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024; // 15MB
 
 // --- Schema Definitions ---
-// We add new migrations for the requested specific details
+// MIGRATIONS: Add SQL statements here to evolve the schema over time.
 const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
   "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
@@ -14,18 +14,18 @@ const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
   "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
   "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
-  // New Physical Attributes
+  // Physical Attributes
   "ALTER TABLE subjects ADD COLUMN height TEXT",
   "ALTER TABLE subjects ADD COLUMN weight TEXT",
   "ALTER TABLE subjects ADD COLUMN eye_color TEXT",
   "ALTER TABLE subjects ADD COLUMN hair_color TEXT",
   "ALTER TABLE subjects ADD COLUMN blood_type TEXT",
   "ALTER TABLE subjects ADD COLUMN identifying_marks TEXT",
-  // New Psychological & Digital Profile
+  // Psychological & Digital Profile
   "ALTER TABLE subjects ADD COLUMN mbti TEXT",
   "ALTER TABLE subjects ADD COLUMN alignment TEXT",
-  "ALTER TABLE subjects ADD COLUMN social_links TEXT", -- JSON string
-  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT" -- JSON string or text
+  "ALTER TABLE subjects ADD COLUMN social_links TEXT",
+  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT"
 ];
 
 // --- Helper Functions ---
@@ -43,7 +43,10 @@ async function hashPassword(secret) {
 }
 
 function sanitizeFileName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'upload';
+  return name.toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '') || 'upload';
 }
 
 function response(data, status = 200) {
@@ -51,6 +54,16 @@ function response(data, status = 200) {
         status,
         headers: {
             'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        }
+    });
+}
+
+function csvResponse(csvData, filename) {
+    return new Response(csvData, {
+        headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${filename}"`,
             'Access-Control-Allow-Origin': '*'
         }
     });
@@ -64,6 +77,9 @@ function errorResponse(msg, status = 500) {
 
 async function ensureSchema(db) {
   try {
+      // Enforce foreign keys for data integrity
+      await db.prepare("PRAGMA foreign_keys = ON;").run();
+
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
@@ -180,6 +196,10 @@ async function handleUpdateSubject(req, db, id) {
 }
 
 async function handleDeleteItem(req, db, table, id) {
+    // Validate table name to prevent SQL injection
+    const allowedTables = ['subjects', 'subject_data_points', 'subject_events', 'subject_relationships'];
+    if(!allowedTables.includes(table)) return errorResponse("Invalid table", 400);
+
     if(table === 'subjects') {
         // Soft delete/archive
         await db.prepare("UPDATE subjects SET is_archived = 1 WHERE id = ?").bind(id).run();
@@ -187,6 +207,26 @@ async function handleDeleteItem(req, db, table, id) {
         await db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
     }
     return response({ success: true });
+}
+
+async function handleExportCSV(db, adminId) {
+    const subjects = await db.prepare("SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
+    if (!subjects.results.length) return errorResponse("No data to export", 404);
+
+    const headers = Object.keys(subjects.results[0]).join(',');
+    const rows = subjects.results.map(row => 
+        Object.values(row).map(val => {
+            if (val === null) return '';
+            const str = String(val);
+            // Escape quotes and wrap in quotes if contains comma
+            return str.includes(',') || str.includes('"') || str.includes('\n') 
+                ? `"${str.replace(/"/g, '""')}"` 
+                : str;
+        }).join(',')
+    );
+    
+    const csv = [headers, ...rows].join('\n');
+    return csvResponse(csv, `subjects_export_${new Date().toISOString().split('T')[0]}.csv`);
 }
 
 // --- Frontend Application ---
@@ -212,12 +252,17 @@ function serveHtml() {
           colors: {
              obsidian: '#020617',
              charcoal: '#0f172a',
-             primary: '#6366f1', // Indigo
-             accent: '#06b6d4', // Cyan
-             alert: '#ef4444', // Red
+             primary: '#6366f1',
+             accent: '#06b6d4',
+             alert: '#ef4444',
           },
-          screens: {
-            'xs': '475px',
+          animation: {
+            'fade-in': 'fadeIn 0.3s ease-out',
+            'slide-up': 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+          },
+          keyframes: {
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
           }
         }
       }
@@ -226,33 +271,44 @@ function serveHtml() {
 
   <style>
     body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
     
     .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); }
     .glass-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); color: white; }
     .glass-input:focus { border-color: #6366f1; outline: none; background: rgba(30, 41, 59, 0.8); }
-    .glass-tab { background: rgba(30, 41, 59, 0.3); }
     
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
     
-    .slide-up-enter-active { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
-    .slide-up-enter-from { transform: translateY(100%); }
-    
-    #network-graph { width: 100%; height: 100%; }
-    .confidence-meter { height: 4px; background: #334155; border-radius: 2px; overflow: hidden; }
-    .confidence-fill { height: 100%; transition: width 0.5s ease; }
+    .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+    .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(10px); }
 
-    /* Mobile First Utilities */
-    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-    .custom-scrollbar::-webkit-scrollbar { width: 0px; background: transparent; }
+    #network-graph { width: 100%; height: 100%; }
     .touch-target { min-height: 44px; min-width: 44px; }
+    
+    .loader { border: 2px solid #334155; border-top: 2px solid #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body class="h-full text-slate-200 antialiased overflow-hidden bg-obsidian selection:bg-indigo-500/30">
   <div id="app" class="h-full flex flex-col">
+
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-6 right-6 z-[200] flex flex-col gap-2 pointer-events-none">
+        <transition-group name="toast">
+            <div v-for="t in toasts" :key="t.id" class="pointer-events-auto glass-panel border-l-4 p-4 rounded-lg shadow-2xl flex items-center gap-3 min-w-[300px]" 
+                 :class="t.type === 'error' ? 'border-red-500 bg-red-900/10' : 'border-emerald-500 bg-emerald-900/10'">
+                <i :class="t.type === 'error' ? 'fa-solid fa-circle-exclamation text-red-400' : 'fa-solid fa-circle-check text-emerald-400'"></i>
+                <div>
+                    <h4 class="font-bold text-sm text-white">{{ t.title }}</h4>
+                    <p class="text-xs text-slate-400">{{ t.msg }}</p>
+                </div>
+            </div>
+        </transition-group>
+    </div>
 
     <!-- Global Lightbox -->
     <transition name="fade">
@@ -272,7 +328,7 @@ function serveHtml() {
 
     <!-- Authentication View -->
     <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center p-6 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-cover">
-        <div class="w-full max-w-sm glass-panel p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+        <div class="w-full max-w-sm glass-panel p-8 rounded-3xl shadow-2xl relative overflow-hidden animate-slide-up">
             <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
             <div class="text-center mb-8">
                 <div class="w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
@@ -288,15 +344,15 @@ function serveHtml() {
                 </div>
                 <div class="space-y-2">
                     <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Identity</label>
-                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-4 rounded-xl transition-all">
+                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-4 rounded-xl transition-all" required>
                 </div>
                 <div class="space-y-2">
                     <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Passcode</label>
-                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-4 rounded-xl transition-all">
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-4 rounded-xl transition-all" required>
                 </div>
-                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 touch-target">
-                    <span v-if="loading"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Decrypting...</span>
-                    <span v-else>{{ setupMode ? 'Initialize System' : 'Access Terminal' }}</span>
+                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 touch-target flex justify-center items-center">
+                    <span v-if="loading" class="loader border-white/30 border-t-white mr-2"></span>
+                    <span>{{ setupMode ? 'Initialize System' : 'Access Terminal' }}</span>
                 </button>
             </form>
         </div>
@@ -321,7 +377,10 @@ function serveHtml() {
                     </a>
                 </template>
             </nav>
-            <div class="p-4 border-t border-slate-800/50">
+            <div class="p-4 border-t border-slate-800/50 space-y-2">
+                <button @click="downloadCSV" class="flex items-center w-full px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl transition-all text-sm font-medium">
+                    <i class="fa-solid fa-file-csv w-6 mr-2"></i> Export Data
+                </button>
                 <button @click="logout" class="flex items-center w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all text-sm font-medium">
                     <i class="fa-solid fa-power-off w-6 mr-2"></i> Disconnect
                 </button>
@@ -333,7 +392,7 @@ function serveHtml() {
             
             <!-- Dashboard View -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-                <div class="max-w-5xl mx-auto space-y-6 md:space-y-8">
+                <div class="max-w-5xl mx-auto space-y-6 md:space-y-8 animate-fade-in">
                     <header class="flex justify-between items-end">
                         <div>
                             <h2 class="text-2xl md:text-3xl font-black text-white">Command Center</h2>
@@ -356,9 +415,9 @@ function serveHtml() {
                             <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Media Files</div>
                             <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.total_media || 0 }}</div>
                         </div>
-                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors" @click="openModal('add-subject')">
+                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors group" @click="openModal('add-subject')">
                             <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Quick Action</div>
-                            <div class="text-sm font-bold text-amber-400 flex items-center mt-1"><i class="fa-solid fa-plus mr-2"></i> Add Subject</div>
+                            <div class="text-sm font-bold text-amber-400 flex items-center mt-1 group-hover:translate-x-1 transition-transform"><i class="fa-solid fa-plus mr-2"></i> Add Subject</div>
                         </div>
                     </div>
 
@@ -398,11 +457,11 @@ function serveHtml() {
                              <button @click="openModal('add-subject')" class="md:hidden bg-indigo-600 text-white w-8 h-8 rounded-lg shadow-lg flex items-center justify-center"><i class="fa-solid fa-plus"></i></button>
                         </div>
                         <div class="flex gap-2 w-full md:w-auto">
-                            <div class="relative flex-1 md:w-64">
-                                <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500 text-sm"></i>
-                                <input v-model="searchQuery" placeholder="Search code, name or tag..." class="glass-input w-full pl-9 pr-4 py-3 md:py-2.5 rounded-xl text-sm">
+                            <div class="relative flex-1 md:w-64 group">
+                                <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500 text-sm group-focus-within:text-indigo-400 transition-colors"></i>
+                                <input id="searchInput" v-model="searchQuery" placeholder="Search (Cmd+K)" class="glass-input w-full pl-9 pr-4 py-3 md:py-2.5 rounded-xl text-sm">
                             </div>
-                            <button @click="openModal('add-subject')" class="hidden md:inline-flex bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap items-center">
+                            <button @click="openModal('add-subject')" class="hidden md:inline-flex bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap items-center active:scale-95 transition-transform">
                                 <i class="fa-solid fa-plus mr-2"></i> New
                             </button>
                         </div>
@@ -410,9 +469,9 @@ function serveHtml() {
                 </div>
                 
                 <div class="flex-1 overflow-y-auto p-4">
-                    <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-fade-in">
                         <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
-                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative active:scale-[0.98]">
+                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative active:scale-[0.98] border border-transparent hover:border-slate-700">
                              <div class="absolute top-3 right-3 z-10">
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border" 
                                       :class="s.status === 'Active' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-slate-700/50 border-slate-600 text-slate-400'">
@@ -425,7 +484,7 @@ function serveHtml() {
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-2xl font-bold">{{ s.full_name.charAt(0) }}</div>
                                 </div>
                                 <div class="min-w-0">
-                                    <h3 class="font-bold text-white truncate text-lg">{{ s.full_name }}</h3>
+                                    <h3 class="font-bold text-white truncate text-lg group-hover:text-indigo-400 transition-colors">{{ s.full_name }}</h3>
                                     <p class="text-xs text-slate-400 truncate font-mono">{{ s.occupation || 'Unidentified' }}</p>
                                     <p class="text-[10px] text-slate-500 mt-1"><i class="fa-solid fa-map-pin mr-1"></i>{{ s.location || 'Unknown' }}</p>
                                 </div>
@@ -471,8 +530,8 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target"><i class="fa-solid fa-pen-nib text-sm"></i></button>
-                        <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target"><i class="fa-solid fa-download text-sm"></i></button>
+                        <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target" title="Quick Note"><i class="fa-solid fa-pen-nib text-sm"></i></button>
+                        <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target" title="Export JSON"><i class="fa-solid fa-download text-sm"></i></button>
                     </div>
                 </header>
 
@@ -735,7 +794,7 @@ function serveHtml() {
         </nav>
     </div>
 
-    <!-- Universal Modal System (Full screen on mobile) -->
+    <!-- Universal Modal System -->
     <transition name="slide-up">
         <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4" @click.self="closeModal">
             <div class="bg-slate-900 w-full max-w-2xl md:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-800 flex flex-col max-h-[90vh] h-full md:h-auto animate-slide-up">
@@ -813,7 +872,8 @@ function serveHtml() {
                             <input v-model="forms.subject.last_sighted" class="glass-input w-full p-3 rounded-lg" placeholder="Last Sighted Info">
                         </div>
 
-                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-500/20 touch-target">
+                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-500/20 touch-target flex justify-center items-center">
+                            <span v-if="loading" class="loader border-white/30 border-t-white mr-2"></span>
                             {{ modal.active === 'add-subject' ? 'Initialize Dossier' : 'Save Changes' }}
                         </button>
                     </form>
@@ -894,7 +954,7 @@ function serveHtml() {
   </div>
 
   <script>
-    const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, watch, onUnmounted } = Vue;
 
     createApp({
       setup() {
@@ -912,6 +972,7 @@ function serveHtml() {
         const dashboard = reactive({ stats: {}, feed: [] });
         const subjects = ref([]);
         const selectedSubject = ref(null);
+        const toasts = ref([]);
         
         const lightbox = reactive({ active: null, url: '', desc: '' });
         const modal = reactive({ active: null, parentId: null });
@@ -925,7 +986,6 @@ function serveHtml() {
             rel: { subjectB: '', type: '' }
         });
 
-        // Navigation
         const navItems = [
             { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-chart-pie' },
             { id: 'subjects', label: 'Subjects', icon: 'fa-solid fa-users' },
@@ -940,9 +1000,17 @@ function serveHtml() {
                 if (!res.ok) throw new Error(data.error || 'Operation failed');
                 return data;
             } catch (e) {
-                alert(e.message); 
+                notify(e.message, 'error');
                 throw e;
             }
+        };
+
+        const notify = (msg, type = 'success') => {
+            const id = Date.now();
+            toasts.value.push({ id, msg, type, title: type === 'error' ? 'Error' : 'Success' });
+            setTimeout(() => {
+                toasts.value = toasts.value.filter(t => t.id !== id);
+            }, 3000);
         };
 
         // Computeds
@@ -989,6 +1057,7 @@ function serveHtml() {
                 const res = await api(ep, { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
+                notify("System Access Granted");
                 initApp();
             } catch(e) {} finally { loading.value = false; }
         };
@@ -1014,19 +1083,30 @@ function serveHtml() {
         };
 
         const createSubject = async () => {
-            await api('/subjects', { method: 'POST', body: JSON.stringify({ ...forms.subject, adminId: localStorage.getItem('admin_id') }) });
-            closeModal();
-            fetchSubjects();
-            fetchDashboard();
+            loading.value = true;
+            try {
+                await api('/subjects', { method: 'POST', body: JSON.stringify({ ...forms.subject, adminId: localStorage.getItem('admin_id') }) });
+                closeModal();
+                fetchSubjects();
+                fetchDashboard();
+                notify("Subject Created Successfully");
+            } finally { loading.value = false; }
         };
 
         const updateSubjectCore = async () => {
-             // Merge form back into selectedSubject but only send form data for cleaner update
-             const payload = { ...forms.subject };
-             await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
-             // Refresh local data
-             selectedSubject.value = { ...selectedSubject.value, ...payload };
-             closeModal();
+             loading.value = true;
+             try {
+                const payload = { ...forms.subject };
+                await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
+                selectedSubject.value = { ...selectedSubject.value, ...payload };
+                closeModal();
+                notify("Profile Updated");
+             } finally { loading.value = false; }
+        };
+
+        const downloadCSV = () => {
+            const adminId = localStorage.getItem('admin_id');
+            window.location.href = '/api/export-all?adminId=' + adminId;
         };
 
         // Intel Ops
@@ -1035,7 +1115,8 @@ function serveHtml() {
             await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
             closeModal();
             viewSubject(selectedSubject.value.id);
-            fetchDashboard(); 
+            fetchDashboard();
+            notify("Intelligence added");
         };
 
         const toggleNode = (id) => {
@@ -1069,6 +1150,7 @@ function serveHtml() {
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
                     const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
                     
+                    notify("Uploading...", "info");
                     await api(endpoint, {
                         method: 'POST',
                         body: JSON.stringify({
@@ -1081,6 +1163,7 @@ function serveHtml() {
                     });
                     viewSubject(selectedSubject.value.id);
                     fetchDashboard();
+                    notify("Upload Complete");
                 };
             };
         };
@@ -1095,11 +1178,11 @@ function serveHtml() {
         // Events & Rels
         const submitEvent = async () => {
             await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
-            closeModal(); viewSubject(selectedSubject.value.id);
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Event Logged");
         };
         const submitRel = async () => {
             await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
-            closeModal(); viewSubject(selectedSubject.value.id);
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Connection Established");
         };
 
         // Graph
@@ -1157,7 +1240,6 @@ function serveHtml() {
             } else if (type === 'add-subject') {
                 forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
             } else if (type === 'edit-profile') {
-                // Clone existing data into form
                 forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
             }
         };
@@ -1168,6 +1250,7 @@ function serveHtml() {
                 await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
                 if(table === 'subjects') { currentTab.value = 'subjects'; fetchSubjects(); }
                 else viewSubject(selectedSubject.value.id);
+                notify("Item Deleted");
             }
         };
 
@@ -1179,7 +1262,23 @@ function serveHtml() {
             node.click();
         };
 
+        // Keyboard Shortcuts
+        const handleKeydown = (e) => {
+            // Cmd+K or Ctrl+K for search
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                currentTab.value = 'subjects';
+                setTimeout(() => document.getElementById('searchInput')?.focus(), 100);
+            }
+            // Escape to close modals
+            if (e.key === 'Escape') {
+                if (lightbox.active) lightbox.active = null;
+                else if (modal.active) closeModal();
+            }
+        };
+
         onMounted(async () => {
+             document.addEventListener('keydown', handleKeydown);
              const status = await api('/status');
              if(!status.adminExists) setupMode.value = true;
              else if(localStorage.getItem('admin_id')) {
@@ -1188,14 +1287,18 @@ function serveHtml() {
              }
         });
 
+        onUnmounted(() => {
+            document.removeEventListener('keydown', handleKeydown);
+        });
+
         return {
             view, setupMode, auth, loading, dashboard, subjects, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch, modalStep,
+            expandedState, graphSearch, modalStep, toasts,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
-            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData,
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
             fitGraph, refreshGraph
         };
       }
@@ -1233,6 +1336,7 @@ async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
     const { subjectId, data, filename, contentType, description } = await req.json();
     const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
     const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    
     await bucket.put(key, binary, { httpMetadata: { contentType } });
     
     if (isAvatar) {
@@ -1253,6 +1357,8 @@ export default {
 
     try {
         if (req.method === 'GET' && path === '/') return serveHtml();
+        
+        // Ensure DB schema before any API Op
         if (path.startsWith('/api/')) await ensureSchema(env.DB);
         
         // Auth & Setup
@@ -1262,13 +1368,15 @@ export default {
         }
         if (path === '/api/setup-admin') return handleSetup(req, env.DB);
         if (path === '/api/login') return handleLogin(req, env.DB);
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         
+        // Data Operations
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
+
         // Subject Operations
         if (path === '/api/subjects') {
             if (req.method === 'POST') {
                 const p = await req.json();
-                // Fix for "creating object" issue: Ensure sanitized inputs
                 await env.DB.prepare('INSERT INTO subjects (admin_id, full_name, occupation, location, dob, status, created_at, height, weight, eye_color, hair_color, blood_type, identifying_marks, mbti, alignment, habits, notes, last_sighted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                     .bind(
                         p.adminId, 
@@ -1330,7 +1438,6 @@ export default {
         // Delete Handler
         if (path === '/api/delete') {
             const { table, id } = await req.json();
-            if (!['subjects', 'subject_data_points', 'subject_events', 'subject_relationships'].includes(table)) return errorResponse('Invalid table', 400);
             return handleDeleteItem(req, env.DB, table, id);
         }
 
