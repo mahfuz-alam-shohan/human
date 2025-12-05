@@ -1,20 +1,19 @@
 const encoder = new TextEncoder();
 
-const ADMIN_EMAIL_MAX = 320;
-const PASSWORD_MIN = 8;
+// --- Configuration & Constants ---
+const ALLOWED_ORIGINS = ['*']; // Adjust for production security
+const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB limit check
 
-// Global flag to prevent re-running schema checks on every request
-let initialized = false;
+// --- Schema Definitions ---
+// We define the tables here to ensure they exist.
+// New features: 'parent_id' in data_points for nesting, 'avatar_path' in subjects.
 
-// List of tables that MUST exist. Any other table found in the DB will be dropped (Cleanup).
-const KNOWN_TABLES = [
-    'admins', 
-    'subjects', 
-    'subject_data_points', 
-    'subject_events', 
-    'subject_relationships', 
-    'subject_media',
-    'sqlite_sequence' // Internal SQLite table, do not touch
+const MIGRATIONS = [
+  // 1. Ensure basic tables exist (Idempotent checks done in ensureSchema)
+  // 2. Add new columns if they are missing (Safe Migration)
+  "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
+  "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
+  "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0"
 ];
 
 // --- Helper Functions ---
@@ -35,1075 +34,982 @@ function sanitizeFileName(name) {
   return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
 
-// --- Database Operations ---
-
-async function cleanupLegacyTables(db) {
-    try {
-        // 1. Get list of all current tables in the DB
-        const { results } = await db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all();
-        
-        // 2. Identify strangers
-        const tablesToDrop = results
-            .map(r => r.name)
-            .filter(name => !KNOWN_TABLES.includes(name));
-
-        if (tablesToDrop.length > 0) {
-            console.log(`Cleaning up unused tables: ${tablesToDrop.join(', ')}`);
-            // 3. Drop them one by one
-            for (const table of tablesToDrop) {
-                await db.prepare(`DROP TABLE IF EXISTS "${table}"`).run();
-            }
+function response(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
         }
-    } catch (e) {
-        console.warn("Cleanup warning:", e.message);
-    }
+    });
 }
 
-async function safeMigrate(db) {
-    // Defines the columns that MUST exist for each table to avoid conflicts
-    const requiredSchema = {
-        'subjects': [
-            "ALTER TABLE subjects ADD COLUMN dob TEXT",
-            "ALTER TABLE subjects ADD COLUMN nationality TEXT",
-            "ALTER TABLE subjects ADD COLUMN education TEXT"
-        ]
-    };
-
-    for (const [table, migrations] of Object.entries(requiredSchema)) {
-        for (const query of migrations) {
-            try {
-                await db.prepare(query).run();
-            } catch (e) {
-                // Error usually means column exists. 
-                // If it's a conflict we can't solve via ALTER, we might need manual intervention,
-                // but usually ALTER ADD COLUMN is safe or fails harmlessly.
-            }
-        }
-    }
+function errorResponse(msg, status = 500) {
+    return response({ error: msg }, status);
 }
+
+// --- Database Layer ---
 
 async function ensureSchema(db) {
-  if (initialized) return;
-
-  console.log("Checking Database Health...");
-
   try {
-      // 1. Remove garbage tables from previous versions
-      await cleanupLegacyTables(db);
-
-      // 2. Ensure Schema Exists (Atomic Batch)
+      // Core Tables
       await db.batch([
-        db.prepare(`CREATE TABLE IF NOT EXISTS admins (
-          id INTEGER PRIMARY KEY,
-          email TEXT NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
-          id INTEGER PRIMARY KEY,
-          admin_id INTEGER NOT NULL REFERENCES admins(id),
-          full_name TEXT NOT NULL,
-          dob TEXT, 
-          age INTEGER,
-          gender TEXT,
-          occupation TEXT,
-          nationality TEXT,
-          education TEXT,
-          religion TEXT,
-          location TEXT,
-          contact TEXT,
-          habits TEXT,
-          notes TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT, 
+          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
+          habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
+          created_at TEXT, updated_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_data_points (
-          id INTEGER PRIMARY KEY,
-          subject_id INTEGER NOT NULL REFERENCES subjects(id),
-          category TEXT NOT NULL,
-          label TEXT NOT NULL,
-          value TEXT,
-          analysis TEXT,
-          created_at TEXT NOT NULL
+          id INTEGER PRIMARY KEY, subject_id INTEGER, parent_id INTEGER, category TEXT, label TEXT, 
+          value TEXT, analysis TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_events (
-          id INTEGER PRIMARY KEY,
-          subject_id INTEGER NOT NULL REFERENCES subjects(id),
-          title TEXT NOT NULL,
-          description TEXT,
-          event_date TEXT,
-          created_at TEXT NOT NULL
+          id INTEGER PRIMARY KEY, subject_id INTEGER, title TEXT, description TEXT, event_date TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
-          id INTEGER PRIMARY KEY,
-          subject_a_id INTEGER NOT NULL REFERENCES subjects(id),
-          subject_b_id INTEGER NOT NULL REFERENCES subjects(id),
-          relationship_type TEXT NOT NULL,
-          notes TEXT,
-          created_at TEXT NOT NULL
+          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
-          id INTEGER PRIMARY KEY,
-          subject_id INTEGER NOT NULL REFERENCES subjects(id),
-          object_key TEXT NOT NULL UNIQUE,
-          content_type TEXT NOT NULL,
-          description TEXT,
-          created_at TEXT NOT NULL
+          id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT
         )`)
       ]);
 
-      // 3. Patch existing tables (Migrations)
-      await safeMigrate(db);
-      
-      initialized = true;
-      console.log("Database Verified & Ready.");
+      // Apply Migrations (Safe Alter)
+      for (const query of MIGRATIONS) {
+        try { await db.prepare(query).run(); } catch(e) { /* Ignore if column exists */ }
+      }
   } catch (err) {
-      console.error("Critical Schema Error:", err);
-      // If we are here, D1 might be really unhappy. 
-      // We assume the app might still partially work or the next retry will fix transient issues.
+      console.error("Schema Init Error:", err);
   }
 }
 
-async function adminExists(db) {
-  try {
-      const stmt = db.prepare('SELECT COUNT(id) AS count FROM admins');
-      const result = await stmt.first();
-      return (result?.count ?? 0) > 0;
-  } catch (e) {
-      return false;
-  }
-}
+// --- API Handlers ---
 
-async function verifyAdmin(db, email, password) {
-    const stmt = db.prepare('SELECT id, password_hash FROM admins WHERE email = ?');
-    const user = await stmt.bind(email).first();
-    if (!user) return null;
-    const hashedInput = await hashPassword(password);
-    return hashedInput === user.password_hash ? { id: user.id, email: email } : null;
-}
-
-async function createAdmin(db, email, password) {
-  const hashed = await hashPassword(password);
-  await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?1, ?2, ?3)')
-    .bind(email, hashed, isoTimestamp()).run();
-}
-
-async function getSubjects(db, adminId) {
-    const { results } = await db.prepare(`
-        SELECT id, full_name, occupation, age, dob, location, created_at 
-        FROM subjects WHERE admin_id = ? ORDER BY updated_at DESC
+async function handleGetGraph(db, adminId) {
+    // Fetches all nodes and edges for the graph view
+    const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
+    const rels = await db.prepare(`
+        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
+        FROM subject_relationships r 
+        JOIN subjects s ON r.subject_a_id = s.id 
+        WHERE s.admin_id = ?
     `).bind(adminId).all();
-    return results;
+    
+    return response({ nodes: subjects.results, edges: rels.results });
 }
 
-async function getSubjectDetail(db, subjectId) {
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(subjectId).first();
-    if (!subject) return null;
+async function handleGetSubjectFull(db, id) {
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
+    if (!subject) return errorResponse("Subject not found", 404);
 
     const [media, dataPoints, events, relationships] = await Promise.all([
-        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all(),
-        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all(),
-        db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(subjectId).all(),
+        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
+        // Get all data points, UI will handle nesting
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
+        db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         db.prepare(`
-            SELECT r.*, s.full_name as target_name 
+            SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
             FROM subject_relationships r JOIN subjects s ON r.subject_b_id = s.id 
             WHERE r.subject_a_id = ?
-        `).bind(subjectId).all()
+        `).bind(id).all()
     ]);
 
-    return { 
+    return response({ 
         ...subject, 
         media: media.results, 
         dataPoints: dataPoints.results, 
         events: events.results, 
         relationships: relationships.results 
-    };
+    });
 }
 
-async function addSubject(db, p) {
-  const now = isoTimestamp();
-  const res = await db.prepare(`
-    INSERT INTO subjects (admin_id, full_name, dob, age, gender, occupation, nationality, education, religion, location, contact, habits, notes, created_at, updated_at) 
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-  `).bind(
-      p.adminId, p.fullName, p.dob || null, p.age || null, p.gender || null, p.occupation || null, 
-      p.nationality || null, p.education || null, p.religion || null, p.location || null, 
-      p.contact || null, p.habits || null, p.notes || null, now, now
-  ).run();
-  return { id: res.meta.last_row_id };
-}
+// --- Frontend Application (Served via Template String) ---
 
-// --- Frontend Application ---
-
-async function serveHome(request, env) {
+function serveHtml() {
   const html = `<!DOCTYPE html>
 <html lang="en" class="h-full bg-slate-50">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-  <title>Human Observation Workspace</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Deep Observation OS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Vue 3 -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Vis.js for Graph -->
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  
   <style>
-    body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
-    /* Custom Scrollbar for "Feed" feel */
+    body { font-family: 'Inter', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    
+    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-    .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px); }
+    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+    
+    /* Animations */
+    .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+    
+    .slide-up-enter-active { transition: all 0.3s ease-out; }
+    .slide-up-enter-from { opacity: 0; transform: translateY(20px); }
+
+    /* Graph Container */
+    #network-graph { width: 100%; height: 100%; outline: none; }
+    
+    /* Image Grid Frames */
+    .evidence-frame {
+        aspect-ratio: 1 / 1;
+        overflow: hidden;
+        position: relative;
+        cursor: zoom-in;
+    }
+    .evidence-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.5s ease;
+    }
+    .evidence-frame:hover img { transform: scale(1.05); }
+
+    /* Nested Tree Lines */
+    .tree-line {
+        position: absolute;
+        left: -18px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background-color: #e2e8f0;
+    }
+    .tree-branch {
+        position: absolute;
+        left: -18px;
+        top: 18px;
+        width: 16px;
+        height: 2px;
+        background-color: #e2e8f0;
+    }
   </style>
 </head>
-<body class="h-full text-slate-800 antialiased selection:bg-indigo-100 selection:text-indigo-700">
+<body class="h-full text-slate-800 antialiased overflow-hidden">
   <div id="app" class="h-full flex flex-col">
-    
-    <!-- Loading / Wakeup Overlay -->
-    <div v-if="loading && !initialLoadComplete" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm transition-opacity duration-500">
-        <div class="flex items-center justify-center mb-6">
-            <div class="relative">
-                <div class="h-16 w-16 rounded-full border-4 border-slate-200"></div>
-                <div class="absolute top-0 left-0 h-16 w-16 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin"></div>
-            </div>
-        </div>
-        <h2 class="text-xl font-bold text-slate-800 tracking-tight">Accessing Secure Database</h2>
-        <p class="text-slate-500 mt-2 text-sm font-medium">Establishing encrypted link...</p>
-        <p v-if="retryCount > 0" class="text-amber-600 mt-4 text-xs bg-amber-50 px-3 py-1 rounded-full animate-pulse">
-            Waking up database (Attempt {{ retryCount }}/3)...
-        </p>
-    </div>
 
-    <!-- Auth View -->
-    <div v-if="view === 'auth'" class="flex-1 flex flex-col justify-center items-center p-6 bg-slate-900 text-white relative overflow-hidden">
-        <!-- Decoration -->
-        <div class="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-20 pointer-events-none">
-            <i class="fa-solid fa-dna absolute top-10 left-10 text-9xl text-indigo-500 animate-pulse"></i>
-            <i class="fa-solid fa-fingerprint absolute bottom-10 right-10 text-9xl text-indigo-500"></i>
-        </div>
-
-        <div class="w-full max-w-md space-y-8 z-10">
-            <div class="text-center">
-                <div class="mx-auto h-20 w-20 bg-indigo-500/20 border-2 border-indigo-500 rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(99,102,241,0.3)]">
-                    <i class="fa-solid fa-eye text-4xl text-indigo-400"></i>
-                </div>
-                <h2 class="text-3xl font-bold tracking-tight">{{ setupMode ? 'Initialize Protocol' : 'Researcher Identity' }}</h2>
-                <p class="mt-2 text-slate-400">Advanced Human Behavior Database</p>
+    <!-- Lightbox (Global) -->
+    <transition name="fade">
+        <div v-if="lightbox.active" @click="lightbox.active = null" class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4">
+            <img :src="lightbox.url" class="max-h-full max-w-full rounded-lg shadow-2xl object-contain" />
+            <div class="absolute bottom-8 text-white text-center bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">
+                {{ lightbox.desc || 'Evidence View' }}
             </div>
-            <form @submit.prevent="handleAuth" class="mt-8 space-y-6 bg-slate-800/50 backdrop-blur-xl p-8 rounded-xl border border-slate-700/50 shadow-2xl">
-                <div class="space-y-4">
-                    <div>
-                        <label class="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Access ID</label>
-                        <input v-model="authForm.email" type="email" placeholder="researcher@lab.com" required class="block w-full rounded-lg bg-slate-900/80 border-slate-600 text-white p-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all">
-                    </div>
-                    <div>
-                        <label class="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Passcode</label>
-                        <input v-model="authForm.password" type="password" placeholder="••••••••" required class="block w-full rounded-lg bg-slate-900/80 border-slate-600 text-white p-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all">
-                    </div>
+            <button class="absolute top-4 right-4 text-white text-3xl hover:text-indigo-400"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+    </transition>
+
+    <!-- App Content -->
+    <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white relative">
+        <div class="w-full max-w-md p-8">
+            <div class="text-center mb-10">
+                <i class="fa-solid fa-eye text-5xl text-indigo-500 mb-4 animate-pulse"></i>
+                <h1 class="text-3xl font-bold tracking-tighter">OBSERVER<span class="text-indigo-500">.OS</span></h1>
+                <p class="text-slate-400 text-sm mt-2 font-mono">SECURE RESEARCH ENVIRONMENT</p>
+            </div>
+            <form @submit.prevent="handleAuth" class="space-y-4 bg-slate-800/50 p-8 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur-sm">
+                <div v-if="setupMode" class="bg-indigo-500/20 text-indigo-300 p-3 rounded text-xs text-center border border-indigo-500/30">
+                    <i class="fa-solid fa-triangle-exclamation mr-1"></i> System Initialization. Create Admin.
                 </div>
-                <div v-if="authError" class="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center font-medium">{{ authError }}</div>
-                <button type="submit" :disabled="loading" class="w-full rounded-lg bg-indigo-600 py-3.5 font-bold text-white hover:bg-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all shadow-lg shadow-indigo-600/20">
-                    {{ loading ? 'Verifying Credentials...' : (setupMode ? 'Initialize System' : 'Authenticate') }}
+                <input v-model="auth.email" type="email" placeholder="Access ID" class="w-full bg-slate-900 border border-slate-600 rounded-xl p-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all">
+                <input v-model="auth.password" type="password" placeholder="Passcode" class="w-full bg-slate-900 border border-slate-600 rounded-xl p-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all">
+                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)]">
+                    {{ loading ? 'Authenticating...' : (setupMode ? 'Initialize System' : 'Enter Workspace') }}
                 </button>
             </form>
         </div>
     </div>
 
-    <!-- Main Workspace -->
-    <div v-else class="flex h-full overflow-hidden bg-slate-100">
-        <!-- Sidebar Navigation -->
-        <aside class="hidden md:flex md:w-20 lg:w-64 md:flex-col bg-white border-r border-slate-200 z-20">
-            <div class="h-20 flex items-center justify-center lg:justify-start lg:px-6 border-b border-slate-100">
-                <i class="fa-solid fa-layer-group text-indigo-600 text-2xl lg:mr-3"></i>
-                <span class="hidden lg:block font-extrabold text-slate-800 tracking-tight text-lg">OBSERVE<span class="text-indigo-600">.OS</span></span>
+    <div v-else class="flex-1 flex h-full overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-20 lg:w-64 flex flex-col bg-white border-r border-slate-200 z-20 shadow-xl">
+            <div class="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-slate-100">
+                <i class="fa-solid fa-dna text-indigo-600 text-xl lg:mr-3"></i>
+                <span class="hidden lg:block font-bold text-slate-800 tracking-tight">OBSERVER</span>
             </div>
-            <nav class="flex-1 p-4 space-y-2">
-                <a @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'" class="group flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all">
-                    <i class="fa-solid fa-chart-pie w-6 text-center text-lg"></i>
-                    <span class="hidden lg:block ml-3 font-medium">Overview</span>
-                </a>
-                <a @click="currentTab = 'subjects'; fetchSubjects()" :class="currentTab === 'subjects' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'" class="group flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all">
-                    <i class="fa-solid fa-users w-6 text-center text-lg"></i>
-                    <span class="hidden lg:block ml-3 font-medium">Subjects</span>
-                </a>
-                <a @click="currentTab = 'add'" :class="currentTab === 'add' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'" class="group flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all">
-                    <i class="fa-solid fa-user-plus w-6 text-center text-lg"></i>
-                    <span class="hidden lg:block ml-3 font-medium">Add New</span>
-                </a>
+            
+            <nav class="flex-1 p-3 space-y-2 overflow-y-auto">
+                <template v-for="item in menuItems">
+                    <a @click="currentTab = item.id; if(item.action) item.action()" 
+                       :class="currentTab === item.id ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'"
+                       class="flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all group select-none">
+                        <div class="w-8 flex justify-center"><i :class="item.icon" class="text-lg transition-transform group-hover:scale-110"></i></div>
+                        <span class="hidden lg:block ml-2 font-medium text-sm">{{ item.label }}</span>
+                    </a>
+                </template>
             </nav>
+            
             <div class="p-4 border-t border-slate-100">
-                <button @click="logout" class="flex items-center justify-center lg:justify-start w-full px-3 py-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
-                    <i class="fa-solid fa-arrow-right-from-bracket w-6 text-center"></i>
-                    <span class="hidden lg:block ml-3 font-medium">Logout</span>
+                <button @click="logout" class="flex items-center w-full px-3 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all">
+                    <i class="fa-solid fa-power-off w-8"></i>
+                    <span class="hidden lg:block ml-2 font-medium text-sm">Terminate</span>
                 </button>
             </div>
         </aside>
 
-        <!-- Main Content Area -->
-        <main class="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-            <!-- Mobile Header -->
-            <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 px-4 h-16 shrink-0 z-30">
-                <span class="font-bold text-slate-800"><i class="fa-solid fa-layer-group text-indigo-600 mr-2"></i> OBSERVE.OS</span>
-                <button @click="logout" class="text-slate-400"><i class="fa-solid fa-power-off"></i></button>
-            </div>
-
-            <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth pb-24 md:pb-8">
-                
-                <!-- Dashboard -->
-                <div v-if="currentTab === 'dashboard'" class="max-w-5xl mx-auto">
-                    <h1 class="text-3xl font-extrabold text-slate-900 mb-2">Research Overview</h1>
-                    <p class="text-slate-500 mb-8">System status and recent activity metrics.</p>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div class="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-500/20">
-                            <div class="flex justify-between items-start">
-                                <div>
-                                    <p class="text-indigo-100 font-medium text-sm">Total Subjects</p>
-                                    <h3 class="text-4xl font-bold mt-1">{{ subjects.length }}</h3>
-                                </div>
-                                <div class="bg-white/20 p-2 rounded-lg"><i class="fa-solid fa-users text-xl"></i></div>
-                            </div>
-                            <div class="mt-4 text-xs bg-white/10 inline-block px-2 py-1 rounded">Active Database</div>
-                        </div>
-                        
-                        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                            <div class="flex justify-between items-start">
-                                <div>
-                                    <p class="text-slate-500 font-medium text-sm">System Status</p>
-                                    <h3 class="text-2xl font-bold mt-1 text-emerald-600">Operational</h3>
-                                </div>
-                                <div class="bg-emerald-50 text-emerald-600 p-2 rounded-lg"><i class="fa-solid fa-server text-xl"></i></div>
-                            </div>
-                            <p class="text-xs text-slate-400 mt-4">Database Connection: Stable</p>
-                        </div>
+        <!-- Main Viewport -->
+        <main class="flex-1 flex flex-col relative bg-slate-100 overflow-hidden">
+            
+            <!-- Graph View (Canvas) -->
+            <div v-show="currentTab === 'graph'" class="absolute inset-0 z-0 bg-slate-100">
+                <div id="network-graph" class="w-full h-full"></div>
+                <!-- Graph Controls -->
+                <div class="absolute top-4 left-4 bg-white/90 backdrop-blur p-4 rounded-xl shadow-lg border border-slate-200 z-10 w-72">
+                    <h3 class="font-bold text-slate-700 mb-2 flex items-center"><i class="fa-solid fa-diagram-project mr-2 text-indigo-500"></i> Relation Map</h3>
+                    <input v-model="graphSearch" placeholder="Search entity..." class="w-full text-sm p-2 border border-slate-300 rounded-lg bg-slate-50 mb-2">
+                    <div class="flex gap-2 text-xs">
+                        <button @click="fitGraph" class="flex-1 bg-slate-200 hover:bg-slate-300 py-1 rounded px-2">Fit All</button>
+                        <button @click="refreshGraph" class="flex-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 py-1 rounded px-2">Refresh</button>
                     </div>
                 </div>
+            </div>
 
-                <!-- Subjects List -->
-                <div v-if="currentTab === 'subjects'" class="max-w-7xl mx-auto">
-                    <div class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+            <!-- Dashboard / List View -->
+            <div v-if="currentTab === 'subjects'" class="flex-1 overflow-y-auto p-6 md:p-8">
+                <div class="max-w-7xl mx-auto">
+                    <div class="flex justify-between items-center mb-8">
                         <div>
-                            <h1 class="text-3xl font-extrabold text-slate-900">Directory</h1>
-                            <p class="text-slate-500">Access and manage subject profiles.</p>
+                            <h1 class="text-3xl font-extrabold text-slate-900">Subject Directory</h1>
+                            <p class="text-slate-500 text-sm mt-1">Manage profiles and avatars.</p>
                         </div>
-                        <button @click="fetchSubjects" class="bg-white border border-slate-300 text-slate-600 hover:text-indigo-600 hover:border-indigo-300 px-4 py-2 rounded-lg font-medium transition-all shadow-sm">
-                            <i class="fa-solid fa-rotate-right mr-2"></i> Refresh List
+                        <button @click="currentTab = 'add'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 flex items-center transition-all">
+                            <i class="fa-solid fa-plus mr-2"></i> New Profile
                         </button>
                     </div>
 
-                    <div v-if="subjects.length === 0 && !loading" class="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
-                        <div class="bg-slate-50 h-20 w-20 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-400">
-                            <i class="fa-solid fa-user-plus text-3xl"></i>
-                        </div>
-                        <h3 class="text-lg font-bold text-slate-900">No subjects found</h3>
-                        <p class="text-slate-500 mb-6">Start your research by adding a person.</p>
-                        <button @click="currentTab = 'add'" class="bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-700">Add First Subject</button>
-                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
+                             class="bg-white group hover:-translate-y-1 hover:shadow-xl transition-all duration-300 cursor-pointer rounded-2xl border border-slate-200 overflow-hidden relative">
+                             
+                             <!-- Avatar Header -->
+                             <div class="h-32 bg-slate-100 relative">
+                                <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
+                                <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-slate-200">
+                                    <i class="fa-solid fa-user text-4xl text-slate-300"></i>
+                                </div>
+                                <div class="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-black/60 to-transparent"></div>
+                             </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div v-for="s in subjects" :key="s.id" @click="viewSubject(s.id)" class="bg-white group hover:-translate-y-1 hover:shadow-xl transition-all duration-300 cursor-pointer rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                            <div class="p-6">
-                                <div class="flex items-start justify-between mb-4">
-                                    <div class="flex items-center space-x-3">
-                                        <div class="h-12 w-12 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-lg font-bold text-slate-600 group-hover:from-indigo-100 group-hover:to-purple-100 group-hover:text-indigo-600 transition-colors shadow-inner">
-                                            {{ s.full_name.charAt(0) }}
-                                        </div>
-                                        <div>
-                                            <h3 class="text-lg font-bold text-slate-900 leading-tight">{{ s.full_name }}</h3>
-                                            <p class="text-xs text-slate-500 font-mono mt-0.5">ID: #{{ String(s.id).padStart(4, '0') }}</p>
-                                        </div>
-                                    </div>
-                                    <span class="px-2 py-1 bg-slate-50 rounded-md text-xs font-medium text-slate-500 border border-slate-100">{{ s.occupation || 'N/A' }}</span>
+                             <div class="p-5 relative -mt-8">
+                                <div class="bg-white w-14 h-14 rounded-xl shadow-lg flex items-center justify-center absolute -top-8 right-5 border-2 border-white">
+                                    <span class="text-xl font-bold text-indigo-600">{{ s.full_name.charAt(0) }}</span>
                                 </div>
-                                <div class="space-y-2 mt-4">
-                                    <div class="flex items-center text-sm text-slate-600">
-                                        <i class="fa-solid fa-cake-candles w-5 text-slate-400"></i>
-                                        <span>{{ calculateAge(s.dob, s.age) }}</span>
-                                    </div>
-                                    <div class="flex items-center text-sm text-slate-600">
-                                        <i class="fa-solid fa-location-dot w-5 text-slate-400"></i>
-                                        <span>{{ s.location || 'Unknown Location' }}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-slate-50 px-6 py-3 border-t border-slate-100 text-xs font-medium text-slate-500 flex justify-between items-center group-hover:bg-indigo-50/50 transition-colors">
-                                <span>Updated {{ new Date(s.created_at).toLocaleDateString() }}</span>
-                                <i class="fa-solid fa-arrow-right text-slate-300 group-hover:text-indigo-500"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Add Subject (Advanced Form) -->
-                <div v-if="currentTab === 'add'" class="max-w-3xl mx-auto">
-                    <h1 class="text-2xl font-extrabold text-slate-900 mb-6">Initialize New Subject</h1>
-                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div class="bg-slate-50 px-8 py-4 border-b border-slate-200 flex items-center">
-                            <i class="fa-solid fa-id-card text-indigo-500 mr-3"></i>
-                            <h3 class="font-bold text-slate-700">Basic Identity Profile</h3>
-                        </div>
-                        <form @submit.prevent="createSubject" class="p-8 space-y-6">
-                            <!-- Name -->
-                            <div>
-                                <label class="block text-sm font-bold text-slate-700 mb-2">Full Name</label>
-                                <input v-model="newSubject.fullName" type="text" required class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow" placeholder="e.g. John Doe">
-                            </div>
-
-                            <!-- Age / DOB Section -->
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Date of Birth (Recommended)</label>
-                                    <input v-model="newSubject.dob" type="date" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500">
-                                    <p class="text-xs text-slate-500 mt-1">Allows auto-calculation of age over time.</p>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Or Manual Age</label>
-                                    <input v-model="newSubject.age" type="number" :disabled="!!newSubject.dob" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400">
-                                    <p class="text-xs text-slate-500 mt-1">If DOB is unknown.</p>
-                                </div>
-                            </div>
-
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Gender</label>
-                                    <select v-model="newSubject.gender" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500">
-                                        <option value="">Select...</option>
-                                        <option>Male</option>
-                                        <option>Female</option>
-                                        <option>Non-binary</option>
-                                        <option>Other</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Nationality</label>
-                                    <input v-model="newSubject.nationality" type="text" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Occupation</label>
-                                    <input v-model="newSubject.occupation" type="text" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-bold text-slate-700 mb-2">Religion</label>
-                                    <input v-model="newSubject.religion" type="text" class="w-full rounded-xl border-slate-300 bg-white border p-3 focus:ring-indigo-500">
-                                </div>
-                            </div>
-                            
-                            <div class="pt-6 border-t border-slate-100 flex justify-end">
-                                <button type="submit" :disabled="loading" class="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
-                                    {{ loading ? 'Processing...' : 'Create Profile' }}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- DETAIL WORKSPACE (The "Kid Playing" Zone) -->
-                <div v-if="currentTab === 'detail' && selectedSubject" class="max-w-7xl mx-auto pb-20">
-                    <!-- Header Profile -->
-                    <div class="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 relative overflow-hidden">
-                        <div class="absolute top-0 right-0 p-4 opacity-10"><i class="fa-solid fa-fingerprint text-9xl text-indigo-900"></i></div>
-                        
-                        <div class="relative z-10">
-                            <button @click="currentTab = 'subjects'" class="text-sm font-bold text-slate-400 hover:text-indigo-600 mb-4 flex items-center transition-colors"><i class="fa-solid fa-arrow-left mr-2"></i> RETURN TO DIRECTORY</button>
-                            
-                            <div class="flex flex-col md:flex-row gap-6 md:items-start">
-                                <div class="h-24 w-24 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-3xl font-bold shadow-inner">
-                                    {{ selectedSubject.full_name.charAt(0) }}
-                                </div>
-                                <div class="flex-1">
-                                    <h1 class="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">{{ selectedSubject.full_name }}</h1>
-                                    <div class="flex flex-wrap gap-3 mt-3">
-                                        <span class="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold border border-slate-200"><i class="fa-solid fa-hourglass-half mr-2 text-indigo-500"></i>{{ calculateAge(selectedSubject.dob, selectedSubject.age) }}</span>
-                                        <span v-if="selectedSubject.occupation" class="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium border border-slate-200">{{ selectedSubject.occupation }}</span>
-                                        <span v-if="selectedSubject.location" class="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium border border-slate-200"><i class="fa-solid fa-location-dot mr-1 text-red-400"></i> {{ selectedSubject.location }}</span>
-                                    </div>
-                                    <!-- Core Info Grid -->
-                                    <div class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                        <div v-if="selectedSubject.dob"><span class="text-slate-400 block text-xs uppercase font-bold">Born</span> {{ new Date(selectedSubject.dob).toLocaleDateString() }}</div>
-                                        <div v-if="selectedSubject.nationality"><span class="text-slate-400 block text-xs uppercase font-bold">Nationality</span> {{ selectedSubject.nationality }}</div>
-                                        <div v-if="selectedSubject.religion"><span class="text-slate-400 block text-xs uppercase font-bold">Religion</span> {{ selectedSubject.religion }}</div>
-                                        <div v-if="selectedSubject.contact"><span class="text-slate-400 block text-xs uppercase font-bold">Contact</span> {{ selectedSubject.contact }}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- THE WORKSPACE (Feed) -->
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        
-                        <!-- Left: Interaction Tools -->
-                        <div class="lg:col-span-1 space-y-6">
-                            <!-- Quick Add Menu -->
-                            <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 sticky top-4">
-                                <h3 class="text-sm font-extrabold text-slate-400 uppercase tracking-widest mb-4">Add Observation</h3>
-                                <div class="grid grid-cols-2 gap-3">
-                                    <button @click="openModal('data')" class="p-4 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:shadow-md transition-all text-left flex flex-col justify-between h-24 border border-indigo-100">
-                                        <i class="fa-solid fa-lightbulb text-2xl mb-2"></i>
-                                        <span class="font-bold text-sm">Deep Detail</span>
-                                    </button>
-                                    <button @click="openModal('media')" class="p-4 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:shadow-md transition-all text-left flex flex-col justify-between h-24 border border-emerald-100">
-                                        <i class="fa-solid fa-camera text-2xl mb-2"></i>
-                                        <span class="font-bold text-sm">Media</span>
-                                    </button>
-                                    <button @click="openModal('event')" class="p-4 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 hover:shadow-md transition-all text-left flex flex-col justify-between h-24 border border-amber-100">
-                                        <i class="fa-solid fa-calendar-check text-2xl mb-2"></i>
-                                        <span class="font-bold text-sm">Life Event</span>
-                                    </button>
-                                    <button @click="openModal('rel')" class="p-4 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 hover:shadow-md transition-all text-left flex flex-col justify-between h-24 border border-rose-100">
-                                        <i class="fa-solid fa-link text-2xl mb-2"></i>
-                                        <span class="font-bold text-sm">Relation</span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Right: The Stream/Feed -->
-                        <div class="lg:col-span-2 space-y-6">
-                            <h3 class="text-sm font-extrabold text-slate-400 uppercase tracking-widest pl-2">Observation Stream</h3>
-
-                            <!-- Empty State -->
-                            <div v-if="feedItems.length === 0" class="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
-                                <p class="text-slate-400 italic">No details added yet. Use the tools on the left.</p>
-                            </div>
-
-                            <!-- Feed Items -->
-                            <div v-for="item in feedItems" :key="item.uniqueId" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 relative group transition-all hover:shadow-md">
                                 
-                                <!-- Decorative Line -->
-                                <div :class="{
-                                    'bg-indigo-500': item.type === 'data',
-                                    'bg-emerald-500': item.type === 'media',
-                                    'bg-amber-500': item.type === 'event',
-                                    'bg-rose-500': item.type === 'relationship'
-                                }" class="absolute left-0 top-6 bottom-6 w-1 rounded-r-full"></div>
-
-                                <div class="pl-4">
-                                    <!-- Header -->
-                                    <div class="flex justify-between items-start mb-2">
-                                        <div class="flex items-center gap-2">
-                                            <span v-if="item.type === 'data'" class="px-2 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-700 uppercase">{{ item.category }}</span>
-                                            <span v-if="item.type === 'event'" class="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700 uppercase">Event • {{ item.event_date }}</span>
-                                            <span v-if="item.type === 'media'" class="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-700 uppercase">Evidence</span>
-                                            <span v-if="item.type === 'relationship'" class="px-2 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-700 uppercase">Connection</span>
-                                            
-                                            <span class="text-xs text-slate-400">{{ new Date(item.created_at).toLocaleString() }}</span>
-                                        </div>
+                                <h3 class="text-lg font-bold text-slate-900 leading-tight pr-10 truncate">{{ s.full_name }}</h3>
+                                <p class="text-xs text-slate-500 font-mono mt-1 mb-3">ID-{{ String(s.id).padStart(4, '0') }}</p>
+                                
+                                <div class="space-y-1.5">
+                                    <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
+                                        <i class="fa-solid fa-briefcase w-5 text-indigo-400"></i>
+                                        <span class="truncate">{{ s.occupation || 'No Occupation' }}</span>
                                     </div>
-
-                                    <!-- Content Body -->
-                                    <div class="text-slate-800">
-                                        <!-- Data Point -->
-                                        <div v-if="item.type === 'data'">
-                                            <h4 class="font-bold text-lg">{{ item.label }}</h4>
-                                            <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 font-mono text-sm my-2 text-indigo-900">{{ item.value }}</div>
-                                            <p v-if="item.analysis" class="text-slate-600 italic text-sm border-l-2 border-indigo-200 pl-3 mt-2">"{{ item.analysis }}"</p>
-                                        </div>
-
-                                        <!-- Event -->
-                                        <div v-if="item.type === 'event'">
-                                            <h4 class="font-bold text-lg">{{ item.title }}</h4>
-                                            <p class="text-slate-600 mt-1">{{ item.description }}</p>
-                                        </div>
-
-                                        <!-- Media -->
-                                        <div v-if="item.type === 'media'">
-                                            <div class="rounded-xl overflow-hidden bg-black max-w-sm mt-2 shadow-lg">
-                                                <img :src="'/api/media/' + item.object_key" class="w-full h-auto">
-                                            </div>
-                                            <p class="text-sm text-slate-500 mt-2">{{ item.description }}</p>
-                                        </div>
-
-                                        <!-- Relationship -->
-                                        <div v-if="item.type === 'relationship'">
-                                            <p class="text-lg">
-                                                Connected with <strong class="text-slate-900">{{ item.target_name }}</strong> as <span class="text-rose-600 font-bold underline decoration-rose-200 decoration-2 underline-offset-2">{{ item.relationship_type }}</span>
-                                            </p>
-                                            <p v-if="item.notes" class="text-sm text-slate-500 mt-1">{{ item.notes }}</p>
-                                        </div>
+                                    <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
+                                        <i class="fa-solid fa-location-dot w-5 text-rose-400"></i>
+                                        <span class="truncate">{{ s.location || 'Unknown Location' }}</span>
                                     </div>
                                 </div>
-                            </div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
+            <!-- Detail View -->
+            <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 overflow-hidden flex flex-col md:flex-row">
+                
+                <!-- Left Panel: Identity & Controls (Fixed) -->
+                <div class="w-full md:w-96 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0 z-10 shadow-lg">
+                    <div class="p-6">
+                        <button @click="currentTab = 'subjects'" class="text-xs font-bold text-slate-400 hover:text-indigo-600 flex items-center mb-6 transition-colors">
+                            <i class="fa-solid fa-arrow-left mr-2"></i> DIRECTORY
+                        </button>
+                        
+                        <div class="relative group cursor-pointer" @click="triggerAvatarUpload">
+                            <div class="aspect-square rounded-2xl overflow-hidden bg-slate-100 border-2 border-slate-100 shadow-inner relative">
+                                <img v-if="selectedSubject.avatar_path" :src="'/api/media/' + selectedSubject.avatar_path" class="w-full h-full object-cover">
+                                <div v-else class="w-full h-full flex items-center justify-center bg-slate-50 text-slate-300">
+                                    <i class="fa-solid fa-camera text-4xl"></i>
+                                </div>
+                                <div class="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <span class="text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full backdrop-blur">Change Avatar</span>
+                                </div>
+                            </div>
+                            <input type="file" ref="avatarInput" @change="handleAvatarUpload" class="hidden" accept="image/*">
+                        </div>
+
+                        <div class="mt-4">
+                            <h2 class="text-2xl font-black text-slate-900">{{ selectedSubject.full_name }}</h2>
+                            <div class="flex flex-wrap gap-2 mt-2">
+                                <span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold border border-indigo-100">{{ selectedSubject.occupation || 'N/A' }}</span>
+                                <span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold border border-slate-200">Age: {{ selectedSubject.age || '?' }}</span>
+                            </div>
+                        </div>
+
+                        <div class="mt-8 space-y-6">
+                            <!-- Core Fields Editing -->
+                            <div v-for="field in ['Nationality', 'Religion', 'Location', 'Contact']" :key="field">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{{ field }}</label>
+                                <div class="text-sm font-medium text-slate-800 border-b border-slate-100 pb-1 flex justify-between group">
+                                    <span>{{ selectedSubject[field.toLowerCase()] || '—' }}</span>
+                                    <i @click="editCore(field.toLowerCase())" class="fa-solid fa-pen text-slate-300 hover:text-indigo-500 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="grid grid-cols-2 gap-3 mt-8">
+                            <button @click="openAddModal('media')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
+                                <i class="fa-solid fa-camera text-xl text-emerald-500"></i> Evidence
+                            </button>
+                            <button @click="openAddModal('data', null)" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
+                                <i class="fa-solid fa-file-pen text-xl text-indigo-500"></i> Detail
+                            </button>
+                            <button @click="openAddModal('event')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
+                                <i class="fa-solid fa-timeline text-xl text-amber-500"></i> Event
+                            </button>
+                            <button @click="openAddModal('rel')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
+                                <i class="fa-solid fa-link text-xl text-rose-500"></i> Relation
+                            </button>
                         </div>
                     </div>
                 </div>
 
+                <!-- Right Panel: Deep Data & Evidence -->
+                <div class="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-8">
+                    
+                    <!-- Evidence Grid (Fixed Frames) -->
+                    <section v-if="selectedSubject.media && selectedSubject.media.length" class="mb-10">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
+                            <i class="fa-solid fa-images mr-2"></i> Visual Evidence
+                        </h3>
+                        <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                            <div v-for="m in selectedSubject.media" :key="m.id" class="evidence-frame rounded-lg bg-slate-200 shadow-sm border border-slate-300 group" @click="lightbox = { active: true, url: '/api/media/' + m.object_key, desc: m.description }">
+                                <img :src="'/api/media/' + m.object_key" loading="lazy">
+                                <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {{ m.description || 'No desc' }}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Nested Data Tree -->
+                    <section class="mb-10">
+                        <div class="flex justify-between items-end mb-4">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center">
+                                <i class="fa-solid fa-fingerprint mr-2"></i> Deep Details
+                            </h3>
+                            <span class="text-[10px] text-slate-400">Click items to elaborate</span>
+                        </div>
+
+                        <div class="space-y-4">
+                            <!-- Recursive Tree Component Logic handled in template via v-for -->
+                            <div v-for="node in dataTree" :key="node.id" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <!-- Top Level Item -->
+                                <div class="p-4 flex justify-between items-start hover:bg-indigo-50/30 transition-colors cursor-pointer" @click="toggleNode(node.id)">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 uppercase border border-slate-200">{{ node.category }}</span>
+                                            <h4 class="font-bold text-slate-800 text-sm">{{ node.label }}</h4>
+                                        </div>
+                                        <div class="mt-1 text-slate-700 text-sm font-mono">{{ node.value }}</div>
+                                        <div v-if="node.analysis" class="mt-2 text-xs text-indigo-600 italic border-l-2 border-indigo-200 pl-2">
+                                            "{{ node.analysis }}"
+                                        </div>
+                                    </div>
+                                    <button @click.stop="openAddModal('data', node.id)" class="text-slate-300 hover:text-indigo-600 transition-colors" title="Add nested detail">
+                                        <i class="fa-solid fa-plus-circle text-lg"></i>
+                                    </button>
+                                </div>
+
+                                <!-- Children (Recursive Render) -->
+                                <div v-if="node.children && node.children.length && node.expanded" class="bg-slate-50 border-t border-slate-100 p-2 pl-6 space-y-2 relative">
+                                    <div v-for="child in node.children" :key="child.id" class="relative pl-4 pt-2">
+                                        <!-- Visual Tree Lines -->
+                                        <div class="absolute left-0 top-0 bottom-0 w-[1px] bg-indigo-200"></div>
+                                        <div class="absolute left-0 top-5 w-3 h-[1px] bg-indigo-200"></div>
+                                        
+                                        <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm relative group">
+                                            <div class="flex justify-between">
+                                                <span class="text-xs font-bold text-indigo-600">{{ child.label }}</span>
+                                                <button @click.stop="openAddModal('data', child.id)" class="text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <i class="fa-solid fa-reply fa-flip-horizontal"></i>
+                                                </button>
+                                            </div>
+                                            <p class="text-sm text-slate-800 mt-1">{{ child.value }}</p>
+                                            <!-- Recursion limit: 2 levels deep for UI simplicity, but backend supports infinite -->
+                                            <div v-if="child.children && child.children.length" class="mt-2 pl-2 border-l border-slate-200 text-xs text-slate-500">
+                                                <div v-for="grand in child.children" class="mt-1">
+                                                    <strong class="text-slate-700">{{ grand.label }}:</strong> {{ grand.value }}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Events & Timeline -->
+                     <section>
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
+                            <i class="fa-solid fa-clock-rotate-left mr-2"></i> Timeline
+                        </h3>
+                        <div class="relative border-l-2 border-slate-200 ml-3 space-y-8 pb-10">
+                            <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-8">
+                                <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-white border-2 border-amber-400"></div>
+                                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                                    <span class="text-xs font-mono text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded">{{ e.event_date }}</span>
+                                    <h4 class="font-bold text-slate-900 mt-2">{{ e.title }}</h4>
+                                    <p class="text-sm text-slate-600 mt-1">{{ e.description }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
             </div>
-            
-            <!-- Mobile Bottom Nav -->
-            <div class="md:hidden bg-white border-t border-slate-200 flex justify-around py-3 pb-safe shrink-0 text-xs font-bold text-slate-400 shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-                <button @click="currentTab = 'dashboard'" :class="{'text-indigo-600': currentTab === 'dashboard'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-chart-pie text-xl mb-1"></i> Dashboard
-                </button>
-                <button @click="currentTab = 'subjects'; fetchSubjects()" :class="{'text-indigo-600': currentTab === 'subjects'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-users text-xl mb-1"></i> Directory
-                </button>
-                <button @click="currentTab = 'add'" :class="{'text-indigo-600': currentTab === 'add'}" class="flex flex-col items-center">
-                    <i class="fa-solid fa-circle-plus text-xl mb-1"></i> New
-                </button>
-            </div>
+
+            <!-- Add Subject Form -->
+             <div v-if="currentTab === 'add'" class="flex-1 flex flex-col items-center p-8 overflow-y-auto">
+                <div class="w-full max-w-2xl bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                    <div class="bg-slate-50 px-8 py-6 border-b border-slate-200">
+                        <h2 class="text-xl font-black text-slate-900">Initialize Subject</h2>
+                        <p class="text-slate-500 text-sm">Create a new container for human observation.</p>
+                    </div>
+                    <form @submit.prevent="createSubject" class="p-8 space-y-6">
+                        <div class="grid grid-cols-2 gap-6">
+                            <div class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Full Name</label>
+                                <input v-model="newSubject.fullName" required class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Occupation</label>
+                                <input v-model="newSubject.occupation" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Location</label>
+                                <input v-model="newSubject.location" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500">
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-4 pt-4 border-t border-slate-100">
+                            <button type="button" @click="currentTab = 'subjects'" class="px-6 py-2 text-slate-500 font-bold hover:bg-slate-50 rounded-lg">Cancel</button>
+                            <button type="submit" class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-lg shadow-indigo-200">Create Profile</button>
+                        </div>
+                    </form>
+                </div>
+             </div>
+
         </main>
     </div>
 
-    <!-- Modals Wrapper -->
-    <div v-if="activeModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-fade-in-up">
-            
-            <!-- DATA MODAL -->
-            <div v-if="activeModal === 'data'" class="p-6">
-                <h3 class="text-lg font-extrabold text-slate-900 mb-4">Add Deep Detail</h3>
-                <form @submit.prevent="submitData">
-                    <div class="space-y-4">
-                        <div>
+    <!-- Universal Modal -->
+    <transition name="fade">
+        <div v-if="modal.type" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-slide-up">
+                <div class="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-800">{{ modalTitle }}</h3>
+                    <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+                
+                <div class="p-6">
+                    <!-- Data Point Form -->
+                    <form v-if="modal.type === 'data'" @submit.prevent="submitData" class="space-y-4">
+                        <div v-if="modal.parentId" class="bg-indigo-50 p-3 rounded-lg text-xs text-indigo-700 flex items-center mb-4">
+                            <i class="fa-solid fa-diagram-next mr-2"></i> Adding detail to existing point
+                        </div>
+                        <div v-else>
                             <label class="text-xs font-bold text-slate-500 uppercase">Category</label>
-                            <select v-model="forms.data.category" class="w-full border-slate-300 rounded-lg p-2.5 bg-slate-50">
-                                <option>Identity</option>
-                                <option>Psychology</option>
+                            <select v-model="forms.data.category" class="w-full border border-slate-300 rounded-lg p-2.5 bg-white mt-1">
                                 <option>Physical</option>
-                                <option>Social</option>
+                                <option>Psychological</option>
+                                <option>Biographical</option>
+                                <option>Habit</option>
                                 <option>Other</option>
                             </select>
                         </div>
                         <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Attribute Name</label>
-                            <input v-model="forms.data.label" placeholder="e.g. Eye Color, Origin of Name" required class="w-full border-slate-300 rounded-lg p-2.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Label</label>
+                            <input v-model="forms.data.label" placeholder="e.g. Scar Location" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
                         </div>
                         <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Value / Fact</label>
-                            <input v-model="forms.data.value" placeholder="The factual detail" required class="w-full border-slate-300 rounded-lg p-2.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Value</label>
+                            <textarea v-model="forms.data.value" placeholder="Detail content..." required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1 h-20"></textarea>
                         </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Analysis (Optional)</label>
-                            <textarea v-model="forms.data.analysis" placeholder="Your psychological interpretation..." class="w-full border-slate-300 rounded-lg p-2.5 h-20"></textarea>
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-end gap-3">
-                        <button type="button" @click="activeModal = null" class="px-4 py-2 text-slate-500 font-bold">Cancel</button>
-                        <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">Save</button>
-                    </div>
-                </form>
-            </div>
+                        <button type="submit" :disabled="uploading" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors">
+                            {{ uploading ? 'Saving...' : 'Attach Detail' }}
+                        </button>
+                    </form>
 
-            <!-- MEDIA MODAL -->
-            <div v-if="activeModal === 'media'" class="p-6">
-                <h3 class="text-lg font-extrabold text-slate-900 mb-4">Upload Evidence</h3>
-                <label class="block w-full border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:bg-slate-50 transition-colors">
-                    <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400 mb-2"></i>
-                    <p class="text-slate-500 font-medium">Click to select photo</p>
-                    <input type="file" @change="handleFileUpload" accept="image/*" class="hidden">
-                </label>
-                <div v-if="forms.media.file" class="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold flex items-center">
-                    <i class="fa-solid fa-check-circle mr-2"></i> {{ forms.media.file.name }}
-                </div>
-                <div class="mt-4">
-                    <label class="text-xs font-bold text-slate-500 uppercase">Description</label>
-                    <input v-model="forms.media.description" class="w-full border-slate-300 rounded-lg p-2.5 mt-1">
-                </div>
-                 <div class="mt-6 flex justify-end gap-3">
-                    <button type="button" @click="activeModal = null" class="px-4 py-2 text-slate-500 font-bold">Cancel</button>
-                    <button type="button" @click="submitMedia" :disabled="!forms.media.file || uploading" class="px-6 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 disabled:opacity-50">
-                        {{ uploading ? 'Uploading...' : 'Upload' }}
-                    </button>
-                </div>
-            </div>
-
-            <!-- EVENT MODAL -->
-            <div v-if="activeModal === 'event'" class="p-6">
-                <h3 class="text-lg font-extrabold text-slate-900 mb-4">Log Life Event</h3>
-                <form @submit.prevent="submitEvent">
-                    <div class="space-y-4">
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Date</label>
-                            <input type="date" v-model="forms.event.eventDate" required class="w-full border-slate-300 rounded-lg p-2.5">
-                        </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Event Title</label>
-                            <input v-model="forms.event.title" placeholder="e.g. Started School" required class="w-full border-slate-300 rounded-lg p-2.5">
-                        </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Description</label>
-                            <textarea v-model="forms.event.description" class="w-full border-slate-300 rounded-lg p-2.5 h-24"></textarea>
-                        </div>
+                    <!-- Media Upload Form -->
+                    <div v-if="modal.type === 'media'" class="space-y-4">
+                         <div class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:bg-slate-50 transition-colors relative">
+                            <input type="file" @change="handleFileSelect" class="absolute inset-0 opacity-0 cursor-pointer" accept="image/*">
+                            <div v-if="forms.media.preview">
+                                <img :src="forms.media.preview" class="h-32 mx-auto rounded-lg shadow-sm object-cover">
+                                <p class="text-xs text-emerald-600 font-bold mt-2">Ready to upload</p>
+                            </div>
+                            <div v-else>
+                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-300 mb-2"></i>
+                                <p class="text-slate-500 text-sm font-medium">Tap to select image</p>
+                            </div>
+                         </div>
+                         <input v-model="forms.media.desc" placeholder="Description of evidence..." class="w-full border border-slate-300 rounded-lg p-3">
+                         <button @click="submitMedia" :disabled="!forms.media.data || uploading" class="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-50">
+                            {{ uploading ? 'Compressing & Uploading...' : 'Upload Evidence' }}
+                        </button>
                     </div>
-                    <div class="mt-6 flex justify-end gap-3">
-                        <button type="button" @click="activeModal = null" class="px-4 py-2 text-slate-500 font-bold">Cancel</button>
-                        <button type="submit" class="px-6 py-2 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700">Log Event</button>
-                    </div>
-                </form>
-            </div>
 
-            <!-- REL MODAL -->
-             <div v-if="activeModal === 'rel'" class="p-6">
-                <h3 class="text-lg font-extrabold text-slate-900 mb-4">Add Connection</h3>
-                <form @submit.prevent="submitRel">
-                    <div class="space-y-4">
+                    <!-- Relationship Form -->
+                    <form v-if="modal.type === 'rel'" @submit.prevent="submitRel" class="space-y-4">
                         <div>
                             <label class="text-xs font-bold text-slate-500 uppercase">Connect With</label>
-                            <select v-model="forms.rel.subjectB" required class="w-full border-slate-300 rounded-lg p-2.5">
+                            <select v-model="forms.rel.subjectB" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
                                 <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
                             </select>
                         </div>
                         <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Is a ... of {{ selectedSubject.full_name }}</label>
-                            <input v-model="forms.rel.type" placeholder="e.g. Mother, Friend" required class="w-full border-slate-300 rounded-lg p-2.5">
+                            <label class="text-xs font-bold text-slate-500 uppercase">Relationship</label>
+                            <input v-model="forms.rel.type" placeholder="e.g. Brother, Enemy" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
                         </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Notes</label>
-                            <input v-model="forms.rel.notes" class="w-full border-slate-300 rounded-lg p-2.5">
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-end gap-3">
-                        <button type="button" @click="activeModal = null" class="px-4 py-2 text-slate-500 font-bold">Cancel</button>
-                        <button type="submit" class="px-6 py-2 bg-rose-600 text-white rounded-lg font-bold hover:bg-rose-700">Connect</button>
-                    </div>
-                </form>
+                         <button type="submit" class="w-full bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600">Connect</button>
+                    </form>
+                </div>
             </div>
-
         </div>
-    </div>
+    </transition>
 
   </div>
 
   <script>
-    const { createApp, ref, reactive, computed, onMounted } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
 
     createApp({
       setup() {
         const view = ref('auth');
-        const currentTab = ref('dashboard');
         const setupMode = ref(false);
-        const loading = ref(true);
-        const initialLoadComplete = ref(false);
+        const currentTab = ref('subjects');
+        const loading = ref(false);
         const uploading = ref(false);
-        const authError = ref('');
         const subjects = ref([]);
         const selectedSubject = ref(null);
-        const activeModal = ref(null);
-        const retryCount = ref(0);
+        const lightbox = reactive({ active: false, url: '', desc: '' });
+        
+        // Graph State
+        const graphSearch = ref('');
+        let network = null;
+
+        // Auth
+        const auth = reactive({ email: '', password: '' });
+        
+        // Modal State
+        const modal = reactive({ type: null, parentId: null });
+        const modalTitle = computed(() => {
+            if(modal.type === 'data') return modal.parentId ? 'Add Sub-Detail' : 'Add Detail';
+            if(modal.type === 'media') return 'Upload Evidence';
+            if(modal.type === 'rel') return 'Add Connection';
+            return 'Action';
+        });
 
         // Forms
-        const authForm = reactive({ email: '', password: '' });
-        const newSubject = reactive({ fullName: '', dob: '', age: '', gender: '', occupation: '', nationality: '', education: '', religion: '', location: '', contact: '' });
-        
+        const newSubject = reactive({ fullName: '', occupation: '', location: '' });
         const forms = reactive({
-            data: { category: 'Identity', label: '', value: '', analysis: '' },
-            event: { title: '', description: '', eventDate: '' },
-            rel: { subjectB: '', type: '', notes: '' },
-            media: { file: null, description: '' }
+            data: { category: 'Physical', label: '', value: '', analysis: '' },
+            media: { data: null, desc: '', preview: null, filename: '', type: '' },
+            rel: { subjectB: '', type: '' },
+            event: { title: '', date: '', desc: '' }
         });
 
-        // Feed Logic
-        const feedItems = computed(() => {
-            if (!selectedSubject.value) return [];
-            const items = [];
-            if(selectedSubject.value.dataPoints) items.push(...selectedSubject.value.dataPoints.map(i => ({...i, type: 'data', uniqueId: 'd'+i.id})));
-            if(selectedSubject.value.events) items.push(...selectedSubject.value.events.map(i => ({...i, type: 'event', uniqueId: 'e'+i.id})));
-            if(selectedSubject.value.media) items.push(...selectedSubject.value.media.map(i => ({...i, type: 'media', uniqueId: 'm'+i.id})));
-            if(selectedSubject.value.relationships) items.push(...selectedSubject.value.relationships.map(i => ({...i, type: 'relationship', uniqueId: 'r'+i.id})));
-            return items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        // Helpers
+        const menuItems = [
+            { id: 'subjects', label: 'Directory', icon: 'fa-solid fa-folder-open' },
+            { id: 'graph', label: 'Relations Graph', icon: 'fa-solid fa-diagram-project', action: loadGraph },
+        ];
+
+        // API Wrapper
+        const api = async (url, opts = {}) => {
+            const res = await fetch(url, opts);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        };
+
+        // --- Data Logic ---
+
+        const dataTree = computed(() => {
+            if (!selectedSubject.value || !selectedSubject.value.dataPoints) return [];
+            const raw = selectedSubject.value.dataPoints;
+            const map = {};
+            const roots = [];
+            
+            // First pass: create nodes
+            raw.forEach(item => {
+                map[item.id] = { ...item, children: [], expanded: true }; // Expanded by default
+            });
+            
+            // Second pass: link parents
+            raw.forEach(item => {
+                if (item.parent_id && map[item.parent_id]) {
+                    map[item.parent_id].children.push(map[item.id]);
+                } else {
+                    roots.push(map[item.id]);
+                }
+            });
+            return roots;
         });
+        
+        const filteredSubjects = computed(() => subjects.value); // Add search later if needed
 
-        // API Wrapper with Retry Logic
-        const api = async (url, options = {}, retries = 3) => {
-            try {
-                const res = await fetch(url, options);
-                
-                // Safe JSON parsing: Check if response is actually JSON
-                const contentType = res.headers.get("content-type");
-                if (!contentType || !contentType.includes("application/json")) {
-                    const text = await res.text();
-                    // If HTML error (1101/502/503 from Cloudflare or Worker timeout)
-                    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-                        throw new Error("HTML_ERROR"); // Trigger retry
-                    }
-                    throw new Error(text || "Unknown server error");
-                }
-
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Server error');
-                return data;
-            } catch (e) {
-                // Retry specific errors (Network or HTML error page)
-                if ((e.message === "HTML_ERROR" || e.name === 'TypeError') && retries > 0) {
-                    console.log("Retrying connection...", retries);
-                    retryCount.value = 4 - retries; // Update UI
-                    await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s
-                    return api(url, options, retries - 1);
-                }
-                
-                if (e.message === "HTML_ERROR") {
-                    throw new Error("System is warming up. Please refresh in a moment.");
-                }
-                
-                console.error(e);
-                alert(e.message); 
-                throw e;
-            }
-        };
-
-        const checkStatus = async () => {
-            loading.value = true;
-            try {
-                // "Wake up" call
-                const data = await api('/api/status');
-                if (!data.adminExists) setupMode.value = true;
-                else {
-                    const storedUser = localStorage.getItem('human_admin_id');
-                    if (storedUser) {
-                        await fetchSubjects(storedUser); // Verify login by fetching data
-                        view.value = 'app';
-                    }
-                }
-            } catch (e) {
-                // Keep loading off if error, user sees alert from api()
-            } finally {
-                loading.value = false;
-                initialLoadComplete.value = true;
-                retryCount.value = 0;
-            }
-        };
+        // --- Methods ---
 
         const handleAuth = async () => {
             loading.value = true;
-            authError.value = '';
-            const endpoint = setupMode.value ? '/api/setup-admin' : '/api/login';
             try {
-                const data = await api(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(authForm)
-                });
-                localStorage.setItem('human_admin_id', data.id);
+                const ep = setupMode.value ? '/api/setup-admin' : '/api/login';
+                const res = await api(ep, { method: 'POST', body: JSON.stringify(auth) });
+                localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
-                setupMode.value = false;
-                await fetchSubjects();
-            } catch (e) {
-                authError.value = e.message;
-            } finally {
-                loading.value = false;
-            }
+                fetchSubjects();
+            } catch (e) { alert(e.message); } 
+            finally { loading.value = false; }
         };
 
-        const logout = () => {
-            localStorage.removeItem('human_admin_id');
-            view.value = 'auth';
-            subjects.value = [];
-        };
-
-        const fetchSubjects = async (idOverride) => {
-            const adminId = idOverride || localStorage.getItem('human_admin_id');
-            if (!adminId) return;
-            try {
-                const data = await api('/api/subjects?adminId=' + adminId);
-                subjects.value = data;
-            } catch(e) {}
-        };
-
-        const calculateAge = (dob, manualAge) => {
-            if (!dob) return manualAge ? manualAge + ' years' : 'Age Unknown';
-            const birthDate = new Date(dob);
-            const today = new Date();
-            let years = today.getFullYear() - birthDate.getFullYear();
-            let months = today.getMonth() - birthDate.getMonth();
-            if (months < 0 || (months === 0 && today.getDate() < birthDate.getDate())) {
-                years--;
-                months += 12;
-            }
-            return \`\${years}y \${months}m\`;
+        const fetchSubjects = async () => {
+            const id = localStorage.getItem('admin_id');
+            if(id) subjects.value = await api('/api/subjects?adminId=' + id);
         };
 
         const createSubject = async () => {
-            const adminId = localStorage.getItem('human_admin_id');
-            loading.value = true;
-            try {
-                await api('/api/subjects', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...newSubject, adminId: parseInt(adminId) })
-                });
-                Object.keys(newSubject).forEach(k => newSubject[k] = '');
-                await fetchSubjects();
-                currentTab.value = 'subjects';
-            } catch(e) {} finally { loading.value = false; }
+            await api('/api/subjects', {
+                method: 'POST',
+                body: JSON.stringify({ ...newSubject, adminId: localStorage.getItem('admin_id') })
+            });
+            newSubject.fullName = '';
+            fetchSubjects();
+            currentTab.value = 'subjects';
         };
 
         const viewSubject = async (id) => {
-            loading.value = true;
-            try {
-                const data = await api('/api/subjects/' + id);
-                selectedSubject.value = data;
-                currentTab.value = 'detail';
-            } catch(e) {} finally { loading.value = false; }
+            selectedSubject.value = await api('/api/subjects/' + id);
+            currentTab.value = 'detail';
         };
 
-        const openModal = (type) => { activeModal.value = type; };
+        const toggleNode = (id) => {
+             // Logic to toggle expansion could go here, relying on reactive map in real implementation
+             // For now we just default expand all
+        };
+
+        // --- Image Compression & Upload ---
+        // Solves "Data Upload Errors" by resizing large images client-side
+        const compressImage = (file) => {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_WIDTH = 1200; // Reasonable limit
+                        const scale = MAX_WIDTH / img.width;
+                        canvas.width = scale < 1 ? MAX_WIDTH : img.width;
+                        canvas.height = scale < 1 ? img.height * scale : img.height;
+                        
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.8).split(',')[1]); // Send base64
+                    };
+                };
+            });
+        };
+
+        const handleFileSelect = async (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            forms.media.filename = file.name;
+            forms.media.type = 'image/jpeg';
+            forms.media.preview = URL.createObjectURL(file);
+            uploading.value = true;
+            forms.media.data = await compressImage(file);
+            uploading.value = false;
+        };
+
+        const submitMedia = async () => {
+            if(!forms.media.data) return;
+            uploading.value = true;
+            try {
+                await api('/api/upload-photo', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        subjectId: selectedSubject.value.id,
+                        data: forms.media.data,
+                        filename: forms.media.filename,
+                        contentType: forms.media.type,
+                        description: forms.media.desc
+                    })
+                });
+                closeModal();
+                viewSubject(selectedSubject.value.id);
+            } catch(e) { alert("Upload failed: " + e.message); }
+            finally { uploading.value = false; }
+        };
+
+        // --- Graph Logic (Vis.js) ---
+        async function loadGraph() {
+            const id = localStorage.getItem('admin_id');
+            const data = await api('/api/graph?adminId=' + id);
+            
+            const container = document.getElementById('network-graph');
+            const nodes = data.nodes.map(n => ({
+                id: n.id,
+                label: n.full_name,
+                shape: 'circularImage',
+                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name,
+                size: 30,
+                borderWidth: 2,
+                color: { border: '#6366f1', background: '#ffffff' }
+            }));
+            
+            const edges = data.edges.map(e => ({
+                from: e.from_id,
+                to: e.to_id,
+                label: e.label,
+                arrows: 'to',
+                color: { color: '#cbd5e1' },
+                font: { size: 10, align: 'middle' },
+                smooth: { type: 'curvedCW', roundness: 0.2 }
+            }));
+
+            const opts = {
+                physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },
+                interaction: { hover: true, tooltipDelay: 200 }
+            };
+            
+            network = new vis.Network(container, { nodes, edges }, opts);
+            
+            network.on('click', (params) => {
+                if(params.nodes.length) viewSubject(params.nodes[0]);
+            });
+        }
+
+        const fitGraph = () => network && network.fit();
+        const refreshGraph = () => loadGraph();
+
+        watch(graphSearch, (val) => {
+            // Simple visual search in graph
+            if(!network) return;
+            const nodes = network.body.data.nodes.get();
+            const matches = nodes.filter(n => n.label.toLowerCase().includes(val.toLowerCase())).map(n => n.id);
+            network.selectNodes(matches);
+        });
+
+        // --- Modals & Avatars ---
+        const openAddModal = (type, parentId = null) => {
+            modal.type = type;
+            modal.parentId = parentId;
+            // Reset forms
+            forms.data = { category: 'Physical', label: '', value: '', analysis: '' };
+            forms.media = { data: null, desc: '', preview: null };
+            forms.rel = { subjectB: '', type: '' };
+        };
+
+        const closeModal = () => { modal.type = null; };
 
         const submitData = async () => {
+            uploading.value = true;
             await api('/api/data-point', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...forms.data, subjectId: selectedSubject.value.id })
+                body: JSON.stringify({ 
+                    ...forms.data, 
+                    subjectId: selectedSubject.value.id,
+                    parentId: modal.parentId // Support Nesting
+                })
             });
-            activeModal.value = null; forms.data.label = ''; forms.data.value = ''; forms.data.analysis = '';
-            await viewSubject(selectedSubject.value.id);
-        };
-
-        const submitEvent = async () => {
-            await api('/api/event', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id })
-            });
-            activeModal.value = null; forms.event.title = ''; forms.event.description = '';
-            await viewSubject(selectedSubject.value.id);
+            uploading.value = false;
+            closeModal();
+            viewSubject(selectedSubject.value.id);
         };
 
         const submitRel = async () => {
-            await api('/api/relationship', {
+             await api('/api/relationship', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id })
             });
-            activeModal.value = null; forms.rel.subjectB = ''; forms.rel.type = ''; forms.rel.notes = '';
-            await viewSubject(selectedSubject.value.id);
+            closeModal();
+            viewSubject(selectedSubject.value.id);
         };
-
-        const handleFileUpload = (e) => { forms.media.file = e.target.files[0]; };
         
-        const submitMedia = async () => {
-            if (!forms.media.file) return;
-            uploading.value = true;
-            const reader = new FileReader();
-            reader.readAsDataURL(forms.media.file);
-            reader.onload = async () => {
-                const base64 = reader.result.split(',')[1];
-                try {
-                    await api('/api/upload-photo', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            subjectId: selectedSubject.value.id,
-                            filename: forms.media.file.name,
-                            contentType: forms.media.file.type,
-                            data: base64,
-                            description: forms.media.description
-                        })
-                    });
-                    activeModal.value = null; forms.media.file = null; forms.media.description = '';
-                    await viewSubject(selectedSubject.value.id);
-                } catch(e) {} finally { uploading.value = false; }
-            };
+        // Avatar Special Handling
+        const triggerAvatarUpload = () => { document.querySelector('input[type="file"]').click(); };
+        const handleAvatarUpload = async (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            const b64 = await compressImage(file);
+            await api('/api/upload-avatar', {
+                method: 'POST',
+                body: JSON.stringify({ subjectId: selectedSubject.value.id, data: b64, filename: file.name, contentType: 'image/jpeg' })
+            });
+            viewSubject(selectedSubject.value.id);
         };
 
-        onMounted(() => checkStatus());
+        // Init
+        onMounted(async () => {
+            try {
+                const status = await api('/api/status');
+                if(!status.adminExists) setupMode.value = true;
+                else {
+                    const saved = localStorage.getItem('admin_id');
+                    if(saved) {
+                        view.value = 'app';
+                        fetchSubjects();
+                    }
+                }
+            } catch(e) {}
+        });
 
         return {
-            view, currentTab, setupMode, loading, initialLoadComplete, uploading, authForm, authError,
-            subjects, selectedSubject, newSubject, forms, activeModal, feedItems, retryCount,
-            handleAuth, logout, fetchSubjects, createSubject, viewSubject, calculateAge,
-            openModal, submitData, submitEvent, submitRel, handleFileUpload, submitMedia
+            view, setupMode, currentTab, loading, uploading, subjects, filteredSubjects, selectedSubject,
+            auth, newSubject, modal, modalTitle, forms, lightbox, menuItems, dataTree, graphSearch,
+            handleAuth, logout: () => { localStorage.clear(); location.reload(); },
+            createSubject, viewSubject, openAddModal, closeModal, submitData, submitRel, 
+            submitMedia, handleFileSelect, loadGraph, fitGraph, refreshGraph,
+            triggerAvatarUpload, handleAvatarUpload
         };
       }
     }).mount('#app');
   </script>
 </body>
 </html>`;
-
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
 
-// --- Route Handlers ---
+// --- Routes & Handlers ---
 
-async function handleStatus(db) {
-  const exists = await adminExists(db);
-  return Response.json({ adminExists: exists });
+async function handleLogin(req, db) {
+    const { email, password } = await req.json();
+    const admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+    if (!admin) return errorResponse('Invalid credentials', 401);
+    
+    const hashed = await hashPassword(password);
+    if (hashed !== admin.password_hash) return errorResponse('Invalid credentials', 401);
+    
+    return response({ id: admin.id, email: admin.email });
 }
 
-async function handleLogin(request, db) {
-    const { email, password } = await request.json();
-    if (!email || !password) return Response.json({ error: 'Missing credentials' }, { status: 400 });
-    const admin = await verifyAdmin(db, email, password);
-    return admin ? Response.json(admin) : Response.json({ error: 'Invalid credentials' }, { status: 401 });
+async function handleSetup(req, db) {
+    const { email, password } = await req.json();
+    const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
+    if (count.c > 0) return errorResponse('Admin already exists', 403);
+    
+    const hash = await hashPassword(password);
+    const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+    return response({ id: res.meta.last_row_id });
 }
 
-async function handleSetupAdmin(request, db) {
-  const payload = await request.json();
-  if (await adminExists(db)) return Response.json({ error: 'Admin already exists' }, { status: 409 });
-  await createAdmin(db, payload.email, payload.password);
-  const admin = await verifyAdmin(db, payload.email, payload.password);
-  return Response.json(admin);
+async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
+    const { subjectId, data, filename, contentType, description } = await req.json();
+    // 1. Upload to R2
+    const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+    const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    await bucket.put(key, binary, { httpMetadata: { contentType } });
+    
+    // 2. Record in DB
+    if (isAvatar) {
+        // Update subject avatar column
+        await db.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+    } else {
+        // Add to media gallery
+        await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?, ?, ?, ?, ?)')
+            .bind(subjectId, key, contentType, description, isoTimestamp()).run();
+    }
+    return response({ success: true, key });
 }
 
-async function handleGetSubjects(request, db) {
-    const url = new URL(request.url);
-    const adminId = url.searchParams.get('adminId');
-    if (!adminId) return Response.json({ error: 'Auth required' }, { status: 401 });
-    const results = await getSubjects(db, adminId);
-    return Response.json(results);
-}
-
-async function handleCreateSubject(request, db) {
-  const payload = await request.json();
-  if (!payload.adminId || !payload.fullName) return Response.json({ error: 'Missing Name/ID' }, { status: 400 });
-  const result = await addSubject(db, payload);
-  return Response.json(result);
-}
-
-async function handleUploadPhoto(request, db, bucket) {
-  const payload = await request.json();
-  const sanitized = sanitizeFileName(payload.filename);
-  const key = `${payload.subjectId}-${Date.now()}-${sanitized}`;
-  const binary = Uint8Array.from(atob(payload.data), (c) => c.charCodeAt(0));
-  await bucket.put(key, binary, { httpMetadata: { contentType: payload.contentType } });
-  await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)')
-      .bind(payload.subjectId, key, payload.contentType, payload.description || '', isoTimestamp()).run();
-  return Response.json({ key });
-}
-
-// Generic Data Handlers
-async function handleGenericInsert(request, db, table, cols) {
-    const p = await request.json();
-    const placeholders = cols.map((_, i) => `?${i+1}`).join(',');
-    const stmt = `INSERT INTO ${table} (${cols.join(',')}, created_at) VALUES (${placeholders}, ?)`;
-    const values = cols.map(c => p[c] || null);
-    await db.prepare(stmt).bind(...values, isoTimestamp()).run();
-    return Response.json({ success: true });
-}
+// --- Main Worker Entrypoint ---
 
 export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const { pathname } = url;
-    
-    // Router
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
     try {
-        // Only run DB checks if NOT requesting the home page asset
-        // CRITICAL FIX: Ensure schema is only checked once per cold start to save DB CPU
-        if (pathname !== '/') {
-            await ensureSchema(env.DB); 
+        // 1. serve frontend
+        if (req.method === 'GET' && path === '/') return serveHtml();
+        
+        // 2. ensure DB
+        if (path.startsWith('/api/')) await ensureSchema(env.DB);
+        
+        // 3. route API
+        if (path === '/api/status') {
+            const c = await env.DB.prepare('SELECT COUNT(*) as c FROM admins').first();
+            return response({ adminExists: c.c > 0 });
+        }
+        if (path === '/api/setup-admin') return handleSetup(req, env.DB);
+        if (path === '/api/login') return handleLogin(req, env.DB);
+        
+        if (path === '/api/subjects') {
+            if (req.method === 'POST') {
+                const p = await req.json();
+                await env.DB.prepare('INSERT INTO subjects (admin_id, full_name, occupation, location, created_at) VALUES (?,?,?,?,?)')
+                    .bind(p.adminId, p.fullName, p.occupation, p.location, isoTimestamp()).run();
+                return response({ success: true });
+            }
+            const adminId = url.searchParams.get('adminId');
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? ORDER BY created_at DESC').bind(adminId).all();
+            return response(res.results);
         }
 
-        if (request.method === 'GET' && pathname === '/') return serveHome(request, env);
-        if (pathname === '/api/status') return handleStatus(env.DB);
-        if (pathname === '/api/login') return handleLogin(request, env.DB);
-        if (pathname === '/api/setup-admin') return handleSetupAdmin(request, env.DB);
-        if (pathname === '/api/subjects') return request.method === 'POST' ? handleCreateSubject(request, env.DB) : handleGetSubjects(request, env.DB);
-        if (pathname.match(/^\/api\/subjects\/\d+$/)) return Response.json(await getSubjectDetail(env.DB, pathname.split('/').pop()));
-        if (pathname === '/api/upload-photo') return handleUploadPhoto(request, env.DB, env.BUCKET);
-        if (pathname.startsWith('/api/media/')) {
-            const obj = await env.BUCKET.get(pathname.replace('/api/media/', ''));
-            return obj ? new Response(obj.body) : new Response('Not found', { status: 404 });
+        if (path.match(/^\/api\/subjects\/\d+$/)) {
+             return handleGetSubjectFull(env.DB, path.split('/').pop());
+        }
+
+        if (path === '/api/data-point') {
+            const p = await req.json();
+            // p.parentId can be null or an integer
+            await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, created_at) VALUES (?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis, isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        if (path === '/api/event') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?,?,?,?,?)')
+                .bind(p.subjectId, p.title, p.description || '', p.date || isoTimestamp(), isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        if (path === '/api/relationship') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
+                .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
+            // Optional: Create inverse relationship automatically?
+            // For now, let's keep it directional as requested.
+            return response({ success: true });
+        }
+
+        if (path === '/api/upload-photo') return handleUploadPhoto(req, env.DB, env.BUCKET, false);
+        if (path === '/api/upload-avatar') return handleUploadPhoto(req, env.DB, env.BUCKET, true);
+
+        if (path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
         }
         
-        // Dynamic Inserts
-        if (pathname === '/api/data-point') return handleGenericInsert(request, env.DB, 'subject_data_points', ['subject_id', 'category', 'label', 'value', 'analysis']);
-        if (pathname === '/api/event') return handleGenericInsert(request, env.DB, 'subject_events', ['subject_id', 'title', 'description', 'event_date']);
-        if (pathname === '/api/relationship') return handleGenericInsert(request, env.DB, 'subject_relationships', ['subject_a_id', 'subject_b_id', 'relationship_type', 'notes']);
+        if (path === '/api/graph') return handleGetGraph(env.DB, url.searchParams.get('adminId'));
 
         return new Response('Not found', { status: 404 });
-    } catch (e) {
-        return Response.json({ error: e.message }, { status: 500 });
+    } catch(e) {
+        return errorResponse(e.message);
     }
-  },
+  }
 };
