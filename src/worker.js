@@ -2,13 +2,18 @@ const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
 const ALLOWED_ORIGINS = ['*']; 
-const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB limit
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024; // Increased to 15MB
 
 // --- Schema Definitions ---
 const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
   "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
-  "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0"
+  "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0",
+  // New Deep Research Fields
+  "ALTER TABLE subject_data_points ADD COLUMN confidence INTEGER DEFAULT 100",
+  "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
+  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
+  "ALTER TABLE subjects ADD COLUMN last_sighted TEXT"
 ];
 
 // --- Helper Functions ---
@@ -53,11 +58,12 @@ async function ensureSchema(db) {
           id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT, 
           occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
           habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'Active', last_sighted TEXT,
           created_at TEXT, updated_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_data_points (
           id INTEGER PRIMARY KEY, subject_id INTEGER, parent_id INTEGER, category TEXT, label TEXT, 
-          value TEXT, analysis TEXT, created_at TEXT
+          value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_events (
           id INTEGER PRIMARY KEY, subject_id INTEGER, title TEXT, description TEXT, event_date TEXT, created_at TEXT
@@ -81,8 +87,29 @@ async function ensureSchema(db) {
 
 // --- API Handlers ---
 
+async function handleGetDashboard(db, adminId) {
+    // Get recent activity feed
+    const recent = await db.prepare(`
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'New Subject Created' as desc, created_at as date FROM subjects WHERE admin_id = ?
+        UNION ALL
+        SELECT 'event' as type, subject_id as ref_id, title, description as desc, created_at as date FROM subject_events WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        UNION ALL
+        SELECT 'media' as type, subject_id as ref_id, 'New Evidence' as title, description as desc, created_at as date FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        ORDER BY date DESC LIMIT 20
+    `).bind(adminId, adminId, adminId).all();
+
+    const stats = await db.prepare(`
+        SELECT 
+            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as active_subjects,
+            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as total_media,
+            (SELECT COUNT(*) FROM subject_data_points WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as total_intel
+    `).bind(adminId, adminId, adminId).first();
+
+    return response({ feed: recent.results, stats });
+}
+
 async function handleGetGraph(db, adminId) {
-    const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
+    const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation, status FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
     const rels = await db.prepare(`
         SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
         FROM subject_relationships r 
@@ -119,25 +146,27 @@ async function handleGetSubjectFull(db, id) {
 
 async function handleUpdateSubject(req, db, id) {
     const p = await req.json();
-    const allowed = ['full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 'religion', 'location', 'contact', 'habits', 'notes'];
+    const allowed = ['full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted'];
     const updates = Object.keys(p).filter(k => allowed.includes(k));
     
     if (updates.length === 0) return response({ success: true });
 
     const setClause = updates.map((k, i) => `${k} = ?${i+1}`).join(', ');
     const values = updates.map(k => p[k]);
-    // Append timestamp and ID for WHERE clause
     values.push(isoTimestamp(), id);
 
-    // Dynamic query construction
     const query = `UPDATE subjects SET ${setClause}, updated_at = ?${values.length-1} WHERE id = ?${values.length}`;
     await db.prepare(query).bind(...values).run();
     return response({ success: true });
 }
 
 async function handleDeleteItem(req, db, table, id) {
-    // Basic security check could go here
-    await db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+    if(table === 'subjects') {
+        // Soft delete/archive
+        await db.prepare("UPDATE subjects SET is_archived = 1 WHERE id = ?").bind(id).run();
+    } else {
+        await db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+    }
     return response({ success: true });
 }
 
@@ -145,152 +174,245 @@ async function handleDeleteItem(req, db, table, id) {
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-50">
+<html lang="en" class="h-full bg-slate-950">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Deep Observation OS</title>
+  <title>Deep Research OS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+          colors: {
+             obsidian: '#020617',
+             charcoal: '#0f172a',
+             primary: '#6366f1', // Indigo
+             accent: '#06b6d4', // Cyan
+             alert: '#ef4444', // Red
+          }
+        }
+      }
+    }
+  </script>
+
   <style>
-    body { font-family: 'Inter', sans-serif; }
-    .font-mono { font-family: 'JetBrains Mono', monospace; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    
+    .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); }
+    .glass-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); color: white; }
+    .glass-input:focus { border-color: #6366f1; outline: none; background: rgba(30, 41, 59, 0.8); }
+    
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
-    .slide-up-enter-active { transition: all 0.3s ease-out; }
-    .slide-up-enter-from { opacity: 0; transform: translateY(20px); }
-    #network-graph { width: 100%; height: 100%; outline: none; }
-    .evidence-frame { aspect-ratio: 1 / 1; overflow: hidden; position: relative; cursor: zoom-in; }
-    .evidence-frame img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s ease; }
-    .evidence-frame:hover img { transform: scale(1.05); }
+    .slide-up-enter-active { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+    .slide-up-enter-from { transform: translateY(100%); }
+    
+    #network-graph { width: 100%; height: 100%; }
+    .confidence-meter { height: 4px; background: #334155; border-radius: 2px; overflow: hidden; }
+    .confidence-fill { height: 100%; transition: width 0.5s ease; }
+    
+    /* Mobile tweaks */
+    @media (max-width: 768px) {
+        .mobile-nav-pb { padding-bottom: 80px; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+    }
   </style>
 </head>
-<body class="h-full text-slate-800 antialiased overflow-hidden">
+<body class="h-full text-slate-200 antialiased overflow-hidden bg-obsidian selection:bg-indigo-500/30">
   <div id="app" class="h-full flex flex-col">
 
-    <!-- Lightbox -->
+    <!-- Global Lightbox -->
     <transition name="fade">
-        <div v-if="lightbox.active" @click="lightbox.active = null" class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4">
-            <img :src="lightbox.url" class="max-h-full max-w-full rounded-lg shadow-2xl object-contain" />
-            <div class="absolute bottom-8 text-white text-center bg-black/50 px-4 py-2 rounded-full backdrop-blur-md">
-                {{ lightbox.desc || 'Evidence View' }}
+        <div v-if="lightbox.active" class="fixed inset-0 z-[100] bg-black/98 flex flex-col items-center justify-center p-2" @click.self="lightbox.active = null">
+            <div class="relative max-w-full max-h-[85vh]">
+                <img :src="lightbox.url" class="max-h-[80vh] max-w-full rounded shadow-2xl object-contain mx-auto" />
             </div>
-            <button class="absolute top-4 right-4 text-white text-3xl hover:text-indigo-400"><i class="fa-solid fa-xmark"></i></button>
+            <div class="mt-4 text-center max-w-md w-full px-4">
+                <p class="text-white/90 font-mono text-sm">{{ lightbox.desc || 'No description' }}</p>
+                <div class="flex gap-4 justify-center mt-4">
+                     <a :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase"><i class="fa-solid fa-download mr-1"></i> Save</a>
+                     <button @click="lightbox.active = null" class="text-xs text-slate-400 hover:text-white font-bold uppercase"><i class="fa-solid fa-xmark mr-1"></i> Close</button>
+                </div>
+            </div>
         </div>
     </transition>
 
-    <!-- Auth View -->
-    <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white relative">
-        <div class="w-full max-w-md p-8">
-            <div class="text-center mb-10">
-                <i class="fa-solid fa-eye text-5xl text-indigo-500 mb-4 animate-pulse"></i>
-                <h1 class="text-3xl font-bold tracking-tighter">OBSERVER<span class="text-indigo-500">.OS</span></h1>
-                <p class="text-slate-400 text-sm mt-2 font-mono">SECURE RESEARCH ENVIRONMENT</p>
-            </div>
-            <form @submit.prevent="handleAuth" class="space-y-4 bg-slate-800/50 p-8 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur-sm">
-                <div v-if="setupMode" class="bg-indigo-500/20 text-indigo-300 p-3 rounded text-xs text-center border border-indigo-500/30">
-                    <i class="fa-solid fa-triangle-exclamation mr-1"></i> System Initialization. Create Admin.
+    <!-- Authentication View -->
+    <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center p-6 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-cover">
+        <div class="w-full max-w-sm glass-panel p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
+                    <i class="fa-solid fa-layer-group text-3xl text-indigo-400"></i>
                 </div>
-                <input v-model="auth.email" type="email" placeholder="Access ID" class="w-full bg-slate-900 border border-slate-600 rounded-xl p-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all">
-                <input v-model="auth.password" type="password" placeholder="Passcode" class="w-full bg-slate-900 border border-slate-600 rounded-xl p-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all">
-                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)]">
-                    {{ loading ? 'Authenticating...' : (setupMode ? 'Initialize System' : 'Enter Workspace') }}
+                <h1 class="text-2xl font-black tracking-tight text-white">DEEP<span class="text-indigo-400">RESEARCH</span></h1>
+                <p class="text-slate-400 text-xs font-mono mt-1">SECURE INTELLIGENCE SYSTEM</p>
+            </div>
+            
+            <form @submit.prevent="handleAuth" class="space-y-4">
+                <div v-if="setupMode" class="bg-indigo-500/20 text-indigo-200 p-3 rounded-xl text-xs flex items-start gap-2 border border-indigo-500/30">
+                    <i class="fa-solid fa-circle-info mt-0.5"></i> <span>System Reset. Create new admin credentials.</span>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Identity</label>
+                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-3 rounded-xl transition-all">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Passcode</label>
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 rounded-xl transition-all">
+                </div>
+                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100">
+                    <span v-if="loading"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Decrypting...</span>
+                    <span v-else>{{ setupMode ? 'Initialize System' : 'Access Terminal' }}</span>
                 </button>
             </form>
         </div>
     </div>
 
-    <!-- Main App -->
-    <div v-else class="flex-1 flex h-full overflow-hidden">
-        <aside class="w-20 lg:w-64 flex flex-col bg-white border-r border-slate-200 z-20 shadow-xl">
-            <div class="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-slate-100">
-                <i class="fa-solid fa-dna text-indigo-600 text-xl lg:mr-3"></i>
-                <span class="hidden lg:block font-bold text-slate-800 tracking-tight">OBSERVER</span>
+    <!-- Main Application -->
+    <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden bg-obsidian">
+        
+        <!-- Desktop Sidebar -->
+        <aside class="hidden md:flex flex-col w-64 border-r border-slate-800 bg-charcoal z-20">
+            <div class="h-16 flex items-center px-6 border-b border-slate-800/50">
+                <i class="fa-solid fa-fingerprint text-indigo-500 text-xl mr-3"></i>
+                <span class="font-bold text-white tracking-tight">RESEARCH<span class="text-slate-500">.OS</span></span>
             </div>
-            <nav class="flex-1 p-3 space-y-2 overflow-y-auto">
-                <template v-for="item in menuItems">
-                    <a @click="switchTab(item.id, item.action)" 
-                       :class="currentTab === item.id ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'"
-                       class="flex items-center px-3 py-3 rounded-xl cursor-pointer transition-all group select-none">
-                        <div class="w-8 flex justify-center"><i :class="item.icon" class="text-lg transition-transform group-hover:scale-110"></i></div>
-                        <span class="hidden lg:block ml-2 font-medium text-sm">{{ item.label }}</span>
+            <nav class="flex-1 p-4 space-y-1">
+                <template v-for="item in navItems">
+                    <a @click="currentTab = item.id" 
+                       :class="currentTab === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+                       class="flex items-center px-4 py-3 rounded-xl cursor-pointer transition-all group font-medium text-sm">
+                        <i :class="item.icon" class="w-6 text-center mr-2 text-base transition-transform group-hover:scale-110"></i>
+                        {{ item.label }}
                     </a>
                 </template>
             </nav>
-            <div class="p-4 border-t border-slate-100">
-                <button @click="logout" class="flex items-center w-full px-3 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all">
-                    <i class="fa-solid fa-power-off w-8"></i>
-                    <span class="hidden lg:block ml-2 font-medium text-sm">Terminate</span>
+            <div class="p-4 border-t border-slate-800/50">
+                <button @click="logout" class="flex items-center w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all text-sm font-medium">
+                    <i class="fa-solid fa-power-off w-6 mr-2"></i> Disconnect
                 </button>
             </div>
         </aside>
 
-        <main class="flex-1 flex flex-col relative bg-slate-100 overflow-hidden">
+        <!-- Main Content Area -->
+        <main class="flex-1 relative flex flex-col h-full overflow-hidden mobile-nav-pb">
             
-            <!-- Graph View -->
-            <div v-show="currentTab === 'graph'" class="absolute inset-0 z-0 bg-slate-100">
-                <div id="network-graph"></div>
-                <div class="absolute top-4 left-4 bg-white/90 backdrop-blur p-4 rounded-xl shadow-lg border border-slate-200 z-10 w-72">
-                    <h3 class="font-bold text-slate-700 mb-2 flex items-center"><i class="fa-solid fa-diagram-project mr-2 text-indigo-500"></i> Relation Map</h3>
-                    <input v-model="graphSearch" placeholder="Search entity..." class="w-full text-sm p-2 border border-slate-300 rounded-lg bg-slate-50 mb-2">
-                    <div class="flex gap-2 text-xs">
-                        <button @click="fitGraph" class="flex-1 bg-slate-200 hover:bg-slate-300 py-1 rounded px-2">Fit All</button>
-                        <button @click="refreshGraph" class="flex-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 py-1 rounded px-2">Refresh</button>
+            <!-- Dashboard View -->
+            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
+                <div class="max-w-5xl mx-auto space-y-8">
+                    <header>
+                        <h2 class="text-2xl md:text-3xl font-black text-white">Command Center</h2>
+                        <p class="text-slate-500 mt-1">System status and recent intelligence.</p>
+                    </header>
+
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-indigo-500">
+                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Active Subjects</div>
+                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.active_subjects || 0 }}</div>
+                        </div>
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-emerald-500">
+                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Intel Points</div>
+                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.total_intel || 0 }}</div>
+                        </div>
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-cyan-500">
+                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Media Files</div>
+                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.total_media || 0 }}</div>
+                        </div>
+                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors" @click="currentTab = 'subjects'">
+                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Quick Action</div>
+                            <div class="text-sm font-bold text-amber-400 flex items-center mt-1"><i class="fa-solid fa-plus mr-2"></i> Add Subject</div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Feed -->
+                    <div class="glass-panel rounded-2xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800/50 flex justify-between items-center">
+                            <h3 class="font-bold text-white"><i class="fa-solid fa-satellite-dish mr-2 text-indigo-500"></i>Intel Feed</h3>
+                            <button @click="fetchDashboard" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded-full transition-colors"><i class="fa-solid fa-rotate-right"></i></button>
+                        </div>
+                        <div class="divide-y divide-slate-800/50">
+                            <div v-if="dashboard.feed.length === 0" class="p-8 text-center text-slate-500 text-sm">No recent activity recorded.</div>
+                            <div v-for="(item, idx) in dashboard.feed" :key="idx" class="p-4 hover:bg-white/5 transition-colors flex gap-4 items-start">
+                                <div class="mt-1 w-8 h-8 rounded-full flex items-center justify-center shrink-0" 
+                                    :class="{'bg-indigo-500/20 text-indigo-400': item.type === 'subject', 'bg-emerald-500/20 text-emerald-400': item.type === 'media', 'bg-amber-500/20 text-amber-400': item.type === 'event'}">
+                                    <i class="fa-solid text-xs" :class="{'fa-user': item.type === 'subject', 'fa-image': item.type === 'media', 'fa-calendar': item.type === 'event'}"></i>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex justify-between items-baseline">
+                                        <p class="text-sm font-bold text-white truncate">{{ item.title || 'Unknown' }}</p>
+                                        <span class="text-[10px] font-mono text-slate-500 ml-2">{{ new Date(item.date).toLocaleDateString() }}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 mt-0.5 line-clamp-2">{{ item.desc }}</p>
+                                    <button v-if="item.type !== 'event'" @click="viewSubject(item.ref_id)" class="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold mt-2">VIEW DOSSIER <i class="fa-solid fa-arrow-right ml-1"></i></button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Subject Directory -->
-            <div v-if="currentTab === 'subjects'" class="flex-1 overflow-y-auto p-6 md:p-8">
-                <div class="max-w-7xl mx-auto">
-                    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-                        <div>
-                            <h1 class="text-3xl font-extrabold text-slate-900">Subject Directory</h1>
-                            <p class="text-slate-500 text-sm mt-1">Manage profiles and avatars.</p>
-                        </div>
-                        <div class="flex gap-3 w-full md:w-auto">
-                            <input v-model="searchQuery" placeholder="Filter subjects..." class="bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none flex-1 md:w-64">
-                            <button @click="currentTab = 'add'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 flex items-center transition-all whitespace-nowrap">
-                                <i class="fa-solid fa-plus mr-2"></i> New
+            <div v-if="currentTab === 'subjects'" class="flex-1 flex flex-col overflow-hidden">
+                <div class="p-4 md:p-6 border-b border-slate-800 bg-charcoal/50 backdrop-blur-md sticky top-0 z-10">
+                    <div class="flex flex-col md:flex-row gap-4 justify-between md:items-center max-w-6xl mx-auto w-full">
+                        <h2 class="text-xl font-bold text-white">Subject Database</h2>
+                        <div class="flex gap-2 w-full md:w-auto">
+                            <div class="relative flex-1 md:w-64">
+                                <i class="fa-solid fa-search absolute left-3 top-3 text-slate-500 text-sm"></i>
+                                <input v-model="searchQuery" placeholder="Search code, name or tag..." class="glass-input w-full pl-9 pr-4 py-2.5 rounded-xl text-sm">
+                            </div>
+                            <button @click="openModal('add-subject')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap">
+                                <i class="fa-solid fa-plus mr-1"></i> New
                             </button>
                         </div>
                     </div>
-
-                    <div v-if="filteredSubjects.length === 0" class="text-center py-20 text-slate-400">
-                        <i class="fa-solid fa-user-slash text-4xl mb-4 opacity-50"></i>
-                        <p>No subjects found.</p>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-4 md:p-6">
+                    <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
-                             class="bg-white group hover:-translate-y-1 hover:shadow-xl transition-all duration-300 cursor-pointer rounded-2xl border border-slate-200 overflow-hidden relative">
-                             <div class="h-32 bg-slate-100 relative">
-                                <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
-                                <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-slate-200">
-                                    <i class="fa-solid fa-user text-4xl text-slate-300"></i>
-                                </div>
-                                <div class="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-black/60 to-transparent"></div>
+                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative">
+                             <div class="absolute top-3 right-3 z-10">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border" 
+                                      :class="s.status === 'Active' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-slate-700/50 border-slate-600 text-slate-400'">
+                                      {{ s.status }}
+                                </span>
                              </div>
-                             <div class="p-5 relative -mt-8">
-                                <div class="bg-white w-14 h-14 rounded-xl shadow-lg flex items-center justify-center absolute -top-8 right-5 border-2 border-white">
-                                    <span class="text-xl font-bold text-indigo-600">{{ s.full_name.charAt(0) }}</span>
+                             <div class="flex items-center p-4 gap-4">
+                                <div class="w-16 h-16 rounded-xl bg-slate-800 flex-shrink-0 overflow-hidden border border-slate-700 relative">
+                                    <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-2xl font-bold">{{ s.full_name.charAt(0) }}</div>
                                 </div>
-                                <h3 class="text-lg font-bold text-slate-900 leading-tight pr-10 truncate">{{ s.full_name }}</h3>
-                                <p class="text-xs text-slate-500 font-mono mt-1 mb-3">ID-{{ String(s.id).padStart(4, '0') }}</p>
-                                <div class="space-y-1.5">
-                                    <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
-                                        <i class="fa-solid fa-briefcase w-5 text-indigo-400"></i><span class="truncate">{{ s.occupation || '—' }}</span>
-                                    </div>
-                                    <div class="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded-lg">
-                                        <i class="fa-solid fa-location-dot w-5 text-rose-400"></i><span class="truncate">{{ s.location || '—' }}</span>
-                                    </div>
+                                <div class="min-w-0">
+                                    <h3 class="font-bold text-white truncate text-lg">{{ s.full_name }}</h3>
+                                    <p class="text-xs text-slate-400 truncate font-mono">{{ s.occupation || 'Unidentified' }}</p>
+                                    <p class="text-[10px] text-slate-500 mt-1"><i class="fa-solid fa-map-pin mr-1"></i>{{ s.location || 'Unknown' }}</p>
+                                </div>
+                             </div>
+                             <div class="px-4 pb-4 mt-2 grid grid-cols-3 gap-2 text-center">
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Age</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.age || '?' }}</div>
+                                </div>
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Sex</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.gender || '?' }}</div>
+                                </div>
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Rel</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.religion || '?' }}</div>
                                 </div>
                              </div>
                         </div>
@@ -299,289 +421,370 @@ function serveHtml() {
             </div>
 
             <!-- Detail View -->
-            <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 overflow-hidden flex flex-col md:flex-row">
-                <div class="w-full md:w-96 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0 z-10 shadow-lg">
-                    <div class="p-6">
-                        <button @click="currentTab = 'subjects'" class="text-xs font-bold text-slate-400 hover:text-indigo-600 flex items-center mb-6 transition-colors">
-                            <i class="fa-solid fa-arrow-left mr-2"></i> DIRECTORY
+            <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 flex flex-col h-full bg-obsidian">
+                <!-- Detail Header -->
+                <header class="bg-charcoal/80 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+                    <div class="flex items-center gap-3">
+                        <button @click="currentTab = 'subjects'" class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors">
+                            <i class="fa-solid fa-arrow-left text-slate-400"></i>
                         </button>
-                        
-                        <div class="relative group cursor-pointer" @click="triggerAvatarUpload">
-                            <div class="aspect-square rounded-2xl overflow-hidden bg-slate-100 border-2 border-slate-100 shadow-inner relative">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="triggerAvatar">
                                 <img v-if="selectedSubject.avatar_path" :src="'/api/media/' + selectedSubject.avatar_path" class="w-full h-full object-cover">
-                                <div v-else class="w-full h-full flex items-center justify-center bg-slate-50 text-slate-300">
-                                    <i class="fa-solid fa-camera text-4xl"></i>
-                                </div>
-                                <div class="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <span class="text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full backdrop-blur">Change Avatar</span>
+                                <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <i class="fa-solid fa-camera text-xs"></i>
                                 </div>
                             </div>
-                            <input type="file" ref="avatarInput" @change="handleAvatarUpload" class="hidden" accept="image/*">
-                        </div>
-
-                        <div class="mt-4">
-                            <h2 class="text-2xl font-black text-slate-900 break-words">{{ selectedSubject.full_name }}</h2>
-                            <div class="flex flex-wrap gap-2 mt-2">
-                                <span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold border border-indigo-100 cursor-pointer hover:bg-indigo-100" @click="editCore('occupation', 'Occupation')">{{ selectedSubject.occupation || 'Add Occupation' }}</span>
-                                <span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold border border-slate-200 cursor-pointer hover:bg-slate-200" @click="editCore('age', 'Age')">Age: {{ selectedSubject.age || '?' }}</span>
+                            <div>
+                                <h2 class="font-bold text-white text-sm leading-tight">{{ selectedSubject.full_name }}</h2>
+                                <p class="text-[10px] font-mono text-slate-400">ID-{{ String(selectedSubject.id).padStart(4,'0') }} • <span class="text-emerald-400">{{ selectedSubject.status }}</span></p>
                             </div>
-                        </div>
-
-                        <div class="mt-8 space-y-6">
-                            <div v-for="field in ['Nationality', 'Religion', 'Location', 'Contact', 'Education']" :key="field">
-                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{{ field }}</label>
-                                <div class="text-sm font-medium text-slate-800 border-b border-slate-100 pb-1 flex justify-between group cursor-pointer" @click="editCore(field.toLowerCase(), field)">
-                                    <span class="truncate pr-2">{{ selectedSubject[field.toLowerCase()] || '—' }}</span>
-                                    <i class="fa-solid fa-pen text-slate-300 hover:text-indigo-500 transition-colors"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-3 mt-8">
-                            <button @click="openAddModal('media')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
-                                <i class="fa-solid fa-camera text-xl text-emerald-500"></i> Evidence
-                            </button>
-                            <button @click="openAddModal('data', null)" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
-                                <i class="fa-solid fa-file-pen text-xl text-indigo-500"></i> Detail
-                            </button>
-                            <button @click="openAddModal('event')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
-                                <i class="fa-solid fa-timeline text-xl text-amber-500"></i> Event
-                            </button>
-                            <button @click="openAddModal('rel')" class="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 transition-colors flex flex-col items-center gap-2">
-                                <i class="fa-solid fa-link text-xl text-rose-500"></i> Relation
-                            </button>
                         </div>
                     </div>
+                    <div class="flex gap-2">
+                        <button @click="openModal('quick-note')" class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform"><i class="fa-solid fa-pen-nib text-xs"></i></button>
+                        <button @click="exportData" class="w-8 h-8 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors"><i class="fa-solid fa-download text-xs"></i></button>
+                    </div>
+                </header>
+
+                <!-- Detail Tabs -->
+                <div class="flex bg-charcoal border-b border-slate-800 overflow-x-auto hide-scrollbar">
+                    <button v-for="t in ['overview', 'intel', 'timeline', 'media', 'relations']" 
+                            @click="subTab = t"
+                            :class="subTab === t ? 'text-indigo-400 border-indigo-500 bg-slate-800/30' : 'text-slate-500 border-transparent hover:text-slate-300'"
+                            class="px-5 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap flex-shrink-0">
+                        {{ t }}
+                    </button>
                 </div>
 
-                <div class="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-8">
-                    <!-- Evidence -->
-                    <section v-if="selectedSubject.media && selectedSubject.media.length" class="mb-10">
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
-                            <i class="fa-solid fa-images mr-2"></i> Visual Evidence
-                        </h3>
-                        <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                            <div v-for="m in selectedSubject.media" :key="m.id" class="evidence-frame rounded-lg bg-slate-200 shadow-sm border border-slate-300 group" @click="lightbox = { active: true, url: '/api/media/' + m.object_key, desc: m.description }">
-                                <img :src="'/api/media/' + m.object_key" loading="lazy">
-                                <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {{ m.description || 'No desc' }}
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Nested Data Tree -->
-                    <section class="mb-10">
-                        <div class="flex justify-between items-end mb-4">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center">
-                                <i class="fa-solid fa-fingerprint mr-2"></i> Deep Details
-                            </h3>
-                            <span class="text-[10px] text-slate-400">Click items to elaborate • Click <i class="fa-solid fa-trash text-rose-400"></i> to remove</span>
-                        </div>
-
-                        <div class="space-y-4">
-                            <div v-for="node in dataTree" :key="node.id" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div class="p-4 flex justify-between items-start hover:bg-indigo-50/30 transition-colors cursor-pointer select-none" @click="toggleNode(node.id)">
-                                    <div class="flex-1">
-                                        <div class="flex items-center gap-2">
-                                            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400 transition-transform duration-200" :class="{'rotate-90': expandedState[node.id] !== false}"></i>
-                                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 uppercase border border-slate-200">{{ node.category }}</span>
-                                            <h4 class="font-bold text-slate-800 text-sm">{{ node.label }}</h4>
+                <!-- Detail Content -->
+                <div class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
+                    <div class="max-w-4xl mx-auto space-y-6">
+                        
+                        <!-- Overview Tab -->
+                        <div v-if="subTab === 'overview'" class="space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Core Card -->
+                                <div class="glass-panel p-5 rounded-2xl relative">
+                                    <button @click="openModal('edit-profile')" class="absolute top-4 right-4 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Core Identity</h3>
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Full Name</span>
+                                            <span class="text-white font-medium text-sm">{{ selectedSubject.full_name }}</span>
                                         </div>
-                                        <div class="mt-1 ml-6 text-slate-700 text-sm font-mono whitespace-pre-wrap">{{ node.value }}</div>
-                                        <div v-if="node.analysis" class="mt-2 ml-6 text-xs text-indigo-600 italic border-l-2 border-indigo-200 pl-2">"{{ node.analysis }}"</div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <button @click.stop="openAddModal('data', node.id)" class="text-slate-300 hover:text-indigo-600 transition-colors p-2" title="Add sub-detail">
-                                            <i class="fa-solid fa-plus-circle text-lg"></i>
-                                        </button>
-                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="text-slate-300 hover:text-rose-500 transition-colors p-2" title="Delete">
-                                            <i class="fa-solid fa-trash text-sm"></i>
-                                        </button>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Occupation</span>
+                                            <span class="text-white font-medium text-sm">{{ selectedSubject.occupation || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Location</span>
+                                            <span class="text-white font-medium text-sm">{{ selectedSubject.location || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">DOB / Age</span>
+                                            <span class="text-white font-medium text-sm">{{ selectedSubject.dob || '—' }} <span v-if="selectedSubject.age">({{selectedSubject.age}})</span></span>
+                                        </div>
+                                         <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Last Sighted</span>
+                                            <span class="text-amber-400 font-medium text-sm font-mono">{{ selectedSubject.last_sighted || 'Unknown' }}</span>
+                                        </div>
                                     </div>
                                 </div>
-
-                                <div v-if="node.children && node.children.length && expandedState[node.id] !== false" class="bg-slate-50 border-t border-slate-100 p-2 pl-6 space-y-2 relative">
-                                    <div v-for="child in node.children" :key="child.id" class="relative pl-4 pt-2">
-                                        <div class="absolute left-0 top-0 bottom-0 w-[1px] bg-indigo-200"></div>
-                                        <div class="absolute left-0 top-5 w-3 h-[1px] bg-indigo-200"></div>
-                                        <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm relative group">
-                                            <div class="flex justify-between items-start">
-                                                <div>
-                                                    <span class="text-xs font-bold text-indigo-600 block">{{ child.label }}</span>
-                                                    <span class="text-sm text-slate-800 mt-1 block whitespace-pre-wrap">{{ child.value }}</span>
-                                                </div>
-                                                <div class="flex gap-2">
-                                                    <button @click.stop="openAddModal('data', child.id)" class="text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-reply fa-flip-horizontal"></i></button>
-                                                    <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
-                                                </div>
-                                            </div>
-                                            <div v-if="child.children && child.children.length" class="mt-2 pl-2 border-l border-slate-200 text-xs text-slate-500">
-                                                <div v-for="grand in child.children" class="mt-1">
-                                                    <strong class="text-slate-700">{{ grand.label }}:</strong> {{ grand.value }}
-                                                </div>
-                                            </div>
+                                <!-- Bio Card -->
+                                <div class="glass-panel p-5 rounded-2xl">
+                                    <div class="flex justify-between items-center mb-4">
+                                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Background</h3>
+                                        <button @click="openModal('edit-bio')" class="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Education</div>
+                                            <p class="text-sm text-slate-300">{{ selectedSubject.education || 'No record' }}</p>
+                                        </div>
+                                        <div>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Habits & Routine</div>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ selectedSubject.habits || 'No observations recorded.' }}</p>
+                                        </div>
+                                        <div>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">General Notes</div>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ selectedSubject.notes || '—' }}</p>
                                         </div>
                                     </div>
                                 </div>
                             </div>
+                            <div class="flex justify-center">
+                                <button @click="deleteItem('subjects', selectedSubject.id)" class="text-red-500 text-xs font-bold hover:text-red-400 border border-red-500/30 px-4 py-2 rounded-lg hover:bg-red-500/10 transition-colors">
+                                    <i class="fa-solid fa-triangle-exclamation mr-2"></i> ARCHIVE SUBJECT
+                                </button>
+                            </div>
                         </div>
-                    </section>
 
-                    <!-- Timeline -->
-                     <section>
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center">
-                            <i class="fa-solid fa-clock-rotate-left mr-2"></i> Timeline
-                        </h3>
-                        <div class="relative border-l-2 border-slate-200 ml-3 space-y-8 pb-10">
-                            <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-8">
-                                <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-white border-2 border-amber-400"></div>
-                                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow group">
-                                    <div class="flex justify-between">
-                                        <span class="text-xs font-mono text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded">{{ e.event_date }}</span>
-                                        <button @click="deleteItem('subject_events', e.id)" class="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                        <!-- Intel Tab (Deep Research Tree) -->
+                        <div v-if="subTab === 'intel'" class="space-y-4">
+                            <div class="flex justify-between items-center">
+                                <h3 class="font-bold text-white">Deep Research Dossier</h3>
+                                <button @click="openModal('add-intel', null)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow shadow-indigo-500/20">
+                                    <i class="fa-solid fa-plus mr-1"></i> Add Point
+                                </button>
+                            </div>
+
+                            <div v-if="dataTree.length === 0" class="glass-panel p-8 text-center rounded-2xl">
+                                <i class="fa-solid fa-folder-open text-4xl text-slate-700 mb-2"></i>
+                                <p class="text-slate-500 text-sm">No intelligence data collected yet.</p>
+                            </div>
+
+                            <div v-for="node in dataTree" :key="node.id" class="glass-panel rounded-xl overflow-hidden border border-slate-700/50">
+                                <div class="p-3 flex gap-3 cursor-pointer hover:bg-white/5 transition-colors select-none" @click="toggleNode(node.id)">
+                                    <div class="mt-1">
+                                        <i class="fa-solid fa-chevron-right text-[10px] text-slate-500 transition-transform duration-200" :class="{'rotate-90': expandedState[node.id] !== false}"></i>
                                     </div>
-                                    <h4 class="font-bold text-slate-900 mt-2">{{ e.title }}</h4>
-                                    <p class="text-sm text-slate-600 mt-1">{{ e.description }}</p>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 uppercase border border-slate-700">{{ node.category }}</span>
+                                            <h4 class="font-bold text-slate-200 text-sm truncate">{{ node.label }}</h4>
+                                            <div class="flex-1"></div>
+                                            <div class="w-16 confidence-meter bg-slate-800" title="Confidence Score">
+                                                <div class="confidence-fill" :class="getConfidenceColor(node.confidence)" :style="{width: (node.confidence || 100) + '%'}"></div>
+                                            </div>
+                                        </div>
+                                        <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ node.value }}</p>
+                                        <div v-if="node.analysis" class="mt-2 p-2 bg-indigo-900/10 border-l-2 border-indigo-500 text-xs text-indigo-300">
+                                            <i class="fa-solid fa-magnifying-glass mr-1"></i> {{ node.analysis }}
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2 opacity-60 hover:opacity-100">
+                                        <button @click.stop="openModal('add-intel', node.id)" class="w-6 h-6 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-plus text-xs"></i></button>
+                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-6 h-6 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                    </div>
+                                </div>
+                                <!-- Nested Children -->
+                                <div v-if="node.children && node.children.length && expandedState[node.id] !== false" class="bg-black/20 border-t border-slate-800 p-2 pl-4 space-y-2">
+                                    <div v-for="child in node.children" :key="child.id" class="relative pl-4">
+                                         <div class="absolute left-0 top-0 bottom-0 w-px bg-slate-700"></div>
+                                         <div class="absolute left-0 top-3 w-3 h-px bg-slate-700"></div>
+                                         <div class="glass-panel p-2 rounded-lg bg-slate-900/50 flex justify-between group">
+                                            <div class="flex-1">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-xs font-bold text-indigo-400">{{ child.label }}</span>
+                                                    <span class="text-[10px] text-slate-600 border border-slate-700 px-1 rounded">{{child.confidence}}% Conf.</span>
+                                                </div>
+                                                <p class="text-xs text-slate-300 mt-1">{{ child.value }}</p>
+                                                <p v-if="child.source" class="text-[10px] text-slate-500 mt-1 italic">Source: {{ child.source }}</p>
+                                            </div>
+                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity px-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                         </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </section>
+
+                        <!-- Media Gallery -->
+                        <div v-if="subTab === 'media'" class="space-y-4">
+                            <div class="border-2 border-dashed border-slate-700 rounded-xl p-6 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group" @click="triggerMediaUpload">
+                                <i class="fa-solid fa-cloud-arrow-up text-2xl text-slate-500 group-hover:text-indigo-400 mb-2"></i>
+                                <p class="text-sm text-slate-400">Tap to upload evidence</p>
+                            </div>
+                             <div class="columns-2 md:columns-3 lg:columns-4 gap-3 space-y-3">
+                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden cursor-zoom-in" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
+                                    <img :src="'/api/media/' + m.object_key" class="w-full bg-slate-800" loading="lazy">
+                                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                        <p class="text-[10px] text-white truncate">{{ m.description || 'No Description' }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                         <!-- Timeline -->
+                        <div v-if="subTab === 'timeline'" class="space-y-4">
+                            <button @click="openModal('add-event')" class="w-full py-2 border border-slate-700 border-dashed rounded-lg text-xs text-slate-400 hover:text-amber-400 hover:border-amber-400/50 transition-colors">
+                                + Log New Event
+                            </button>
+                            <div class="relative border-l border-slate-800 ml-3 space-y-6 py-2">
+                                <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-6">
+                                    <div class="absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full bg-obsidian border-2 border-amber-500"></div>
+                                    <div class="group">
+                                        <div class="flex items-baseline gap-2 mb-1">
+                                            <span class="text-xs font-mono font-bold text-amber-500">{{ e.event_date }}</span>
+                                            <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
+                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
+                                        </div>
+                                        <p class="text-xs text-slate-400">{{ e.description }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Relations -->
+                        <div v-if="subTab === 'relations'" class="space-y-4">
+                            <button @click="openModal('add-rel')" class="w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg text-xs font-bold transition-colors">
+                                <i class="fa-solid fa-link mr-1"></i> Connect Subject
+                            </button>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-3 rounded-xl flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-8 h-8 rounded-full bg-slate-700 overflow-hidden">
+                                            <img v-if="r.target_avatar" :src="'/api/media/'+r.target_avatar" class="w-full h-full object-cover">
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
+                                            <div class="text-xs text-indigo-400">{{ r.relationship_type }}</div>
+                                        </div>
+                                    </div>
+                                    <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500"><i class="fa-solid fa-link-slash"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
             </div>
 
-            <!-- Add Subject Form -->
-             <div v-if="currentTab === 'add'" class="flex-1 flex flex-col items-center p-8 overflow-y-auto">
-                <div class="w-full max-w-2xl bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-                    <div class="bg-slate-50 px-8 py-6 border-b border-slate-200">
-                        <h2 class="text-xl font-black text-slate-900">Initialize Subject</h2>
-                        <p class="text-slate-500 text-sm">Create a new container for human observation.</p>
+            <!-- Graph View -->
+             <div v-show="currentTab === 'graph'" class="flex-1 relative bg-obsidian overflow-hidden">
+                <div id="network-graph" class="opacity-80"></div>
+                <div class="absolute top-4 left-4 right-4 md:w-64 glass-panel p-3 rounded-xl flex flex-col gap-2">
+                    <input v-model="graphSearch" placeholder="Locate node..." class="bg-black/20 text-white text-xs p-2 rounded border border-slate-700 focus:border-indigo-500 outline-none">
+                    <div class="flex gap-2">
+                        <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-1.5 rounded">Reset View</button>
+                        <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-1.5 rounded">Refresh Data</button>
                     </div>
-                    <form @submit.prevent="createSubject" class="p-8 space-y-6">
-                        <div class="grid grid-cols-2 gap-6">
-                            <div class="col-span-2">
-                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Full Name</label>
-                                <input v-model="newSubject.fullName" required class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Occupation</label>
-                                <input v-model="newSubject.occupation" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Location</label>
-                                <input v-model="newSubject.location" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 outline-none focus:border-indigo-500">
-                            </div>
-                        </div>
-                        <div class="flex justify-end gap-4 pt-4 border-t border-slate-100">
-                            <button type="button" @click="currentTab = 'subjects'" class="px-6 py-2 text-slate-500 font-bold hover:bg-slate-50 rounded-lg">Cancel</button>
-                            <button type="submit" class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-lg shadow-indigo-200">Create Profile</button>
-                        </div>
-                    </form>
                 </div>
              </div>
 
         </main>
+
+        <!-- Mobile Navigation Bar -->
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-charcoal/90 backdrop-blur-xl border-t border-slate-800 z-40 pb-safe">
+            <div class="flex justify-around items-center h-16">
+                <a v-for="item in navItems" :key="item.id" @click="currentTab = item.id"
+                   :class="currentTab === item.id ? 'text-indigo-400' : 'text-slate-500'" 
+                   class="flex flex-col items-center justify-center w-full h-full space-y-1 active:scale-95 transition-transform">
+                    <i :class="item.icon" class="text-lg"></i>
+                    <span class="text-[10px] font-medium">{{ item.label }}</span>
+                </a>
+            </div>
+        </nav>
     </div>
 
-    <!-- Universal Modal -->
+    <!-- Universal Modal System -->
     <transition name="fade">
-        <div v-if="modal.type" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-slide-up">
-                <div class="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-                    <h3 class="font-bold text-slate-800">{{ modalTitle }}</h3>
-                    <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+        <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4" @click.self="closeModal">
+            <div class="bg-slate-900 w-full max-w-lg md:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-800 flex flex-col max-h-[90vh] animate-slide-up">
+                <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 sticky top-0 z-10">
+                    <h3 class="font-bold text-white">{{ modalTitle }}</h3>
+                    <button @click="closeModal" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 
-                <div class="p-6">
-                    <!-- Edit Core Field Modal -->
-                    <form v-if="modal.type === 'edit-core'" @submit.prevent="submitEditCore" class="space-y-4">
-                        <label class="text-xs font-bold text-slate-500 uppercase">{{ modal.fieldLabel }}</label>
-                        <input v-model="forms.edit.value" class="w-full border border-slate-300 rounded-lg p-3 text-lg" :placeholder="'Enter ' + modal.fieldLabel" autofocus>
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700">Update Profile</button>
-                    </form>
-
-                    <!-- Data Point Form -->
-                    <form v-if="modal.type === 'data'" @submit.prevent="submitData" class="space-y-4">
-                        <div v-if="modal.parentId" class="bg-indigo-50 p-3 rounded-lg text-xs text-indigo-700 flex items-center mb-4">
-                            <i class="fa-solid fa-diagram-next mr-2"></i> Adding detail to existing point
+                <div class="p-6 overflow-y-auto custom-scrollbar space-y-5">
+                    
+                    <!-- Form: New Subject -->
+                    <form v-if="modal.active === 'add-subject'" @submit.prevent="createSubject" class="space-y-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Target Name</label>
+                            <input v-model="forms.subject.fullName" required class="glass-input w-full p-3 rounded-lg" placeholder="Enter full name">
                         </div>
-                        <div v-else>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Category</label>
-                            <select v-model="forms.data.category" class="w-full border border-slate-300 rounded-lg p-2.5 bg-white mt-1">
-                                <option>Physical</option>
-                                <option>Psychological</option>
-                                <option>Biographical</option>
-                                <option>Habit</option>
-                                <option>Other</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Label</label>
-                            <input v-model="forms.data.label" placeholder="e.g. Scar Location" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
-                        </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Value</label>
-                            <textarea v-model="forms.data.value" placeholder="Detail content..." required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1 h-20"></textarea>
-                        </div>
-                        <button type="submit" :disabled="uploading" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors">
-                            {{ uploading ? 'Saving...' : 'Attach Detail' }}
-                        </button>
-                    </form>
-
-                    <!-- Media Upload Form -->
-                    <div v-if="modal.type === 'media'" class="space-y-4">
-                         <div class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:bg-slate-50 transition-colors relative">
-                            <input type="file" @change="handleFileSelect" class="absolute inset-0 opacity-0 cursor-pointer" accept="image/*">
-                            <div v-if="forms.media.preview">
-                                <img :src="forms.media.preview" class="h-32 mx-auto rounded-lg shadow-sm object-cover">
-                                <p class="text-xs text-emerald-600 font-bold mt-2">Ready to upload</p>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
+                                <input v-model="forms.subject.occupation" class="glass-input w-full p-3 rounded-lg" placeholder="Role/Job">
                             </div>
-                            <div v-else>
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-300 mb-2"></i>
-                                <p class="text-slate-500 text-sm font-medium">Tap to select image</p>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
+                                <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg" placeholder="City/Area">
                             </div>
-                         </div>
-                         <input v-model="forms.media.desc" placeholder="Description of evidence..." class="w-full border border-slate-300 rounded-lg p-3">
-                         <button @click="submitMedia" :disabled="!forms.media.data || uploading" class="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-50">
-                            {{ uploading ? 'Compressing & Uploading...' : 'Upload Evidence' }}
-                        </button>
-                    </div>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-bold mt-4 shadow-lg shadow-indigo-500/20">Initialize Dossier</button>
+                    </form>
 
-                    <!-- Relationship Form -->
-                    <form v-if="modal.type === 'rel'" @submit.prevent="submitRel" class="space-y-4">
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Connect With</label>
-                            <select v-model="forms.rel.subjectB" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
-                                <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                    <!-- Form: Edit Core Profile -->
+                    <form v-if="modal.active === 'edit-profile'" @submit.prevent="updateSubjectCore" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <input v-model="selectedSubject.full_name" class="glass-input p-3 rounded-lg col-span-2" placeholder="Full Name">
+                            <input v-model="selectedSubject.occupation" class="glass-input p-3 rounded-lg" placeholder="Occupation">
+                            <input v-model="selectedSubject.location" class="glass-input p-3 rounded-lg" placeholder="Location">
+                            <input v-model="selectedSubject.dob" class="glass-input p-3 rounded-lg" placeholder="Date of Birth">
+                            <input v-model="selectedSubject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
+                            <select v-model="selectedSubject.status" class="glass-input p-3 rounded-lg bg-slate-800">
+                                <option>Active</option>
+                                <option>Dormant</option>
+                                <option>Missing</option>
+                                <option>Deceased</option>
                             </select>
+                             <input v-model="selectedSubject.last_sighted" class="glass-input p-3 rounded-lg" placeholder="Last Sighted (Date/Loc)">
                         </div>
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Relationship</label>
-                            <input v-model="forms.rel.type" placeholder="e.g. Brother, Enemy" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
-                        </div>
-                         <button type="submit" class="w-full bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600">Connect</button>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold">Save Changes</button>
                     </form>
 
-                     <!-- Event Form -->
-                    <form v-if="modal.type === 'event'" @submit.prevent="submitEvent" class="space-y-4">
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Date</label>
-                            <input type="date" v-model="forms.event.date" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
+                     <!-- Form: Add Intel -->
+                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note'" @submit.prevent="submitIntel" class="space-y-4">
+                        <div v-if="modal.parentId" class="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
+                            <i class="fa-solid fa-level-up-alt rotate-90 mr-2"></i> Appending to thread
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Category</label>
+                                <select v-model="forms.intel.category" class="glass-input w-full p-2.5 rounded-lg bg-slate-800 mt-1">
+                                    <option>General</option>
+                                    <option>Biometrics</option>
+                                    <option>Psychology</option>
+                                    <option>Social</option>
+                                    <option>Digital</option>
+                                    <option>Financial</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Topic</label>
+                                <input v-model="forms.intel.label" placeholder="e.g. Scar, Phobia" class="glass-input w-full p-2.5 rounded-lg mt-1" required>
+                            </div>
                         </div>
                         <div>
-                            <label class="text-xs font-bold text-slate-500 uppercase">Title</label>
-                            <input v-model="forms.event.title" placeholder="e.g. Graduated" required class="w-full border border-slate-300 rounded-lg p-2.5 mt-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Observation / Fact</label>
+                            <textarea v-model="forms.intel.value" rows="3" class="glass-input w-full p-3 rounded-lg mt-1" placeholder="Detailed observation..." required></textarea>
                         </div>
-                        <div>
-                             <label class="text-xs font-bold text-slate-500 uppercase">Description</label>
-                            <textarea v-model="forms.event.desc" class="w-full border border-slate-300 rounded-lg p-2.5 mt-1 h-20"></textarea>
+                        <div v-if="modal.active !== 'quick-note'">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Analysis (Optional)</label>
+                            <input v-model="forms.intel.analysis" placeholder="Researcher interpretation..." class="glass-input w-full p-2.5 rounded-lg mt-1">
                         </div>
-                        <button type="submit" class="w-full bg-amber-500 text-white py-3 rounded-xl font-bold hover:bg-amber-600">Log Event</button>
-                    </form>
+                        <div v-if="modal.active !== 'quick-note'" class="grid grid-cols-2 gap-4">
+                             <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Source</label>
+                                <input v-model="forms.intel.source" placeholder="e.g. Surveillance, Interview" class="glass-input w-full p-2.5 rounded-lg mt-1">
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase flex justify-between">
+                                    <span>Confidence</span>
+                                    <span class="text-indigo-400">{{ forms.intel.confidence }}%</span>
+                                </label>
+                                <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-2 accent-indigo-500">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/20">Commit Intelligence</button>
+                     </form>
+
+                     <!-- Other forms (Event, Rel) similar structure... -->
+                     <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
+                         <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
+                         <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
+                         <textarea v-model="forms.event.desc" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-24"></textarea>
+                         <button type="submit" class="w-full bg-amber-600 text-white py-3 rounded-xl font-bold">Log Timeline Event</button>
+                     </form>
+
+                     <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
+                        <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                            <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                        </select>
+                        <input v-model="forms.rel.type" placeholder="Relationship Type (e.g. Spouse, Rival)" class="glass-input w-full p-3 rounded-lg">
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold">Link Subjects</button>
+                     </form>
                 </div>
             </div>
         </div>
     </transition>
+
+    <!-- Hidden File Inputs -->
+    <input type="file" ref="mediaInput" @change="handleMediaUpload" class="hidden" accept="image/*">
+    <input type="file" ref="avatarInput" @change="handleAvatarUpload" class="hidden" accept="image/*">
 
   </div>
 
@@ -590,73 +793,65 @@ function serveHtml() {
 
     createApp({
       setup() {
+        // State
         const view = ref('auth');
         const setupMode = ref(false);
-        const currentTab = ref('subjects');
+        const currentTab = ref('dashboard');
+        const subTab = ref('overview');
         const loading = ref(false);
-        const uploading = ref(false);
-        const subjects = ref([]);
         const searchQuery = ref('');
-        const selectedSubject = ref(null);
-        const lightbox = reactive({ active: false, url: '', desc: '' });
-        
-        // Graph
         const graphSearch = ref('');
-        let network = null;
-
-        // Auth
-        const auth = reactive({ email: '', password: '' });
         
-        // Modals
-        const modal = reactive({ type: null, parentId: null, field: null, fieldLabel: null });
-        const modalTitle = computed(() => {
-            if(modal.type === 'data') return modal.parentId ? 'Add Sub-Detail' : 'Add Detail';
-            if(modal.type === 'media') return 'Upload Evidence';
-            if(modal.type === 'rel') return 'Add Connection';
-            if(modal.type === 'edit-core') return 'Edit Profile';
-            if(modal.type === 'event') return 'Log Event';
-            return 'Action';
-        });
-
-        const expandedState = reactive({}); // Tracks tree expansion
-
+        const auth = reactive({ email: '', password: '' });
+        const dashboard = reactive({ stats: {}, feed: [] });
+        const subjects = ref([]);
+        const selectedSubject = ref(null);
+        
+        const lightbox = reactive({ active: null, url: '', desc: '' });
+        const modal = reactive({ active: null, parentId: null });
+        const expandedState = reactive({});
+        
         // Forms
-        const newSubject = reactive({ fullName: '', occupation: '', location: '' });
         const forms = reactive({
-            data: { category: 'Physical', label: '', value: '', analysis: '' },
-            media: { data: null, desc: '', preview: null, filename: '', type: '' },
-            rel: { subjectB: '', type: '' },
-            event: { title: '', date: '', desc: '' },
-            edit: { value: '' }
+            subject: { fullName: '', occupation: '', location: '' },
+            intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
+            event: { date: new Date().toISOString().split('T')[0], title: '', desc: '' },
+            rel: { subjectB: '', type: '' }
         });
 
-        const menuItems = [
-            { id: 'subjects', label: 'Directory', icon: 'fa-solid fa-folder-open' },
-            { id: 'graph', label: 'Relations Graph', icon: 'fa-solid fa-diagram-project', action: loadGraph },
+        // Navigation
+        const navItems = [
+            { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-chart-pie' },
+            { id: 'subjects', label: 'Subjects', icon: 'fa-solid fa-users' },
+            { id: 'graph', label: 'Graph', icon: 'fa-solid fa-share-nodes', action: 'loadGraph' }
         ];
 
-        // API
-        const api = async (url, opts = {}) => {
+        // API Helper
+        const api = async (ep, opts = {}) => {
             try {
-                const res = await fetch(url, opts);
+                const res = await fetch('/api' + ep, opts);
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Request failed');
+                if (!res.ok) throw new Error(data.error || 'Operation failed');
                 return data;
             } catch (e) {
-                alert(e.message);
+                alert(e.message); // Simple error feedback
                 throw e;
             }
         };
 
-        // Data Logic
+        // Computeds
         const filteredSubjects = computed(() => {
-            if (!searchQuery.value) return subjects.value;
+            if(!searchQuery.value) return subjects.value;
             const q = searchQuery.value.toLowerCase();
-            return subjects.value.filter(s => s.full_name.toLowerCase().includes(q) || (s.occupation && s.occupation.toLowerCase().includes(q)));
+            return subjects.value.filter(s => 
+                s.full_name.toLowerCase().includes(q) || 
+                (s.occupation && s.occupation.toLowerCase().includes(q)) ||
+                (s.status && s.status.toLowerCase().includes(q))
+            );
         });
 
         const dataTree = computed(() => {
-            if (!selectedSubject.value || !selectedSubject.value.dataPoints) return [];
+            if (!selectedSubject.value?.dataPoints) return [];
             const raw = selectedSubject.value.dataPoints;
             const map = {};
             const roots = [];
@@ -668,148 +863,166 @@ function serveHtml() {
             return roots;
         });
 
-        // Actions
+        const modalTitle = computed(() => {
+            const map = { 
+                'add-subject': 'New Subject Profile', 
+                'edit-profile': 'Edit Core Data',
+                'add-intel': 'Add Intelligence',
+                'quick-note': 'Quick Field Note',
+                'add-event': 'Log Timeline Event',
+                'add-rel': 'Connect Subjects'
+            };
+            return map[modal.active] || 'System Dialog';
+        });
+
+        // Methods
         const handleAuth = async () => {
             loading.value = true;
             try {
-                const ep = setupMode.value ? '/api/setup-admin' : '/api/login';
+                const ep = setupMode.value ? '/setup-admin' : '/login';
                 const res = await api(ep, { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
-                fetchSubjects();
-            } catch (e) {} 
-            finally { loading.value = false; }
+                initApp();
+            } catch(e) {} finally { loading.value = false; }
+        };
+
+        const initApp = async () => {
+            await Promise.all([fetchDashboard(), fetchSubjects()]);
+        };
+
+        const fetchDashboard = async () => {
+            const data = await api('/dashboard?adminId=' + localStorage.getItem('admin_id'));
+            dashboard.stats = data.stats;
+            dashboard.feed = data.feed;
         };
 
         const fetchSubjects = async () => {
-            const id = localStorage.getItem('admin_id');
-            if(id) subjects.value = await api('/api/subjects?adminId=' + id);
-        };
-
-        const createSubject = async () => {
-            await api('/api/subjects', { method: 'POST', body: JSON.stringify({ ...newSubject, adminId: localStorage.getItem('admin_id') }) });
-            newSubject.fullName = '';
-            fetchSubjects();
-            currentTab.value = 'subjects';
+            subjects.value = await api('/subjects?adminId=' + localStorage.getItem('admin_id'));
         };
 
         const viewSubject = async (id) => {
-            selectedSubject.value = await api('/api/subjects/' + id);
+            selectedSubject.value = await api('/subjects/' + id);
             currentTab.value = 'detail';
+            subTab.value = 'overview';
         };
 
-        const switchTab = (tab, action) => {
-            currentTab.value = tab;
-            if (action) action();
+        const createSubject = async () => {
+            await api('/subjects', { method: 'POST', body: JSON.stringify({ ...forms.subject, adminId: localStorage.getItem('admin_id') }) });
+            closeModal();
+            fetchSubjects();
+            fetchDashboard();
+        };
+
+        const updateSubjectCore = async () => {
+             await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(selectedSubject.value) });
+             closeModal();
+        };
+
+        // Intel Ops
+        const submitIntel = async () => {
+            const payload = { ...forms.intel, subjectId: selectedSubject.value.id, parentId: modal.parentId };
+            await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
+            closeModal();
+            viewSubject(selectedSubject.value.id);
+            fetchDashboard(); // Update feed
         };
 
         const toggleNode = (id) => {
-            // Toggle explicit state, default is undefined (which we treat as true/open)
             if (expandedState[id] === undefined) expandedState[id] = false;
             else expandedState[id] = !expandedState[id];
         };
 
-        const editCore = (field, label) => {
-            modal.type = 'edit-core';
-            modal.field = field;
-            modal.fieldLabel = label;
-            forms.edit.value = selectedSubject.value[field];
+        const getConfidenceColor = (val) => {
+            if(val >= 80) return 'bg-emerald-500';
+            if(val >= 50) return 'bg-amber-500';
+            return 'bg-red-500';
         };
 
-        const submitEditCore = async () => {
-            await api('/api/subjects/' + selectedSubject.value.id, {
-                method: 'PATCH',
-                body: JSON.stringify({ [modal.field]: forms.edit.value })
-            });
-            const field = modal.field;
-            selectedSubject.value[field] = forms.edit.value; // Optimistic update
-            closeModal();
-            fetchSubjects(); // Refresh list background
-        };
+        // Media Ops
+        const triggerMediaUpload = () => document.querySelector('input[type="file"]').click();
+        const triggerAvatar = () => document.querySelectorAll('input[type="file"]')[1].click();
 
-        const deleteItem = async (table, id) => {
-            if(!confirm("Are you sure you want to delete this item permanently?")) return;
-            await api('/api/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
-            viewSubject(selectedSubject.value.id); // Refresh
-        };
-
-        const compressImage = (file) => {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.src = e.target.result;
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        const MAX = 1200; 
-                        let w = img.width, h = img.height;
-                        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } } 
-                        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
-                        canvas.width = w; canvas.height = h;
-                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
-                    };
+        const compressAndUpload = async (file, endpoint) => {
+            // Simple compression logic
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX = 1200;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+                    else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+                    
+                    await api(endpoint, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            subjectId: selectedSubject.value.id,
+                            data: b64,
+                            filename: file.name,
+                            contentType: 'image/jpeg',
+                            description: prompt("Evidence description (optional):") || ''
+                        })
+                    });
+                    viewSubject(selectedSubject.value.id);
+                    fetchDashboard();
                 };
-            });
+            };
         };
 
-        const handleFileSelect = async (e) => {
-            const file = e.target.files[0];
-            if(!file) return;
-            forms.media.filename = file.name;
-            forms.media.type = 'image/jpeg';
-            forms.media.preview = URL.createObjectURL(file);
-            uploading.value = true;
-            forms.media.data = await compressImage(file);
-            uploading.value = false;
+        const handleMediaUpload = (e) => {
+             if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-photo');
+        };
+        const handleAvatarUpload = (e) => {
+             if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-avatar');
         };
 
-        const submitMedia = async () => {
-            if(!forms.media.data) return;
-            uploading.value = true;
-            try {
-                await api('/api/upload-photo', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        subjectId: selectedSubject.value.id,
-                        data: forms.media.data,
-                        filename: forms.media.filename,
-                        contentType: forms.media.type,
-                        description: forms.media.desc
-                    })
-                });
-                closeModal();
-                viewSubject(selectedSubject.value.id);
-            } catch(e) {} finally { uploading.value = false; }
+        // Events & Rels
+        const submitEvent = async () => {
+            await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id);
+        };
+        const submitRel = async () => {
+            await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id);
         };
 
-        // Graph Logic
-        async function loadGraph() {
-            const id = localStorage.getItem('admin_id');
-            const data = await api('/api/graph?adminId=' + id);
+        // Graph
+        let network = null;
+        const loadGraph = async () => {
+            const data = await api('/graph?adminId=' + localStorage.getItem('admin_id'));
             const container = document.getElementById('network-graph');
-            if(!container) return; // Tab switch race condition check
+            if(!container) return;
             
             const nodes = data.nodes.map(n => ({
                 id: n.id,
                 label: n.full_name,
                 shape: 'circularImage',
-                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name,
-                size: 30, borderWidth: 2, color: { border: '#6366f1', background: '#fff' }
+                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random',
+                size: 30, borderWidth: 3, 
+                color: { border: n.status === 'Active' ? '#10b981' : '#64748b', background: '#1e293b' }
             }));
+            
             const edges = data.edges.map(e => ({
                 from: e.from_id, to: e.to_id, label: e.label, arrows: 'to',
-                color: { color: '#cbd5e1' }, font: { size: 10, align: 'middle' }
+                color: { color: '#475569' }, font: { size: 10, color: '#94a3b8', strokeWidth: 0 }
             }));
             
             network = new vis.Network(container, { nodes, edges }, {
-                physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },
+                nodes: { font: { color: '#e2e8f0' } },
+                physics: { stabilization: true, barnesHut: { gravitationalConstant: -4000 } },
                 interaction: { hover: true }
             });
             network.on('click', (p) => { if(p.nodes.length) viewSubject(p.nodes[0]); });
-        }
-        const fitGraph = () => network && network.fit();
+        };
+
+        const fitGraph = () => network?.fit();
         const refreshGraph = () => loadGraph();
         watch(graphSearch, (v) => {
             if(!network) return;
@@ -818,60 +1031,57 @@ function serveHtml() {
             network.selectNodes(matches);
         });
 
-        // Modals
-        const openAddModal = (type, parentId = null) => {
-            modal.type = type;
-            modal.parentId = parentId;
-            forms.data = { category: 'Physical', label: '', value: '', analysis: '' };
-            forms.media = { data: null, desc: '', preview: null };
-            forms.rel = { subjectB: '', type: '' };
-            forms.event = { title: '', date: '', desc: '' };
-        };
-        const closeModal = () => { modal.type = null; };
+        watch(currentTab, (v) => { if(v === 'graph') setTimeout(loadGraph, 100); });
 
-        // Submits
-        const submitData = async () => {
-            uploading.value = true;
-            await api('/api/data-point', { method: 'POST', body: JSON.stringify({ ...forms.data, subjectId: selectedSubject.value.id, parentId: modal.parentId }) });
-            uploading.value = false; closeModal(); viewSubject(selectedSubject.value.id);
+        // Utils
+        const openModal = (type, parentId = null) => {
+            modal.active = type;
+            modal.parentId = parentId;
+            // Reset form based on type...
+            if(type === 'quick-note') {
+                forms.intel.category = 'General';
+                forms.intel.label = 'Field Note ' + new Date().toLocaleTimeString();
+                forms.intel.confidence = 100;
+            } else if (type === 'add-intel') {
+                forms.intel = { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' };
+            }
         };
-        const submitRel = async () => {
-             await api('/api/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
-             closeModal(); viewSubject(selectedSubject.value.id);
-        };
-        const submitEvent = async () => {
-             await api('/api/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
-             closeModal(); viewSubject(selectedSubject.value.id);
-        };
+        const closeModal = () => modal.active = null;
         
-        // Avatar
-        const triggerAvatarUpload = () => document.querySelector('input[type="file"]').click();
-        const handleAvatarUpload = async (e) => {
-            const file = e.target.files[0];
-            if(!file) return;
-            const b64 = await compressImage(file);
-            await api('/api/upload-avatar', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id, data: b64, filename: file.name, contentType: 'image/jpeg' }) });
-            viewSubject(selectedSubject.value.id);
+        const deleteItem = async (table, id) => {
+            if(confirm("Permanently delete this intelligence?")) {
+                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
+                if(table === 'subjects') { currentTab.value = 'subjects'; fetchSubjects(); }
+                else viewSubject(selectedSubject.value.id);
+            }
+        };
+
+        const exportData = () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selectedSubject.value, null, 2));
+            const node = document.createElement('a');
+            node.setAttribute("href", dataStr);
+            node.setAttribute("download", `dossier_${selectedSubject.value.full_name.replace(/\s/g,'_')}.json`);
+            node.click();
         };
 
         onMounted(async () => {
-            try {
-                const status = await api('/api/status');
-                if(!status.adminExists) setupMode.value = true;
-                else if(localStorage.getItem('admin_id')) {
-                    view.value = 'app';
-                    fetchSubjects();
-                }
-            } catch(e) {}
+             const status = await api('/status');
+             if(!status.adminExists) setupMode.value = true;
+             else if(localStorage.getItem('admin_id')) {
+                 view.value = 'app';
+                 initApp();
+             }
         });
 
         return {
-            view, setupMode, currentTab, loading, uploading, subjects, filteredSubjects, selectedSubject, searchQuery,
-            auth, newSubject, modal, modalTitle, forms, lightbox, menuItems, dataTree, graphSearch, expandedState,
+            view, setupMode, auth, loading, dashboard, subjects, currentTab, subTab, navItems,
+            searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
+            expandedState, graphSearch,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
-            createSubject, viewSubject, openAddModal, closeModal, submitData, submitRel, submitEvent,
-            submitMedia, handleFileSelect, loadGraph, fitGraph, refreshGraph, switchTab,
-            triggerAvatarUpload, handleAvatarUpload, editCore, submitEditCore, toggleNode, deleteItem
+            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
+            handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData,
+            fitGraph, refreshGraph
         };
       }
     }).mount('#app');
@@ -937,6 +1147,7 @@ export default {
         }
         if (path === '/api/setup-admin') return handleSetup(req, env.DB);
         if (path === '/api/login') return handleLogin(req, env.DB);
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         
         // Subject Operations
         if (path === '/api/subjects') {
@@ -962,8 +1173,8 @@ export default {
         // Sub-Resources
         if (path === '/api/data-point') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis, isoTimestamp()).run();
+            await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, confidence, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', isoTimestamp()).run();
             return response({ success: true });
         }
 
@@ -984,8 +1195,7 @@ export default {
         // Delete Handler
         if (path === '/api/delete') {
             const { table, id } = await req.json();
-            // Whitelist tables to prevent injection
-            if (!['subject_data_points', 'subject_events', 'subject_relationships'].includes(table)) return errorResponse('Invalid table', 400);
+            if (!['subjects', 'subject_data_points', 'subject_events', 'subject_relationships'].includes(table)) return errorResponse('Invalid table', 400);
             return handleDeleteItem(req, env.DB, table, id);
         }
 
