@@ -1258,7 +1258,7 @@ function serveHtml() {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selectedSubject.value, null, 2));
             const node = document.createElement('a');
             node.setAttribute("href", dataStr);
-            node.setAttribute("download", `dossier_${selectedSubject.value.full_name.replace(/\s/g,'_')}.json`);
+            node.setAttribute("download", \`dossier_\${selectedSubject.value.full_name.replace(/\s/g,'_')}.json\`);
             node.click();
         };
 
