@@ -1121,7 +1121,7 @@ function serveHtml() {
         const parseSocials = (text) => {
             if(!text) return [];
             // Match URLs starting with http/https, allowing for various separators
-            const urls = text.match(/\bhttps?:\/\/[^\s,]+/gi) || [];
+            const urls = text.match(/\\bhttps?:\\/\\/[^\\s,]+/gi) || [];
             return urls.map(url => {
                 const lower = url.toLowerCase();
                 let icon = 'fa-solid fa-link';
