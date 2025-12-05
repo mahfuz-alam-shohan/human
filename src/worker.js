@@ -1579,7 +1579,7 @@ function serveHtml() {
         const createShareLink = async () => {
             const { token } = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id }) });
             await viewSubject(selectedSubject.value.id);
-            const url = `${window.location.origin}/share/${token}`;
+            const url = window.location.origin + '/share/' + token;
             navigator.clipboard?.writeText(url).catch(() => {});
             notify('Share link ready');
         };
