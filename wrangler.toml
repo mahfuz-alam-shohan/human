@@ -8,7 +8,7 @@ mode = "smart"
 [[d1_databases]]
 binding = "DB"
 database_name = "human"
-database_id = "2a4ac079-c8df-4a77-a94f-7a659b16e190"
+database_id = "eff3b8bd-67e5-4c58-93f6-547a7e4af516"
 
 [[r2_buckets]]
 binding = "BUCKET"
