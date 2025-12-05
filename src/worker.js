@@ -1931,7 +1931,7 @@ function serveSharedHtml(token) {
 
     const addList = (el, items, emptyText, renderer) => {
       if (!items.length) {
-        el.innerHTML = `<p class="text-sm text-slate-500">${emptyText}</p>`;
+        el.innerHTML = '<p class="text-sm text-slate-500">' + emptyText + '</p>';
         return;
       }
       el.innerHTML = '';
@@ -1954,31 +1954,29 @@ function serveSharedHtml(token) {
         document.getElementById('age').textContent = data.age ? data.age + ' yrs' : (data.dob || 'Age unknown');
         setAvatar(data.avatar_path);
 
-        document.getElementById('core').innerHTML = `
-          <div class="flex justify-between"><span class="text-slate-400">DOB</span><span class="text-white">${data.dob || '—'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Last Sighted</span><span class="text-white">${data.last_sighted || 'Unknown'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Nationality</span><span class="text-white">${data.nationality || '—'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">MBTI</span><span class="text-white">${data.mbti || '—'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Alignment</span><span class="text-white">${data.alignment || '—'}</span></div>
-        `;
+        document.getElementById('core').innerHTML =
+          '<div class="flex justify-between"><span class="text-slate-400">DOB</span><span class="text-white">' + (data.dob || '—') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">Last Sighted</span><span class="text-white">' + (data.last_sighted || 'Unknown') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">Nationality</span><span class="text-white">' + (data.nationality || '—') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">MBTI</span><span class="text-white">' + (data.mbti || '—') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">Alignment</span><span class="text-white">' + (data.alignment || '—') + '</span></div>';
 
-        document.getElementById('contact').innerHTML = `
-          <div class="flex justify-between"><span class="text-slate-400">Contact</span><span class="text-white">${data.contact || '—'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Social Links</span><span class="text-indigo-300">${data.social_links || '—'}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Digital IDs</span><span class="text-indigo-300">${data.digital_identifiers || '—'}</span></div>
-        `;
+        document.getElementById('contact').innerHTML =
+          '<div class="flex justify-between"><span class="text-slate-400">Contact</span><span class="text-white">' + (data.contact || '—') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">Social Links</span><span class="text-indigo-300">' + (data.social_links || '—') + '</span></div>' +
+          '<div class="flex justify-between"><span class="text-slate-400">Digital IDs</span><span class="text-indigo-300">' + (data.digital_identifiers || '—') + '</span></div>';
 
         addList(document.getElementById('intel'), data.dataPoints || [], 'No intelligence entries yet.', (item) => {
           const card = document.createElement('div');
           card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
-          card.innerHTML = `<div class="flex justify-between text-xs text-slate-400 mb-1"><span>${item.category}</span><span>${item.confidence || 100}%</span></div><p class="text-white font-medium">${item.label}</p><p class="text-sm text-slate-300 mt-1 whitespace-pre-wrap">${item.value}</p>`;
+          card.innerHTML = '<div class="flex justify-between text-xs text-slate-400 mb-1"><span>' + item.category + '</span><span>' + (item.confidence || 100) + '%</span></div><p class="text-white font-medium">' + item.label + '</p><p class="text-sm text-slate-300 mt-1 whitespace-pre-wrap">' + item.value + '</p>';
           return card;
         });
 
         addList(document.getElementById('events'), data.events || [], 'No events logged.', (evt) => {
           const card = document.createElement('div');
           card.className = 'p-3 bg-slate-800/60 rounded-lg border border-slate-800';
-          card.innerHTML = `<p class="text-xs text-slate-400">${evt.event_date || ''}</p><p class="text-white font-semibold">${evt.title}</p><p class="text-sm text-slate-300">${evt.description}</p>`;
+          card.innerHTML = '<p class="text-xs text-slate-400">' + (evt.event_date || '') + '</p><p class="text-white font-semibold">' + evt.title + '</p><p class="text-sm text-slate-300">' + evt.description + '</p>';
           return card;
         });
 
@@ -1990,7 +1988,8 @@ function serveSharedHtml(token) {
           thumb.src = m.media_type === 'link' ? 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14/assets/svg/1f517.svg' : (m.object_key ? '/api/media/' + m.object_key : '');
           wrap.appendChild(thumb);
           const text = document.createElement('div');
-          text.innerHTML = `<p class="text-white font-semibold">${m.description || 'Attachment'}</p><a class="text-indigo-400 text-sm" href="${m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key}" target="_blank" rel="noreferrer">Open</a>`;
+          const linkHref = m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key;
+          text.innerHTML = '<p class="text-white font-semibold">' + (m.description || 'Attachment') + '</p><a class="text-indigo-400 text-sm" href="' + linkHref + '" target="_blank" rel="noreferrer">Open</a>';
           wrap.appendChild(text);
           return wrap;
         });
