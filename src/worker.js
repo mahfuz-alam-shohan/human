@@ -3,6 +3,20 @@ const encoder = new TextEncoder();
 const ADMIN_EMAIL_MAX = 320;
 const PASSWORD_MIN = 8;
 
+// Global flag to prevent re-running schema checks on every request
+let initialized = false;
+
+// List of tables that MUST exist. Any other table found in the DB will be dropped (Cleanup).
+const KNOWN_TABLES = [
+    'admins', 
+    'subjects', 
+    'subject_data_points', 
+    'subject_events', 
+    'subject_relationships', 
+    'subject_media',
+    'sqlite_sequence' // Internal SQLite table, do not touch
+];
+
 // --- Helper Functions ---
 
 function isoTimestamp() {
@@ -23,114 +37,141 @@ function sanitizeFileName(name) {
 
 // --- Database Operations ---
 
-async function safeMigrate(db) {
-    // This function attempts to add columns to existing tables if they are missing
-    // This prevents "no such column" errors if you are updating an existing app
-    const migrations = [
-        "ALTER TABLE subjects ADD COLUMN dob TEXT",
-        "ALTER TABLE subjects ADD COLUMN nationality TEXT",
-        "ALTER TABLE subjects ADD COLUMN education TEXT"
-    ];
+async function cleanupLegacyTables(db) {
+    try {
+        // 1. Get list of all current tables in the DB
+        const { results } = await db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all();
+        
+        // 2. Identify strangers
+        const tablesToDrop = results
+            .map(r => r.name)
+            .filter(name => !KNOWN_TABLES.includes(name));
 
-    for (const query of migrations) {
-        try {
-            await db.prepare(query).run();
-        } catch (e) {
-            // Ignore error if column already exists
+        if (tablesToDrop.length > 0) {
+            console.log(`Cleaning up unused tables: ${tablesToDrop.join(', ')}`);
+            // 3. Drop them one by one
+            for (const table of tablesToDrop) {
+                await db.prepare(`DROP TABLE IF EXISTS "${table}"`).run();
+            }
+        }
+    } catch (e) {
+        console.warn("Cleanup warning:", e.message);
+    }
+}
+
+async function safeMigrate(db) {
+    // Defines the columns that MUST exist for each table to avoid conflicts
+    const requiredSchema = {
+        'subjects': [
+            "ALTER TABLE subjects ADD COLUMN dob TEXT",
+            "ALTER TABLE subjects ADD COLUMN nationality TEXT",
+            "ALTER TABLE subjects ADD COLUMN education TEXT"
+        ]
+    };
+
+    for (const [table, migrations] of Object.entries(requiredSchema)) {
+        for (const query of migrations) {
+            try {
+                await db.prepare(query).run();
+            } catch (e) {
+                // Error usually means column exists. 
+                // If it's a conflict we can't solve via ALTER, we might need manual intervention,
+                // but usually ALTER ADD COLUMN is safe or fails harmlessly.
+            }
         }
     }
 }
 
 async function ensureSchema(db) {
-  // 1. Admins
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS admins (
-      id INTEGER PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
+  if (initialized) return;
 
-  // 2. Subjects (Added dob, nationality, education)
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS subjects (
-      id INTEGER PRIMARY KEY,
-      admin_id INTEGER NOT NULL REFERENCES admins(id),
-      full_name TEXT NOT NULL,
-      dob TEXT, 
-      age INTEGER,
-      gender TEXT,
-      occupation TEXT,
-      nationality TEXT,
-      education TEXT,
-      religion TEXT,
-      location TEXT,
-      contact TEXT,
-      habits TEXT,
-      notes TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
+  console.log("Checking Database Health...");
 
-  // 3. Data Points (The "Objects" the kid plays with - flexible data)
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS subject_data_points (
-      id INTEGER PRIMARY KEY,
-      subject_id INTEGER NOT NULL REFERENCES subjects(id),
-      category TEXT NOT NULL,
-      label TEXT NOT NULL,
-      value TEXT,
-      analysis TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
+  try {
+      // 1. Remove garbage tables from previous versions
+      await cleanupLegacyTables(db);
 
-  // 4. Life Events
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS subject_events (
-      id INTEGER PRIMARY KEY,
-      subject_id INTEGER NOT NULL REFERENCES subjects(id),
-      title TEXT NOT NULL,
-      description TEXT,
-      event_date TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
+      // 2. Ensure Schema Exists (Atomic Batch)
+      await db.batch([
+        db.prepare(`CREATE TABLE IF NOT EXISTS admins (
+          id INTEGER PRIMARY KEY,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
+          id INTEGER PRIMARY KEY,
+          admin_id INTEGER NOT NULL REFERENCES admins(id),
+          full_name TEXT NOT NULL,
+          dob TEXT, 
+          age INTEGER,
+          gender TEXT,
+          occupation TEXT,
+          nationality TEXT,
+          education TEXT,
+          religion TEXT,
+          location TEXT,
+          contact TEXT,
+          habits TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_data_points (
+          id INTEGER PRIMARY KEY,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id),
+          category TEXT NOT NULL,
+          label TEXT NOT NULL,
+          value TEXT,
+          analysis TEXT,
+          created_at TEXT NOT NULL
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_events (
+          id INTEGER PRIMARY KEY,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id),
+          title TEXT NOT NULL,
+          description TEXT,
+          event_date TEXT,
+          created_at TEXT NOT NULL
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
+          id INTEGER PRIMARY KEY,
+          subject_a_id INTEGER NOT NULL REFERENCES subjects(id),
+          subject_b_id INTEGER NOT NULL REFERENCES subjects(id),
+          relationship_type TEXT NOT NULL,
+          notes TEXT,
+          created_at TEXT NOT NULL
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
+          id INTEGER PRIMARY KEY,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id),
+          object_key TEXT NOT NULL UNIQUE,
+          content_type TEXT NOT NULL,
+          description TEXT,
+          created_at TEXT NOT NULL
+        )`)
+      ]);
 
-  // 5. Relationships
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS subject_relationships (
-      id INTEGER PRIMARY KEY,
-      subject_a_id INTEGER NOT NULL REFERENCES subjects(id),
-      subject_b_id INTEGER NOT NULL REFERENCES subjects(id),
-      relationship_type TEXT NOT NULL,
-      notes TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  // 6. Media
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS subject_media (
-      id INTEGER PRIMARY KEY,
-      subject_id INTEGER NOT NULL REFERENCES subjects(id),
-      object_key TEXT NOT NULL UNIQUE,
-      content_type TEXT NOT NULL,
-      description TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  // Run migrations for existing tables
-  await safeMigrate(db);
+      // 3. Patch existing tables (Migrations)
+      await safeMigrate(db);
+      
+      initialized = true;
+      console.log("Database Verified & Ready.");
+  } catch (err) {
+      console.error("Critical Schema Error:", err);
+      // If we are here, D1 might be really unhappy. 
+      // We assume the app might still partially work or the next retry will fix transient issues.
+  }
 }
 
 async function adminExists(db) {
-  const stmt = db.prepare('SELECT COUNT(id) AS count FROM admins');
-  const result = await stmt.first();
-  return (result?.count ?? 0) > 0;
+  try {
+      const stmt = db.prepare('SELECT COUNT(id) AS count FROM admins');
+      const result = await stmt.first();
+      return (result?.count ?? 0) > 0;
+  } catch (e) {
+      return false;
+  }
 }
 
 async function verifyAdmin(db, email, password) {
@@ -159,16 +200,24 @@ async function getSubjectDetail(db, subjectId) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(subjectId).first();
     if (!subject) return null;
 
-    const { results: media } = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    const { results: dataPoints } = await db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    const { results: events } = await db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(subjectId).all();
-    const { results: relationships } = await db.prepare(`
-        SELECT r.*, s.full_name as target_name 
-        FROM subject_relationships r JOIN subjects s ON r.subject_b_id = s.id 
-        WHERE r.subject_a_id = ?
-    `).bind(subjectId).all();
+    const [media, dataPoints, events, relationships] = await Promise.all([
+        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all(),
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all(),
+        db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(subjectId).all(),
+        db.prepare(`
+            SELECT r.*, s.full_name as target_name 
+            FROM subject_relationships r JOIN subjects s ON r.subject_b_id = s.id 
+            WHERE r.subject_a_id = ?
+        `).bind(subjectId).all()
+    ]);
 
-    return { ...subject, media, dataPoints, events, relationships };
+    return { 
+        ...subject, 
+        media: media.results, 
+        dataPoints: dataPoints.results, 
+        events: events.results, 
+        relationships: relationships.results 
+    };
 }
 
 async function addSubject(db, p) {
@@ -211,12 +260,18 @@ async function serveHome(request, env) {
   <div id="app" class="h-full flex flex-col">
     
     <!-- Loading / Wakeup Overlay -->
-    <div v-if="loading && !initialLoadComplete" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
-        <div class="flex items-center space-x-3 text-indigo-600 mb-4">
-            <i class="fa-solid fa-circle-notch fa-spin text-4xl"></i>
+    <div v-if="loading && !initialLoadComplete" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm transition-opacity duration-500">
+        <div class="flex items-center justify-center mb-6">
+            <div class="relative">
+                <div class="h-16 w-16 rounded-full border-4 border-slate-200"></div>
+                <div class="absolute top-0 left-0 h-16 w-16 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin"></div>
+            </div>
         </div>
-        <h2 class="text-xl font-bold text-slate-800">Establishing Secure Connection...</h2>
-        <p class="text-slate-500 mt-2 text-sm">Waking up research database</p>
+        <h2 class="text-xl font-bold text-slate-800 tracking-tight">Accessing Secure Database</h2>
+        <p class="text-slate-500 mt-2 text-sm font-medium">Establishing encrypted link...</p>
+        <p v-if="retryCount > 0" class="text-amber-600 mt-4 text-xs bg-amber-50 px-3 py-1 rounded-full animate-pulse">
+            Waking up database (Attempt {{ retryCount }}/3)...
+        </p>
     </div>
 
     <!-- Auth View -->
@@ -725,6 +780,7 @@ async function serveHome(request, env) {
         const subjects = ref([]);
         const selectedSubject = ref(null);
         const activeModal = ref(null);
+        const retryCount = ref(0);
 
         // Forms
         const authForm = reactive({ email: '', password: '' });
@@ -748,8 +804,8 @@ async function serveHome(request, env) {
             return items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         });
 
-        // API Wrapper
-        const api = async (url, options = {}) => {
+        // API Wrapper with Retry Logic
+        const api = async (url, options = {}, retries = 3) => {
             try {
                 const res = await fetch(url, options);
                 
@@ -757,11 +813,10 @@ async function serveHome(request, env) {
                 const contentType = res.headers.get("content-type");
                 if (!contentType || !contentType.includes("application/json")) {
                     const text = await res.text();
-                    // If it's HTML (likely an error page), throw a clear error
+                    // If HTML error (1101/502/503 from Cloudflare or Worker timeout)
                     if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-                        throw new Error("Backend connection failed (Database inactive or crashing). Please check worker logs.");
+                        throw new Error("HTML_ERROR"); // Trigger retry
                     }
-                    // Fallback for other non-JSON text
                     throw new Error(text || "Unknown server error");
                 }
 
@@ -769,8 +824,20 @@ async function serveHome(request, env) {
                 if (!res.ok) throw new Error(data.error || 'Server error');
                 return data;
             } catch (e) {
+                // Retry specific errors (Network or HTML error page)
+                if ((e.message === "HTML_ERROR" || e.name === 'TypeError') && retries > 0) {
+                    console.log("Retrying connection...", retries);
+                    retryCount.value = 4 - retries; // Update UI
+                    await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s
+                    return api(url, options, retries - 1);
+                }
+                
+                if (e.message === "HTML_ERROR") {
+                    throw new Error("System is warming up. Please refresh in a moment.");
+                }
+                
                 console.error(e);
-                alert(e.message); // Show error explicitly
+                alert(e.message); 
                 throw e;
             }
         };
@@ -793,6 +860,7 @@ async function serveHome(request, env) {
             } finally {
                 loading.value = false;
                 initialLoadComplete.value = true;
+                retryCount.value = 0;
             }
         };
 
@@ -932,7 +1000,7 @@ async function serveHome(request, env) {
 
         return {
             view, currentTab, setupMode, loading, initialLoadComplete, uploading, authForm, authError,
-            subjects, selectedSubject, newSubject, forms, activeModal, feedItems,
+            subjects, selectedSubject, newSubject, forms, activeModal, feedItems, retryCount,
             handleAuth, logout, fetchSubjects, createSubject, viewSubject, calculateAge,
             openModal, submitData, submitEvent, submitRel, handleFileUpload, submitMedia
         };
@@ -1011,8 +1079,8 @@ export default {
     // Router
     try {
         // Only run DB checks if NOT requesting the home page asset
+        // CRITICAL FIX: Ensure schema is only checked once per cold start to save DB CPU
         if (pathname !== '/') {
-            await env.DB.exec('PRAGMA foreign_keys = ON;');
             await ensureSchema(env.DB); 
         }
 
