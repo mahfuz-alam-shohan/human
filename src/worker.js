@@ -2,18 +2,30 @@ const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
 const ALLOWED_ORIGINS = ['*']; 
-const MAX_UPLOAD_SIZE = 15 * 1024 * 1024; // Increased to 15MB
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024; // 15MB
 
 // --- Schema Definitions ---
+// We add new migrations for the requested specific details
 const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
   "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
   "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0",
-  // New Deep Research Fields
   "ALTER TABLE subject_data_points ADD COLUMN confidence INTEGER DEFAULT 100",
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
   "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
-  "ALTER TABLE subjects ADD COLUMN last_sighted TEXT"
+  "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
+  // New Physical Attributes
+  "ALTER TABLE subjects ADD COLUMN height TEXT",
+  "ALTER TABLE subjects ADD COLUMN weight TEXT",
+  "ALTER TABLE subjects ADD COLUMN eye_color TEXT",
+  "ALTER TABLE subjects ADD COLUMN hair_color TEXT",
+  "ALTER TABLE subjects ADD COLUMN blood_type TEXT",
+  "ALTER TABLE subjects ADD COLUMN identifying_marks TEXT",
+  // New Psychological & Digital Profile
+  "ALTER TABLE subjects ADD COLUMN mbti TEXT",
+  "ALTER TABLE subjects ADD COLUMN alignment TEXT",
+  "ALTER TABLE subjects ADD COLUMN social_links TEXT", -- JSON string
+  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT" -- JSON string or text
 ];
 
 // --- Helper Functions ---
@@ -59,6 +71,8 @@ async function ensureSchema(db) {
           occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
           habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
           status TEXT DEFAULT 'Active', last_sighted TEXT,
+          height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT,
+          mbti TEXT, alignment TEXT, social_links TEXT, digital_identifiers TEXT,
           created_at TEXT, updated_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_data_points (
@@ -76,7 +90,7 @@ async function ensureSchema(db) {
         )`)
       ]);
 
-      // Safe Migrations
+      // Safe Migrations application
       for (const query of MIGRATIONS) {
         try { await db.prepare(query).run(); } catch(e) { /* Ignore if column exists */ }
       }
@@ -146,7 +160,12 @@ async function handleGetSubjectFull(db, id) {
 
 async function handleUpdateSubject(req, db, id) {
     const p = await req.json();
-    const allowed = ['full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted'];
+    const allowed = [
+        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 
+        'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted',
+        'height', 'weight', 'eye_color', 'hair_color', 'blood_type', 'identifying_marks',
+        'mbti', 'alignment', 'social_links', 'digital_identifiers'
+    ];
     const updates = Object.keys(p).filter(k => allowed.includes(k));
     
     if (updates.length === 0) return response({ success: true });
@@ -196,6 +215,9 @@ function serveHtml() {
              primary: '#6366f1', // Indigo
              accent: '#06b6d4', // Cyan
              alert: '#ef4444', // Red
+          },
+          screens: {
+            'xs': '475px',
           }
         }
       }
@@ -211,21 +233,22 @@ function serveHtml() {
     .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); }
     .glass-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); color: white; }
     .glass-input:focus { border-color: #6366f1; outline: none; background: rgba(30, 41, 59, 0.8); }
+    .glass-tab { background: rgba(30, 41, 59, 0.3); }
     
     .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
     .fade-enter-from, .fade-leave-to { opacity: 0; }
+    
     .slide-up-enter-active { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
     .slide-up-enter-from { transform: translateY(100%); }
     
     #network-graph { width: 100%; height: 100%; }
     .confidence-meter { height: 4px; background: #334155; border-radius: 2px; overflow: hidden; }
     .confidence-fill { height: 100%; transition: width 0.5s ease; }
-    
-    /* Mobile tweaks */
-    @media (max-width: 768px) {
-        .mobile-nav-pb { padding-bottom: 80px; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-    }
+
+    /* Mobile First Utilities */
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    .custom-scrollbar::-webkit-scrollbar { width: 0px; background: transparent; }
+    .touch-target { min-height: 44px; min-width: 44px; }
   </style>
 </head>
 <body class="h-full text-slate-200 antialiased overflow-hidden bg-obsidian selection:bg-indigo-500/30">
@@ -240,8 +263,8 @@ function serveHtml() {
             <div class="mt-4 text-center max-w-md w-full px-4">
                 <p class="text-white/90 font-mono text-sm">{{ lightbox.desc || 'No description' }}</p>
                 <div class="flex gap-4 justify-center mt-4">
-                     <a :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase"><i class="fa-solid fa-download mr-1"></i> Save</a>
-                     <button @click="lightbox.active = null" class="text-xs text-slate-400 hover:text-white font-bold uppercase"><i class="fa-solid fa-xmark mr-1"></i> Close</button>
+                     <a :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase p-2"><i class="fa-solid fa-download mr-1"></i> Save</a>
+                     <button @click="lightbox.active = null" class="text-xs text-slate-400 hover:text-white font-bold uppercase p-2"><i class="fa-solid fa-xmark mr-1"></i> Close</button>
                 </div>
             </div>
         </div>
@@ -265,13 +288,13 @@ function serveHtml() {
                 </div>
                 <div class="space-y-2">
                     <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Identity</label>
-                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-3 rounded-xl transition-all">
+                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-4 rounded-xl transition-all">
                 </div>
                 <div class="space-y-2">
                     <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Passcode</label>
-                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 rounded-xl transition-all">
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-4 rounded-xl transition-all">
                 </div>
-                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100">
+                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 touch-target">
                     <span v-if="loading"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Decrypting...</span>
                     <span v-else>{{ setupMode ? 'Initialize System' : 'Access Terminal' }}</span>
                 </button>
@@ -288,7 +311,7 @@ function serveHtml() {
                 <i class="fa-solid fa-fingerprint text-indigo-500 text-xl mr-3"></i>
                 <span class="font-bold text-white tracking-tight">RESEARCH<span class="text-slate-500">.OS</span></span>
             </div>
-            <nav class="flex-1 p-4 space-y-1">
+            <nav class="flex-1 p-4 space-y-2">
                 <template v-for="item in navItems">
                     <a @click="currentTab = item.id" 
                        :class="currentTab === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
@@ -306,41 +329,44 @@ function serveHtml() {
         </aside>
 
         <!-- Main Content Area -->
-        <main class="flex-1 relative flex flex-col h-full overflow-hidden mobile-nav-pb">
+        <main class="flex-1 relative flex flex-col h-full overflow-hidden pb-[80px] md:pb-0">
             
             <!-- Dashboard View -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-                <div class="max-w-5xl mx-auto space-y-8">
-                    <header>
-                        <h2 class="text-2xl md:text-3xl font-black text-white">Command Center</h2>
-                        <p class="text-slate-500 mt-1">System status and recent intelligence.</p>
+                <div class="max-w-5xl mx-auto space-y-6 md:space-y-8">
+                    <header class="flex justify-between items-end">
+                        <div>
+                            <h2 class="text-2xl md:text-3xl font-black text-white">Command Center</h2>
+                            <p class="text-slate-500 mt-1 text-sm md:text-base">System status and recent intelligence.</p>
+                        </div>
+                        <button @click="fetchDashboard" class="md:hidden text-slate-400 p-2"><i class="fa-solid fa-rotate-right"></i></button>
                     </header>
 
                     <!-- Stats Grid -->
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-indigo-500">
-                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Active Subjects</div>
-                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.active_subjects || 0 }}</div>
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Active Subjects</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.active_subjects || 0 }}</div>
                         </div>
                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-emerald-500">
-                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Intel Points</div>
-                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.total_intel || 0 }}</div>
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Intel Points</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.total_intel || 0 }}</div>
                         </div>
                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-cyan-500">
-                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Media Files</div>
-                            <div class="text-2xl font-mono text-white">{{ dashboard.stats.total_media || 0 }}</div>
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Media Files</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.total_media || 0 }}</div>
                         </div>
-                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors" @click="currentTab = 'subjects'">
-                            <div class="text-slate-400 text-xs font-bold uppercase mb-1">Quick Action</div>
+                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors" @click="openModal('add-subject')">
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Quick Action</div>
                             <div class="text-sm font-bold text-amber-400 flex items-center mt-1"><i class="fa-solid fa-plus mr-2"></i> Add Subject</div>
                         </div>
                     </div>
 
                     <!-- Recent Feed -->
                     <div class="glass-panel rounded-2xl overflow-hidden">
-                        <div class="p-4 border-b border-slate-800/50 flex justify-between items-center">
-                            <h3 class="font-bold text-white"><i class="fa-solid fa-satellite-dish mr-2 text-indigo-500"></i>Intel Feed</h3>
-                            <button @click="fetchDashboard" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded-full transition-colors"><i class="fa-solid fa-rotate-right"></i></button>
+                        <div class="p-4 border-b border-slate-800/50 flex justify-between items-center bg-slate-900/40">
+                            <h3 class="font-bold text-white text-sm md:text-base"><i class="fa-solid fa-satellite-dish mr-2 text-indigo-500"></i>Intel Feed</h3>
+                            <button @click="fetchDashboard" class="hidden md:block text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded-full transition-colors"><i class="fa-solid fa-rotate-right"></i></button>
                         </div>
                         <div class="divide-y divide-slate-800/50">
                             <div v-if="dashboard.feed.length === 0" class="p-8 text-center text-slate-500 text-sm">No recent activity recorded.</div>
@@ -352,10 +378,10 @@ function serveHtml() {
                                 <div class="flex-1 min-w-0">
                                     <div class="flex justify-between items-baseline">
                                         <p class="text-sm font-bold text-white truncate">{{ item.title || 'Unknown' }}</p>
-                                        <span class="text-[10px] font-mono text-slate-500 ml-2">{{ new Date(item.date).toLocaleDateString() }}</span>
+                                        <span class="text-[10px] font-mono text-slate-500 ml-2 whitespace-nowrap">{{ new Date(item.date).toLocaleDateString() }}</span>
                                     </div>
                                     <p class="text-xs text-slate-400 mt-0.5 line-clamp-2">{{ item.desc }}</p>
-                                    <button v-if="item.type !== 'event'" @click="viewSubject(item.ref_id)" class="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold mt-2">VIEW DOSSIER <i class="fa-solid fa-arrow-right ml-1"></i></button>
+                                    <button v-if="item.type !== 'event'" @click="viewSubject(item.ref_id)" class="touch-target text-[10px] text-indigo-400 hover:text-indigo-300 font-bold mt-1 inline-flex items-center">VIEW DOSSIER <i class="fa-solid fa-arrow-right ml-1"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -365,25 +391,28 @@ function serveHtml() {
 
             <!-- Subject Directory -->
             <div v-if="currentTab === 'subjects'" class="flex-1 flex flex-col overflow-hidden">
-                <div class="p-4 md:p-6 border-b border-slate-800 bg-charcoal/50 backdrop-blur-md sticky top-0 z-10">
+                <div class="p-4 border-b border-slate-800 bg-charcoal/80 backdrop-blur-md sticky top-0 z-10">
                     <div class="flex flex-col md:flex-row gap-4 justify-between md:items-center max-w-6xl mx-auto w-full">
-                        <h2 class="text-xl font-bold text-white">Subject Database</h2>
+                        <div class="flex justify-between items-center">
+                             <h2 class="text-xl font-bold text-white">Subject Database</h2>
+                             <button @click="openModal('add-subject')" class="md:hidden bg-indigo-600 text-white w-8 h-8 rounded-lg shadow-lg flex items-center justify-center"><i class="fa-solid fa-plus"></i></button>
+                        </div>
                         <div class="flex gap-2 w-full md:w-auto">
                             <div class="relative flex-1 md:w-64">
-                                <i class="fa-solid fa-search absolute left-3 top-3 text-slate-500 text-sm"></i>
-                                <input v-model="searchQuery" placeholder="Search code, name or tag..." class="glass-input w-full pl-9 pr-4 py-2.5 rounded-xl text-sm">
+                                <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500 text-sm"></i>
+                                <input v-model="searchQuery" placeholder="Search code, name or tag..." class="glass-input w-full pl-9 pr-4 py-3 md:py-2.5 rounded-xl text-sm">
                             </div>
-                            <button @click="openModal('add-subject')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap">
-                                <i class="fa-solid fa-plus mr-1"></i> New
+                            <button @click="openModal('add-subject')" class="hidden md:inline-flex bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap items-center">
+                                <i class="fa-solid fa-plus mr-2"></i> New
                             </button>
                         </div>
                     </div>
                 </div>
                 
-                <div class="flex-1 overflow-y-auto p-4 md:p-6">
+                <div class="flex-1 overflow-y-auto p-4">
                     <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
-                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative">
+                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative active:scale-[0.98]">
                              <div class="absolute top-3 right-3 z-10">
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border" 
                                       :class="s.status === 'Active' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-slate-700/50 border-slate-600 text-slate-400'">
@@ -423,9 +452,9 @@ function serveHtml() {
             <!-- Detail View -->
             <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 flex flex-col h-full bg-obsidian">
                 <!-- Detail Header -->
-                <header class="bg-charcoal/80 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+                <header class="bg-charcoal/90 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xl">
                     <div class="flex items-center gap-3">
-                        <button @click="currentTab = 'subjects'" class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors">
+                        <button @click="currentTab = 'subjects'" class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors touch-target">
                             <i class="fa-solid fa-arrow-left text-slate-400"></i>
                         </button>
                         <div class="flex items-center gap-3">
@@ -436,126 +465,164 @@ function serveHtml() {
                                 </div>
                             </div>
                             <div>
-                                <h2 class="font-bold text-white text-sm leading-tight">{{ selectedSubject.full_name }}</h2>
+                                <h2 class="font-bold text-white text-sm leading-tight max-w-[150px] sm:max-w-xs truncate">{{ selectedSubject.full_name }}</h2>
                                 <p class="text-[10px] font-mono text-slate-400">ID-{{ String(selectedSubject.id).padStart(4,'0') }} • <span class="text-emerald-400">{{ selectedSubject.status }}</span></p>
                             </div>
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('quick-note')" class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform"><i class="fa-solid fa-pen-nib text-xs"></i></button>
-                        <button @click="exportData" class="w-8 h-8 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors"><i class="fa-solid fa-download text-xs"></i></button>
+                        <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target"><i class="fa-solid fa-pen-nib text-sm"></i></button>
+                        <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target"><i class="fa-solid fa-download text-sm"></i></button>
                     </div>
                 </header>
 
                 <!-- Detail Tabs -->
-                <div class="flex bg-charcoal border-b border-slate-800 overflow-x-auto hide-scrollbar">
-                    <button v-for="t in ['overview', 'intel', 'timeline', 'media', 'relations']" 
+                <div class="flex bg-charcoal border-b border-slate-800 overflow-x-auto custom-scrollbar">
+                    <button v-for="t in ['overview', 'intel', 'physical', 'timeline', 'media', 'relations']" 
                             @click="subTab = t"
                             :class="subTab === t ? 'text-indigo-400 border-indigo-500 bg-slate-800/30' : 'text-slate-500 border-transparent hover:text-slate-300'"
-                            class="px-5 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap flex-shrink-0">
+                            class="px-5 py-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap flex-shrink-0 touch-target">
                         {{ t }}
                     </button>
                 </div>
 
                 <!-- Detail Content -->
-                <div class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
+                <div class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar pb-24 md:pb-6">
                     <div class="max-w-4xl mx-auto space-y-6">
                         
                         <!-- Overview Tab -->
-                        <div v-if="subTab === 'overview'" class="space-y-6">
+                        <div v-if="subTab === 'overview'" class="space-y-6 animate-fade-in">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <!-- Core Card -->
                                 <div class="glass-panel p-5 rounded-2xl relative">
-                                    <button @click="openModal('edit-profile')" class="absolute top-4 right-4 text-slate-500 hover:text-indigo-400"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Core Identity</h3>
+                                    <button @click="openModal('edit-profile')" class="absolute top-4 right-4 text-slate-500 hover:text-indigo-400 touch-target p-2"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4"><i class="fa-regular fa-id-card mr-1"></i> Core Identity</h3>
                                     <div class="space-y-3">
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">Full Name</span>
-                                            <span class="text-white font-medium text-sm">{{ selectedSubject.full_name }}</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.full_name }}</span>
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">Occupation</span>
-                                            <span class="text-white font-medium text-sm">{{ selectedSubject.occupation || '—' }}</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.occupation || '—' }}</span>
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">Location</span>
-                                            <span class="text-white font-medium text-sm">{{ selectedSubject.location || '—' }}</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.location || '—' }}</span>
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">DOB / Age</span>
-                                            <span class="text-white font-medium text-sm">{{ selectedSubject.dob || '—' }} <span v-if="selectedSubject.age">({{selectedSubject.age}})</span></span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.dob || '—' }} <span v-if="selectedSubject.age">({{selectedSubject.age}})</span></span>
                                         </div>
                                          <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">Last Sighted</span>
-                                            <span class="text-amber-400 font-medium text-sm font-mono">{{ selectedSubject.last_sighted || 'Unknown' }}</span>
+                                            <span class="text-amber-400 font-medium text-sm font-mono text-right">{{ selectedSubject.last_sighted || 'Unknown' }}</span>
                                         </div>
                                     </div>
                                 </div>
-                                <!-- Bio Card -->
+                                <!-- Psych Card -->
                                 <div class="glass-panel p-5 rounded-2xl">
                                     <div class="flex justify-between items-center mb-4">
-                                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Background</h3>
-                                        <button @click="openModal('edit-bio')" class="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
+                                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-brain mr-1"></i> Psychology</h3>
+                                        <button @click="openModal('edit-profile')" class="text-xs text-indigo-400 hover:text-indigo-300 p-2">Edit</button>
                                     </div>
                                     <div class="space-y-4">
-                                        <div>
-                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Education</div>
-                                            <p class="text-sm text-slate-300">{{ selectedSubject.education || 'No record' }}</p>
+                                        <div class="flex gap-4">
+                                            <div class="bg-slate-800/50 p-2 rounded text-center flex-1">
+                                                <div class="text-[10px] text-slate-500 uppercase font-bold">MBTI</div>
+                                                <div class="text-indigo-300 font-mono text-sm">{{ selectedSubject.mbti || 'N/A' }}</div>
+                                            </div>
+                                            <div class="bg-slate-800/50 p-2 rounded text-center flex-1">
+                                                <div class="text-[10px] text-slate-500 uppercase font-bold">Align</div>
+                                                <div class="text-indigo-300 font-mono text-sm">{{ selectedSubject.alignment || 'N/A' }}</div>
+                                            </div>
                                         </div>
                                         <div>
                                             <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Habits & Routine</div>
-                                            <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ selectedSubject.habits || 'No observations recorded.' }}</p>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ selectedSubject.habits || 'No observations recorded.' }}</p>
                                         </div>
                                         <div>
-                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">General Notes</div>
-                                            <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ selectedSubject.notes || '—' }}</p>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Notes</div>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ selectedSubject.notes || '—' }}</p>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                            <div class="flex justify-center">
-                                <button @click="deleteItem('subjects', selectedSubject.id)" class="text-red-500 text-xs font-bold hover:text-red-400 border border-red-500/30 px-4 py-2 rounded-lg hover:bg-red-500/10 transition-colors">
+                            <div class="flex justify-center pt-4">
+                                <button @click="deleteItem('subjects', selectedSubject.id)" class="text-red-500 text-xs font-bold hover:text-red-400 border border-red-500/30 px-6 py-3 rounded-lg hover:bg-red-500/10 transition-colors w-full md:w-auto">
                                     <i class="fa-solid fa-triangle-exclamation mr-2"></i> ARCHIVE SUBJECT
                                 </button>
                             </div>
                         </div>
+                        
+                        <!-- Physical Attributes Tab -->
+                        <div v-if="subTab === 'physical'" class="space-y-6 animate-fade-in">
+                            <div class="glass-panel p-5 rounded-2xl">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-ruler-combined mr-1"></i> Physical Profile</h3>
+                                    <button @click="openModal('edit-profile')" class="text-xs text-indigo-400 hover:text-indigo-300 p-2">Edit</button>
+                                </div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Height</div>
+                                        <div class="text-white">{{ selectedSubject.height || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Weight</div>
+                                        <div class="text-white">{{ selectedSubject.weight || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Eyes</div>
+                                        <div class="text-white">{{ selectedSubject.eye_color || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Hair</div>
+                                        <div class="text-white">{{ selectedSubject.hair_color || '—' }}</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Identifying Marks</h4>
+                                    <p class="text-sm text-slate-300 bg-slate-800/30 p-4 rounded-xl min-h-[80px]">{{ selectedSubject.identifying_marks || 'No scars, tattoos, or birthmarks listed.' }}</p>
+                                </div>
+                            </div>
+                        </div>
 
                         <!-- Intel Tab (Deep Research Tree) -->
-                        <div v-if="subTab === 'intel'" class="space-y-4">
-                            <div class="flex justify-between items-center">
+                        <div v-if="subTab === 'intel'" class="space-y-4 animate-fade-in">
+                            <div class="flex justify-between items-center mb-2">
                                 <h3 class="font-bold text-white">Deep Research Dossier</h3>
-                                <button @click="openModal('add-intel', null)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow shadow-indigo-500/20">
+                                <button @click="openModal('add-intel', null)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-bold shadow shadow-indigo-500/20 touch-target">
                                     <i class="fa-solid fa-plus mr-1"></i> Add Point
                                 </button>
                             </div>
 
-                            <div v-if="dataTree.length === 0" class="glass-panel p-8 text-center rounded-2xl">
-                                <i class="fa-solid fa-folder-open text-4xl text-slate-700 mb-2"></i>
+                            <div v-if="dataTree.length === 0" class="glass-panel p-12 text-center rounded-2xl">
+                                <i class="fa-solid fa-folder-open text-4xl text-slate-700 mb-3"></i>
                                 <p class="text-slate-500 text-sm">No intelligence data collected yet.</p>
                             </div>
 
                             <div v-for="node in dataTree" :key="node.id" class="glass-panel rounded-xl overflow-hidden border border-slate-700/50">
-                                <div class="p-3 flex gap-3 cursor-pointer hover:bg-white/5 transition-colors select-none" @click="toggleNode(node.id)">
+                                <div class="p-4 flex gap-3 cursor-pointer hover:bg-white/5 transition-colors select-none active:bg-white/10" @click="toggleNode(node.id)">
                                     <div class="mt-1">
                                         <i class="fa-solid fa-chevron-right text-[10px] text-slate-500 transition-transform duration-200" :class="{'rotate-90': expandedState[node.id] !== false}"></i>
                                     </div>
                                     <div class="flex-1 min-w-0">
-                                        <div class="flex items-center gap-2 mb-1">
+                                        <div class="flex flex-wrap items-center gap-2 mb-1.5">
                                             <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 uppercase border border-slate-700">{{ node.category }}</span>
                                             <h4 class="font-bold text-slate-200 text-sm truncate">{{ node.label }}</h4>
-                                            <div class="flex-1"></div>
-                                            <div class="w-16 confidence-meter bg-slate-800" title="Confidence Score">
+                                            <div class="flex-1 hidden md:block"></div>
+                                            <div class="w-16 confidence-meter bg-slate-800 ml-auto md:ml-0" title="Confidence Score">
                                                 <div class="confidence-fill" :class="getConfidenceColor(node.confidence)" :style="{width: (node.confidence || 100) + '%'}"></div>
                                             </div>
                                         </div>
-                                        <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ node.value }}</p>
-                                        <div v-if="node.analysis" class="mt-2 p-2 bg-indigo-900/10 border-l-2 border-indigo-500 text-xs text-indigo-300">
+                                        <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ node.value }}</p>
+                                        <div v-if="node.analysis" class="mt-3 p-3 bg-indigo-900/10 border-l-2 border-indigo-500 text-xs text-indigo-300 rounded-r">
                                             <i class="fa-solid fa-magnifying-glass mr-1"></i> {{ node.analysis }}
                                         </div>
                                     </div>
-                                    <div class="flex flex-col gap-2 opacity-60 hover:opacity-100">
-                                        <button @click.stop="openModal('add-intel', node.id)" class="w-6 h-6 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-plus text-xs"></i></button>
-                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-6 h-6 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                    <div class="flex flex-col gap-2 justify-center">
+                                        <button @click.stop="openModal('add-intel', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-plus text-xs"></i></button>
+                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-trash text-[10px]"></i></button>
                                     </div>
                                 </div>
                                 <!-- Nested Children -->
@@ -563,16 +630,16 @@ function serveHtml() {
                                     <div v-for="child in node.children" :key="child.id" class="relative pl-4">
                                          <div class="absolute left-0 top-0 bottom-0 w-px bg-slate-700"></div>
                                          <div class="absolute left-0 top-3 w-3 h-px bg-slate-700"></div>
-                                         <div class="glass-panel p-2 rounded-lg bg-slate-900/50 flex justify-between group">
+                                         <div class="glass-panel p-3 rounded-lg bg-slate-900/50 flex justify-between group items-start">
                                             <div class="flex-1">
-                                                <div class="flex items-center gap-2">
+                                                <div class="flex items-center gap-2 mb-1">
                                                     <span class="text-xs font-bold text-indigo-400">{{ child.label }}</span>
                                                     <span class="text-[10px] text-slate-600 border border-slate-700 px-1 rounded">{{child.confidence}}% Conf.</span>
                                                 </div>
-                                                <p class="text-xs text-slate-300 mt-1">{{ child.value }}</p>
+                                                <p class="text-xs text-slate-300 leading-relaxed">{{ child.value }}</p>
                                                 <p v-if="child.source" class="text-[10px] text-slate-500 mt-1 italic">Source: {{ child.source }}</p>
                                             </div>
-                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity px-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
                                          </div>
                                     </div>
                                 </div>
@@ -580,58 +647,59 @@ function serveHtml() {
                         </div>
 
                         <!-- Media Gallery -->
-                        <div v-if="subTab === 'media'" class="space-y-4">
-                            <div class="border-2 border-dashed border-slate-700 rounded-xl p-6 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group" @click="triggerMediaUpload">
-                                <i class="fa-solid fa-cloud-arrow-up text-2xl text-slate-500 group-hover:text-indigo-400 mb-2"></i>
-                                <p class="text-sm text-slate-400">Tap to upload evidence</p>
+                        <div v-if="subTab === 'media'" class="space-y-4 animate-fade-in">
+                            <div class="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target" @click="triggerMediaUpload">
+                                <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-500 group-hover:text-indigo-400 mb-3"></i>
+                                <p class="text-sm text-slate-400 font-bold">Tap to upload evidence</p>
+                                <p class="text-xs text-slate-600 mt-1">Images, Scans, Documents</p>
                             </div>
                              <div class="columns-2 md:columns-3 lg:columns-4 gap-3 space-y-3">
-                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden cursor-zoom-in" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
-                                    <img :src="'/api/media/' + m.object_key" class="w-full bg-slate-800" loading="lazy">
-                                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                        <p class="text-[10px] text-white truncate">{{ m.description || 'No Description' }}</p>
+                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden cursor-zoom-in bg-slate-800 shadow-lg" @click="lightbox = {active: true, url: '/api/media/'+m.object_key, desc: m.description}">
+                                    <img :src="'/api/media/' + m.object_key" class="w-full" loading="lazy">
+                                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
+                                        <p class="text-[10px] text-white truncate w-full">{{ m.description || 'No Description' }}</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
                          <!-- Timeline -->
-                        <div v-if="subTab === 'timeline'" class="space-y-4">
-                            <button @click="openModal('add-event')" class="w-full py-2 border border-slate-700 border-dashed rounded-lg text-xs text-slate-400 hover:text-amber-400 hover:border-amber-400/50 transition-colors">
+                        <div v-if="subTab === 'timeline'" class="space-y-4 animate-fade-in">
+                            <button @click="openModal('add-event')" class="w-full py-3 border border-slate-700 border-dashed rounded-lg text-xs text-slate-400 hover:text-amber-400 hover:border-amber-400/50 transition-colors font-bold uppercase tracking-wider touch-target">
                                 + Log New Event
                             </button>
-                            <div class="relative border-l border-slate-800 ml-3 space-y-6 py-2">
-                                <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-6">
-                                    <div class="absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full bg-obsidian border-2 border-amber-500"></div>
+                            <div class="relative border-l-2 border-slate-800 ml-4 space-y-8 py-4">
+                                <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-8">
+                                    <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-obsidian border-4 border-amber-500"></div>
                                     <div class="group">
-                                        <div class="flex items-baseline gap-2 mb-1">
-                                            <span class="text-xs font-mono font-bold text-amber-500">{{ e.event_date }}</span>
+                                        <div class="flex items-baseline gap-2 mb-1 flex-wrap">
+                                            <span class="text-xs font-mono font-bold text-amber-500 bg-amber-900/20 px-2 py-0.5 rounded">{{ e.event_date }}</span>
                                             <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
-                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
                                         </div>
-                                        <p class="text-xs text-slate-400">{{ e.description }}</p>
+                                        <p class="text-sm text-slate-400 leading-relaxed bg-slate-800/30 p-3 rounded-lg">{{ e.description }}</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
                         
                         <!-- Relations -->
-                        <div v-if="subTab === 'relations'" class="space-y-4">
-                            <button @click="openModal('add-rel')" class="w-full py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg text-xs font-bold transition-colors">
+                        <div v-if="subTab === 'relations'" class="space-y-4 animate-fade-in">
+                            <button @click="openModal('add-rel')" class="w-full py-3 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg text-xs font-bold transition-colors touch-target">
                                 <i class="fa-solid fa-link mr-1"></i> Connect Subject
                             </button>
                             <div class="grid grid-cols-1 gap-3">
-                                <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-3 rounded-xl flex items-center justify-between">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-8 h-8 rounded-full bg-slate-700 overflow-hidden">
+                                <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-4 rounded-xl flex items-center justify-between">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden">
                                             <img v-if="r.target_avatar" :src="'/api/media/'+r.target_avatar" class="w-full h-full object-cover">
                                         </div>
                                         <div>
                                             <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
-                                            <div class="text-xs text-indigo-400">{{ r.relationship_type }}</div>
+                                            <div class="text-xs text-indigo-400 font-mono">{{ r.relationship_type }}</div>
                                         </div>
                                     </div>
-                                    <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500"><i class="fa-solid fa-link-slash"></i></button>
+                                    <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-link-slash"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -646,8 +714,8 @@ function serveHtml() {
                 <div class="absolute top-4 left-4 right-4 md:w-64 glass-panel p-3 rounded-xl flex flex-col gap-2">
                     <input v-model="graphSearch" placeholder="Locate node..." class="bg-black/20 text-white text-xs p-2 rounded border border-slate-700 focus:border-indigo-500 outline-none">
                     <div class="flex gap-2">
-                        <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-1.5 rounded">Reset View</button>
-                        <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-1.5 rounded">Refresh Data</button>
+                        <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-2 rounded">Reset View</button>
+                        <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-2 rounded">Refresh Data</button>
                     </div>
                 </div>
              </div>
@@ -655,11 +723,11 @@ function serveHtml() {
         </main>
 
         <!-- Mobile Navigation Bar -->
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-charcoal/90 backdrop-blur-xl border-t border-slate-800 z-40 pb-safe">
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-charcoal/90 backdrop-blur-xl border-t border-slate-800 z-40 pb-safe shadow-2xl">
             <div class="flex justify-around items-center h-16">
                 <a v-for="item in navItems" :key="item.id" @click="currentTab = item.id"
                    :class="currentTab === item.id ? 'text-indigo-400' : 'text-slate-500'" 
-                   class="flex flex-col items-center justify-center w-full h-full space-y-1 active:scale-95 transition-transform">
+                   class="flex flex-col items-center justify-center w-full h-full space-y-1 active:scale-95 transition-transform touch-target">
                     <i :class="item.icon" class="text-lg"></i>
                     <span class="text-[10px] font-medium">{{ item.label }}</span>
                 </a>
@@ -667,53 +735,87 @@ function serveHtml() {
         </nav>
     </div>
 
-    <!-- Universal Modal System -->
-    <transition name="fade">
+    <!-- Universal Modal System (Full screen on mobile) -->
+    <transition name="slide-up">
         <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4" @click.self="closeModal">
-            <div class="bg-slate-900 w-full max-w-lg md:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-800 flex flex-col max-h-[90vh] animate-slide-up">
+            <div class="bg-slate-900 w-full max-w-2xl md:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-800 flex flex-col max-h-[90vh] h-full md:h-auto animate-slide-up">
                 <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 sticky top-0 z-10">
-                    <h3 class="font-bold text-white">{{ modalTitle }}</h3>
-                    <button @click="closeModal" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors"><i class="fa-solid fa-xmark"></i></button>
+                    <h3 class="font-bold text-white text-lg">{{ modalTitle }}</h3>
+                    <button @click="closeModal" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 
-                <div class="p-6 overflow-y-auto custom-scrollbar space-y-5">
+                <div class="p-4 md:p-6 overflow-y-auto custom-scrollbar space-y-5 flex-1">
                     
-                    <!-- Form: New Subject -->
-                    <form v-if="modal.active === 'add-subject'" @submit.prevent="createSubject" class="space-y-4">
-                        <div class="space-y-1">
-                            <label class="text-[10px] font-bold text-slate-500 uppercase">Target Name</label>
-                            <input v-model="forms.subject.fullName" required class="glass-input w-full p-3 rounded-lg" placeholder="Enter full name">
+                    <!-- Form: New Subject / Edit Subject (Multi-step) -->
+                    <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="modal.active === 'add-subject' ? createSubject() : updateSubjectCore()" class="space-y-6">
+                        
+                        <!-- Tabs for Form -->
+                        <div class="flex gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
+                            <button type="button" v-for="step in ['Identity', 'Physical', 'Details']" 
+                                @click="modalStep = step"
+                                :class="modalStep === step ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'"
+                                class="px-4 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap">
+                                {{ step }}
+                            </button>
                         </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="space-y-1">
-                                <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
-                                <input v-model="forms.subject.occupation" class="glass-input w-full p-3 rounded-lg" placeholder="Role/Job">
-                            </div>
-                            <div class="space-y-1">
-                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
-                                <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg" placeholder="City/Area">
-                            </div>
-                        </div>
-                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-bold mt-4 shadow-lg shadow-indigo-500/20">Initialize Dossier</button>
-                    </form>
 
-                    <!-- Form: Edit Core Profile -->
-                    <form v-if="modal.active === 'edit-profile'" @submit.prevent="updateSubjectCore" class="space-y-4">
-                        <div class="grid grid-cols-2 gap-4">
-                            <input v-model="selectedSubject.full_name" class="glass-input p-3 rounded-lg col-span-2" placeholder="Full Name">
-                            <input v-model="selectedSubject.occupation" class="glass-input p-3 rounded-lg" placeholder="Occupation">
-                            <input v-model="selectedSubject.location" class="glass-input p-3 rounded-lg" placeholder="Location">
-                            <input v-model="selectedSubject.dob" class="glass-input p-3 rounded-lg" placeholder="Date of Birth">
-                            <input v-model="selectedSubject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
-                            <select v-model="selectedSubject.status" class="glass-input p-3 rounded-lg bg-slate-800">
-                                <option>Active</option>
-                                <option>Dormant</option>
-                                <option>Missing</option>
-                                <option>Deceased</option>
-                            </select>
-                             <input v-model="selectedSubject.last_sighted" class="glass-input p-3 rounded-lg" placeholder="Last Sighted (Date/Loc)">
+                        <div v-show="modalStep === 'Identity'" class="space-y-4">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Full Name *</label>
+                                <input v-model="forms.subject.full_name" required class="glass-input w-full p-3 rounded-lg" placeholder="John Doe">
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
+                                    <input v-model="forms.subject.occupation" class="glass-input w-full p-3 rounded-lg">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
+                                    <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">DOB</label>
+                                    <input v-model="forms.subject.dob" class="glass-input w-full p-3 rounded-lg" placeholder="YYYY-MM-DD">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Status</label>
+                                    <select v-model="forms.subject.status" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                        <option>Active</option>
+                                        <option>Dormant</option>
+                                        <option>Missing</option>
+                                        <option>Deceased</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold">Save Changes</button>
+
+                        <div v-show="modalStep === 'Physical'" class="space-y-4">
+                             <div class="grid grid-cols-2 gap-4">
+                                <input v-model="forms.subject.height" class="glass-input p-3 rounded-lg" placeholder="Height (cm/ft)">
+                                <input v-model="forms.subject.weight" class="glass-input p-3 rounded-lg" placeholder="Weight (kg/lbs)">
+                                <input v-model="forms.subject.eye_color" class="glass-input p-3 rounded-lg" placeholder="Eye Color">
+                                <input v-model="forms.subject.hair_color" class="glass-input p-3 rounded-lg" placeholder="Hair Color">
+                                <input v-model="forms.subject.blood_type" class="glass-input p-3 rounded-lg" placeholder="Blood Type">
+                                <input v-model="forms.subject.age" type="number" class="glass-input p-3 rounded-lg" placeholder="Age">
+                            </div>
+                            <textarea v-model="forms.subject.identifying_marks" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="Scars, Tattoos, Birthmarks..."></textarea>
+                        </div>
+
+                        <div v-show="modalStep === 'Details'" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <input v-model="forms.subject.mbti" class="glass-input p-3 rounded-lg" placeholder="MBTI (e.g. INTJ)">
+                                <input v-model="forms.subject.alignment" class="glass-input p-3 rounded-lg" placeholder="Alignment (e.g. Chaotic Neutral)">
+                            </div>
+                            <textarea v-model="forms.subject.habits" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="Habits, Routines, Behaviors..."></textarea>
+                            <textarea v-model="forms.subject.notes" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="General Notes..."></textarea>
+                            <input v-model="forms.subject.last_sighted" class="glass-input w-full p-3 rounded-lg" placeholder="Last Sighted Info">
+                        </div>
+
+                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-500/20 touch-target">
+                            {{ modal.active === 'add-subject' ? 'Initialize Dossier' : 'Save Changes' }}
+                        </button>
                     </form>
 
                      <!-- Form: Add Intel -->
@@ -724,58 +826,61 @@ function serveHtml() {
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Category</label>
-                                <select v-model="forms.intel.category" class="glass-input w-full p-2.5 rounded-lg bg-slate-800 mt-1">
+                                <select v-model="forms.intel.category" class="glass-input w-full p-3 rounded-lg bg-slate-800 mt-1">
                                     <option>General</option>
                                     <option>Biometrics</option>
                                     <option>Psychology</option>
                                     <option>Social</option>
                                     <option>Digital</option>
                                     <option>Financial</option>
+                                    <option>Legal</option>
+                                    <option>Assets</option>
                                 </select>
                             </div>
                             <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Topic</label>
-                                <input v-model="forms.intel.label" placeholder="e.g. Scar, Phobia" class="glass-input w-full p-2.5 rounded-lg mt-1" required>
+                                <input v-model="forms.intel.label" placeholder="e.g. Scar, Phobia" class="glass-input w-full p-3 rounded-lg mt-1" required>
                             </div>
                         </div>
                         <div>
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Observation / Fact</label>
-                            <textarea v-model="forms.intel.value" rows="3" class="glass-input w-full p-3 rounded-lg mt-1" placeholder="Detailed observation..." required></textarea>
+                            <textarea v-model="forms.intel.value" rows="4" class="glass-input w-full p-3 rounded-lg mt-1" placeholder="Detailed observation..." required></textarea>
                         </div>
                         <div v-if="modal.active !== 'quick-note'">
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Analysis (Optional)</label>
-                            <input v-model="forms.intel.analysis" placeholder="Researcher interpretation..." class="glass-input w-full p-2.5 rounded-lg mt-1">
+                            <input v-model="forms.intel.analysis" placeholder="Researcher interpretation..." class="glass-input w-full p-3 rounded-lg mt-1">
                         </div>
                         <div v-if="modal.active !== 'quick-note'" class="grid grid-cols-2 gap-4">
                              <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Source</label>
-                                <input v-model="forms.intel.source" placeholder="e.g. Surveillance, Interview" class="glass-input w-full p-2.5 rounded-lg mt-1">
+                                <input v-model="forms.intel.source" placeholder="e.g. Surveillance, Interview" class="glass-input w-full p-3 rounded-lg mt-1">
                             </div>
                             <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase flex justify-between">
                                     <span>Confidence</span>
                                     <span class="text-indigo-400">{{ forms.intel.confidence }}%</span>
                                 </label>
-                                <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-2 accent-indigo-500">
+                                <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-3 accent-indigo-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
                             </div>
                         </div>
-                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-lg shadow-emerald-500/20">Commit Intelligence</button>
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">Commit Intelligence</button>
                      </form>
 
-                     <!-- Other forms (Event, Rel) similar structure... -->
+                     <!-- Event Form -->
                      <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
                          <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
                          <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
-                         <textarea v-model="forms.event.desc" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-24"></textarea>
-                         <button type="submit" class="w-full bg-amber-600 text-white py-3 rounded-xl font-bold">Log Timeline Event</button>
+                         <textarea v-model="forms.event.desc" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
+                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">Log Timeline Event</button>
                      </form>
 
+                     <!-- Rel Form -->
                      <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
                         <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
                             <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
                         </select>
                         <input v-model="forms.rel.type" placeholder="Relationship Type (e.g. Spouse, Rival)" class="glass-input w-full p-3 rounded-lg">
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold">Link Subjects</button>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
                      </form>
                 </div>
             </div>
@@ -801,6 +906,7 @@ function serveHtml() {
         const loading = ref(false);
         const searchQuery = ref('');
         const graphSearch = ref('');
+        const modalStep = ref('Identity');
         
         const auth = reactive({ email: '', password: '' });
         const dashboard = reactive({ stats: {}, feed: [] });
@@ -813,7 +919,7 @@ function serveHtml() {
         
         // Forms
         const forms = reactive({
-            subject: { fullName: '', occupation: '', location: '' },
+            subject: {},
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
             event: { date: new Date().toISOString().split('T')[0], title: '', desc: '' },
             rel: { subjectB: '', type: '' }
@@ -834,7 +940,7 @@ function serveHtml() {
                 if (!res.ok) throw new Error(data.error || 'Operation failed');
                 return data;
             } catch (e) {
-                alert(e.message); // Simple error feedback
+                alert(e.message); 
                 throw e;
             }
         };
@@ -844,9 +950,9 @@ function serveHtml() {
             if(!searchQuery.value) return subjects.value;
             const q = searchQuery.value.toLowerCase();
             return subjects.value.filter(s => 
-                s.full_name.toLowerCase().includes(q) || 
-                (s.occupation && s.occupation.toLowerCase().includes(q)) ||
-                (s.status && s.status.toLowerCase().includes(q))
+                (s.full_name || '').toLowerCase().includes(q) || 
+                (s.occupation || '').toLowerCase().includes(q) ||
+                (s.status || '').toLowerCase().includes(q)
             );
         });
 
@@ -866,7 +972,7 @@ function serveHtml() {
         const modalTitle = computed(() => {
             const map = { 
                 'add-subject': 'New Subject Profile', 
-                'edit-profile': 'Edit Core Data',
+                'edit-profile': 'Edit Profile',
                 'add-intel': 'Add Intelligence',
                 'quick-note': 'Quick Field Note',
                 'add-event': 'Log Timeline Event',
@@ -915,7 +1021,11 @@ function serveHtml() {
         };
 
         const updateSubjectCore = async () => {
-             await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(selectedSubject.value) });
+             // Merge form back into selectedSubject but only send form data for cleaner update
+             const payload = { ...forms.subject };
+             await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
+             // Refresh local data
+             selectedSubject.value = { ...selectedSubject.value, ...payload };
              closeModal();
         };
 
@@ -925,7 +1035,7 @@ function serveHtml() {
             await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
             closeModal();
             viewSubject(selectedSubject.value.id);
-            fetchDashboard(); // Update feed
+            fetchDashboard(); 
         };
 
         const toggleNode = (id) => {
@@ -944,7 +1054,6 @@ function serveHtml() {
         const triggerAvatar = () => document.querySelectorAll('input[type="file"]')[1].click();
 
         const compressAndUpload = async (file, endpoint) => {
-            // Simple compression logic
             const reader = new FileReader();
             reader.readAsDataURL(file);
             reader.onload = async (e) => {
@@ -1037,13 +1146,19 @@ function serveHtml() {
         const openModal = (type, parentId = null) => {
             modal.active = type;
             modal.parentId = parentId;
-            // Reset form based on type...
+            modalStep.value = 'Identity';
+            
             if(type === 'quick-note') {
                 forms.intel.category = 'General';
                 forms.intel.label = 'Field Note ' + new Date().toLocaleTimeString();
                 forms.intel.confidence = 100;
             } else if (type === 'add-intel') {
                 forms.intel = { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' };
+            } else if (type === 'add-subject') {
+                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
+            } else if (type === 'edit-profile') {
+                // Clone existing data into form
+                forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
             }
         };
         const closeModal = () => modal.active = null;
@@ -1076,7 +1191,7 @@ function serveHtml() {
         return {
             view, setupMode, auth, loading, dashboard, subjects, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch,
+            expandedState, graphSearch, modalStep,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel,
             handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
@@ -1153,8 +1268,28 @@ export default {
         if (path === '/api/subjects') {
             if (req.method === 'POST') {
                 const p = await req.json();
-                await env.DB.prepare('INSERT INTO subjects (admin_id, full_name, occupation, location, created_at) VALUES (?,?,?,?,?)')
-                    .bind(p.adminId, p.fullName, p.occupation, p.location, isoTimestamp()).run();
+                // Fix for "creating object" issue: Ensure sanitized inputs
+                await env.DB.prepare('INSERT INTO subjects (admin_id, full_name, occupation, location, dob, status, created_at, height, weight, eye_color, hair_color, blood_type, identifying_marks, mbti, alignment, habits, notes, last_sighted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                    .bind(
+                        p.adminId, 
+                        p.full_name || 'Unknown Subject', 
+                        p.occupation || null, 
+                        p.location || null,
+                        p.dob || null,
+                        p.status || 'Active',
+                        isoTimestamp(),
+                        p.height || null,
+                        p.weight || null,
+                        p.eye_color || null,
+                        p.hair_color || null,
+                        p.blood_type || null,
+                        p.identifying_marks || null,
+                        p.mbti || null,
+                        p.alignment || null,
+                        p.habits || null,
+                        p.notes || null,
+                        p.last_sighted || null
+                    ).run();
                 return response({ success: true });
             }
             const adminId = url.searchParams.get('adminId');
