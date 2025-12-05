@@ -187,11 +187,13 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
         db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
+        // Updated to fetch relationships where this subject is EITHER side A or B
         db.prepare(`
             SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
-            FROM subject_relationships r JOIN subjects s ON r.subject_b_id = s.id 
-            WHERE r.subject_a_id = ?
-        `).bind(id).all(),
+            FROM subject_relationships r 
+            JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+        `).bind(id, id, id).all(),
         db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
