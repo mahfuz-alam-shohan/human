@@ -871,8 +871,10 @@ function serveHtml() {
                                             <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
                                             <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
                                         </div>
-                                        <div v-if="e.description" class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
-                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{ e.description }}</p>
+                                        <div class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
+                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                {{ e.description || 'No details provided' }}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
@@ -1787,8 +1789,9 @@ export default {
 
         if (path === '/api/event') {
             const p = await req.json();
+            const description = (p.description || '').toString().trim() || 'No details provided';
             await env.DB.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subjectId, p.title, p.description || '', p.date || isoTimestamp(), isoTimestamp()).run();
+                .bind(p.subjectId, p.title, description, p.date || isoTimestamp(), isoTimestamp()).run();
             return response({ success: true });
         }
 
