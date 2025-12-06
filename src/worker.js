@@ -1152,7 +1152,13 @@ function serveHtml() {
                                         {{ (link.duration_seconds/60).toFixed(0) }}m Limit &bull; {{ link.views }} Views
                                     </div>
                                 </div>
-                                <button @click="revokeLink(link.token)" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded border border-transparent hover:border-red-100 transition-all">REVOKE</button>
+                                <div class="flex items-center gap-2">
+                                    <button @click="copyShare(link.url)" class="text-[10px] font-bold text-blue-500 hover:bg-blue-50 px-3 py-1.5 rounded border border-transparent hover:border-blue-100 transition-all flex items-center gap-1">
+                                        <i class="fa-regular fa-copy"></i>
+                                        COPY
+                                    </button>
+                                    <button @click="revokeLink(link.token)" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded border border-transparent hover:border-red-100 transition-all">REVOKE</button>
+                                </div>
                             </div>
                             <div v-if="activeShareLinks.length === 0" class="text-center py-6">
                                 <i class="fa-solid fa-inbox text-gray-200 text-2xl mb-2"></i>
@@ -1324,10 +1330,20 @@ function serveHtml() {
             activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : [];
         };
 
-        const revokeLink = async (token) => withAction(async () => {
-            await api('/share-links?token=' + token, { method: 'DELETE' });
-            fetchShareLinks();
-        });
+        const revokeLink = async (token) => {
+            if (!token) return;
+            const confirmMsg = 'Revoke this share link? Recipients will immediately lose access.';
+            if (!confirm(confirmMsg)) return;
+            await withAction(async () => {
+                await api('/share-links?token=' + token, { method: 'DELETE' });
+                fetchShareLinks();
+            });
+        };
+
+        const copyShare = (url) => {
+            if (!url) return;
+            copyToClipboard(url);
+        };
 
         const createShareLink = async () => {
             try {
@@ -1489,7 +1505,11 @@ function serveHtml() {
         const getThreatColor = (l, isBg = false) => { const c = { 'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600', 'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600', 'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600', 'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600' }; return c[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500'); };
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const openSettings = () => openModal('settings');
-        const logout = () => { localStorage.clear(); location.reload(); };
+        const logout = () => {
+            if (!confirm('Log out of PEOPLE OS? Any unsaved changes will be lost.')) return;
+            localStorage.clear();
+            location.reload();
+        };
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const exportData = () => { const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = (selected.value.alias || 'contact') + '.json'; link.click(); };
         const fileInput = ref(null); const uploadType = ref(null);
@@ -1514,7 +1534,7 @@ function serveHtml() {
             view, auth, loading, actionLoading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
             activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
-            createShareLink, fetchShareLinks, revokeLink, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
+            createShareLink, fetchShareLinks, revokeLink, copyShare, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
             triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
         };
       }
