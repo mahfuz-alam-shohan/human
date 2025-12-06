@@ -27,7 +27,12 @@ function generateToken() {
 function response(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        headers: { 
+            'Content-Type': 'application/json', 
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
     });
 }
 
@@ -506,11 +511,16 @@ function serveSharedHtml(token) {
             onMounted(async () => {
                 try {
                     const res = await fetch('/api/share/' + token);
-                    const json = await res.json();
-                    if(json.error) throw new Error(json.error);
-                    data.value = json;
-                    timer.value = json.meta.remaining_seconds;
-                    setInterval(() => { if(timer.value > 0) timer.value--; else if(!error.value) error.value = "Link Expired"; }, 1000);
+                    const text = await res.text();
+                    try {
+                        const json = JSON.parse(text);
+                        if(json.error) throw new Error(json.error);
+                        data.value = json;
+                        timer.value = json.meta.remaining_seconds;
+                        setInterval(() => { if(timer.value > 0) timer.value--; else if(!error.value) error.value = "Link Expired"; }, 1000);
+                    } catch(e) {
+                        throw new Error("Server Response Error. " + text.substring(0,50));
+                    }
                 } catch(e) { error.value = e.message || "Access Denied"; } finally { loading.value = false; }
             });
             return { loading, error, data, timer, formatTime, getThreatColor, resolveImg, parseSocials };
@@ -1153,9 +1163,14 @@ function serveHtml() {
         const api = async (ep, opts = {}) => {
             try {
                 const res = await fetch('/api' + ep, opts);
-                const data = await res.json();
-                if(data.error) throw new Error(data.error);
-                return data;
+                const text = await res.text();
+                try {
+                    const data = JSON.parse(text);
+                    if(data.error) throw new Error(data.error);
+                    return data;
+                } catch(e) {
+                    throw new Error("Server Error: " + (res.statusText || "Invalid Response") + " (" + text.substring(0, 50) + "...)");
+                }
             } catch(e) { alert(e.message); throw e; }
         };
 
@@ -1434,7 +1449,19 @@ function serveHtml() {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
-    const path = url.pathname;
+    // Remove trailing slash if present (except for root)
+    const path = url.pathname.endsWith('/') && url.pathname.length > 1 
+        ? url.pathname.slice(0, -1) 
+        : url.pathname;
+
+    // Handle OPTIONS for CORS
+    if (req.method === 'OPTIONS') {
+        return new Response(null, { headers: { 
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }});
+    }
 
     try {
         if (!schemaInitialized) await ensureSchema(env.DB);
