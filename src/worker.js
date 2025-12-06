@@ -4,42 +4,6 @@ const encoder = new TextEncoder();
 const ALLOWED_ORIGINS = ['*']; 
 const APP_TITLE = "SHADOW OPERATIVE";
 
-// --- Database Schema & Migrations ---
-const MIGRATIONS = [
-  // Core Identity & Spy Metrics
-  "ALTER TABLE subjects ADD COLUMN alias TEXT",
-  "ALTER TABLE subjects ADD COLUMN threat_level TEXT DEFAULT 'Low'", // Low, Medium, High, Critical
-  "ALTER TABLE subjects ADD COLUMN ideology TEXT", // Replaces religion
-  "ALTER TABLE subjects ADD COLUMN modus_operandi TEXT", // Replaces habits
-  "ALTER TABLE subjects ADD COLUMN weakness TEXT",
-  
-  // Clean up old psych columns (SQLite doesn't support DROP COLUMN easily, so we just ignore them in code)
-  
-  // New Tables for Spycraft
-  `CREATE TABLE IF NOT EXISTS subject_interactions (
-    id INTEGER PRIMARY KEY, 
-    subject_id INTEGER, 
-    date TEXT, 
-    type TEXT, -- Direct Contact, Surveillance, Intercept, Informant
-    transcript TEXT, 
-    conclusion TEXT, 
-    evidence_url TEXT,
-    created_at TEXT
-  )`,
-  
-  `CREATE TABLE IF NOT EXISTS subject_locations (
-    id INTEGER PRIMARY KEY,
-    subject_id INTEGER,
-    name TEXT,
-    address TEXT,
-    lat REAL,
-    lng REAL,
-    type TEXT, -- Residence, Workplace, Frequented, Safehouse, Dead Drop
-    notes TEXT,
-    created_at TEXT
-  )`
-];
-
 // --- Helper Functions ---
 
 function isoTimestamp() { return new Date().toISOString(); }
@@ -71,6 +35,11 @@ function errorResponse(msg, status = 500) {
     return response({ error: msg }, status);
 }
 
+// Helper to convert undefined to null for D1 compatibility
+function safeVal(v) {
+    return v === undefined || v === '' ? null : v;
+}
+
 // --- Database Layer ---
 
 let schemaInitialized = false;
@@ -78,65 +47,146 @@ let schemaInitialized = false;
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
+      // Enable Foreign Keys
       await db.prepare("PRAGMA foreign_keys = ON;").run();
+
+      // Consolidated Schema - No ALTER statements needed for fresh install
       await db.batch([
-        db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
-        // Modified Subjects Table
+        db.prepare(`CREATE TABLE IF NOT EXISTS admins (
+            id INTEGER PRIMARY KEY, 
+            email TEXT UNIQUE, 
+            password_hash TEXT, 
+            created_at TEXT
+        )`),
+        
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
-          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT,
-          occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT,
-          hometown TEXT, previous_locations TEXT,
-          modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
-          status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT,
-          height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT,
-          social_links TEXT, digital_identifiers TEXT,
-          created_at TEXT, updated_at TEXT
+          id INTEGER PRIMARY KEY, 
+          admin_id INTEGER, 
+          full_name TEXT, 
+          alias TEXT, 
+          dob TEXT, 
+          age INTEGER, 
+          gender TEXT,
+          occupation TEXT, 
+          nationality TEXT, 
+          ideology TEXT, 
+          location TEXT, 
+          contact TEXT,
+          hometown TEXT, 
+          previous_locations TEXT,
+          modus_operandi TEXT, 
+          notes TEXT, 
+          weakness TEXT, 
+          avatar_path TEXT, 
+          is_archived INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'Active', 
+          threat_level TEXT DEFAULT 'Low', 
+          last_sighted TEXT,
+          height TEXT, 
+          weight TEXT, 
+          eye_color TEXT, 
+          hair_color TEXT, 
+          blood_type TEXT, 
+          identifying_marks TEXT,
+          social_links TEXT, 
+          digital_identifiers TEXT,
+          created_at TEXT, 
+          updated_at TEXT
         )`),
-        // Surveillance Logs (formerly data points)
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_intel (
-          id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, 
-          value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER, 
+          category TEXT, 
+          label TEXT, 
+          value TEXT, 
+          analysis TEXT, 
+          confidence INTEGER DEFAULT 100, 
+          source TEXT, 
+          created_at TEXT
         )`),
-        // Media (Evidence)
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
-          id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT,
-          media_type TEXT DEFAULT 'file', external_url TEXT
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER, 
+          object_key TEXT, 
+          content_type TEXT, 
+          description TEXT, 
+          media_type TEXT DEFAULT 'file', 
+          external_url TEXT, 
+          created_at TEXT
         )`),
-        // Relationships
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
-          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT,
-          custom_name TEXT, custom_avatar TEXT, custom_notes TEXT
+          id INTEGER PRIMARY KEY, 
+          subject_a_id INTEGER, 
+          subject_b_id INTEGER, 
+          relationship_type TEXT, 
+          notes TEXT, 
+          custom_name TEXT, 
+          custom_avatar TEXT, 
+          custom_notes TEXT, 
+          created_at TEXT
         )`),
-        // Interactions (Interrogations/Dialogues)
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_interactions (
-            id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, type TEXT, transcript TEXT, conclusion TEXT, evidence_url TEXT, created_at TEXT
+            id INTEGER PRIMARY KEY, 
+            subject_id INTEGER, 
+            date TEXT, 
+            type TEXT, 
+            transcript TEXT, 
+            conclusion TEXT, 
+            evidence_url TEXT, 
+            created_at TEXT
         )`),
-        // Locations (Geo-Intel)
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_locations (
-            id INTEGER PRIMARY KEY, subject_id INTEGER, name TEXT, address TEXT, lat REAL, lng REAL, type TEXT, notes TEXT, created_at TEXT
+            id INTEGER PRIMARY KEY, 
+            subject_id INTEGER, 
+            name TEXT, 
+            address TEXT, 
+            lat REAL, 
+            lng REAL, 
+            type TEXT, 
+            notes TEXT, 
+            created_at TEXT
         )`),
-        // Shares
+
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
-          id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1,
-          duration_seconds INTEGER, started_at TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER REFERENCES subjects(id), 
+          token TEXT UNIQUE, 
+          is_active INTEGER DEFAULT 1,
+          duration_seconds INTEGER, 
+          started_at TEXT, 
+          created_at TEXT
         )`)
       ]);
 
-      // Apply migrations safely
-      for (const query of MIGRATIONS) {
-        try { await db.prepare(query).run(); } catch(e) {}
-      }
       schemaInitialized = true;
-  } catch (err) { console.error("Init Error", err); }
+  } catch (err) { 
+      console.error("Init Error", err); 
+      // If error is table exists but schema wrong, we might need a manual burn
+  }
 }
 
 async function nukeDatabase(db) {
-    // The "Burn Protocol" - Drops all tables
-    const tables = ['admins','subjects','subject_intel','subject_media','subject_relationships','subject_interactions','subject_locations','subject_shares'];
+    // The "Burn Protocol" - Drops all tables explicitly
+    const tables = [
+        'subject_shares', 'subject_locations', 'subject_interactions', 
+        'subject_relationships', 'subject_media', 'subject_intel', 
+        'subjects', 'admins'
+    ];
+    
+    // Disable FK constraints temporarily to allow dropping
+    await db.prepare("PRAGMA foreign_keys = OFF;").run();
+    
     for(const t of tables) {
-        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) {}
+        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
-    schemaInitialized = false;
+    
+    await db.prepare("PRAGMA foreign_keys = ON;").run();
+    schemaInitialized = false; // Force ensureSchema on next run
     return true;
 }
 
@@ -187,6 +237,54 @@ async function handleGetSubjectFull(db, id) {
         interactions: interactions.results,
         locations: locations.results
     });
+}
+
+// --- Share Logic ---
+
+async function handleCreateShareLink(req, db, origin) {
+    const { subjectId, durationMinutes } = await req.json();
+    if (!subjectId) return errorResponse('subjectId required', 400);
+    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 5) * 60)); // Default 5m
+    const token = generateToken();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at) VALUES (?, ?, ?, ?)')
+        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
+    return response({ url: `${origin}/share/${token}` });
+}
+
+async function handleGetSharedSubject(db, token) {
+    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link || !link.is_active) return errorResponse('LINK EXPIRED OR INVALID', 404);
+
+    // Timer Logic
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+        
+        // Start timer on first access if not started
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
+        }
+
+        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
+        const remaining = link.duration_seconds - elapsed;
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+            return errorResponse('LINK EXPIRED', 410);
+        }
+        
+        // Fetch limited data
+        const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ?').bind(link.subject_id).all();
+        const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+
+        return response({
+            ...subject,
+            interactions: interactions.results,
+            media: media.results,
+            meta: { remaining_seconds: Math.floor(remaining) }
+        });
+    }
 }
 
 // --- Frontend HTML ---
@@ -357,6 +455,7 @@ function serveHtml() {
                     </div>
                     <div class="flex gap-2">
                         <button @click="openModal('add-interaction')" class="bg-amber-700/20 text-amber-500 hover:bg-amber-700/40 px-3 py-1.5 rounded text-[10px] font-bold border border-amber-700/50 uppercase"><i class="fa-solid fa-microphone mr-1"></i> Log Contact</button>
+                        <button @click="openModal('share-secure')" class="text-blue-400 hover:text-white px-3 border-l border-white/10" title="Secure Share"><i class="fa-solid fa-share-nodes"></i></button>
                         <button @click="exportData" class="text-gray-400 hover:text-white px-3"><i class="fa-solid fa-download"></i></button>
                     </div>
                 </div>
@@ -588,12 +687,23 @@ function serveHtml() {
             </form>
 
             <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                <div class="relative">
+                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH ADDRESS/PLACE (Press Enter)" class="glass-input w-full p-3 text-xs border-blue-500/50">
+                    <button type="button" @click="searchLocations" class="absolute right-2 top-2 text-blue-400"><i class="fa-solid fa-search"></i></button>
+                    <!-- Search Results Dropdown -->
+                    <div v-if="locationSearchResults.length" class="absolute z-50 w-full bg-black border border-gray-700 max-h-40 overflow-y-auto mt-1">
+                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-2 hover:bg-blue-900/30 cursor-pointer text-[10px] border-b border-gray-800 last:border-0">
+                            {{ res.display_name }}
+                        </div>
+                    </div>
+                </div>
+
                 <input v-model="forms.location.name" placeholder="LOCATION NAME (e.g. Safehouse Alpha)" class="glass-input w-full p-3 text-xs" required>
                 <div class="grid grid-cols-2 gap-4">
                     <input v-model="forms.location.lat" placeholder="LATITUDE" type="number" step="any" class="glass-input p-3 text-xs">
                     <input v-model="forms.location.lng" placeholder="LONGITUDE" type="number" step="any" class="glass-input p-3 text-xs">
                 </div>
-                <p class="text-[9px] text-gray-500">Tip: Click on the map to auto-fill coords.</p>
+                <p class="text-[9px] text-gray-500">Tip: Click on map or search above to auto-fill.</p>
                 <select v-model="forms.location.type" class="glass-input w-full p-3 text-xs bg-black">
                     <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Safehouse</option><option>Dead Drop</option><option>Unknown</option>
                 </select>
@@ -626,6 +736,16 @@ function serveHtml() {
                 <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">LINK SUBJECTS</button>
              </form>
 
+             <div v-if="modal.active === 'share-secure'" class="text-center space-y-4">
+                <i class="fa-solid fa-lock text-4xl text-blue-500"></i>
+                <p class="text-sm text-gray-400">Generate a one-time secure link to share this dossier. The link will self-destruct after the timer expires.</p>
+                <input v-model.number="forms.share.minutes" type="number" class="glass-input p-3 w-32 text-center text-white" placeholder="MINUTES" min="1">
+                <button @click="createShareLink" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 text-xs uppercase">GENERATE SECURE LINK</button>
+                <div v-if="forms.share.result" class="mt-4 p-3 bg-white/10 break-all text-xs font-mono text-blue-300">
+                    {{ forms.share.result }}
+                </div>
+             </div>
+
         </div>
     </div>
 
@@ -656,12 +776,17 @@ function serveHtml() {
         const search = ref('');
         const modal = reactive({ active: null });
         
+        // Location Search State
+        const locationSearchQuery = ref('');
+        const locationSearchResults = ref([]);
+
         const forms = reactive({
             subject: {},
             interaction: {},
             location: {},
             intel: {},
-            rel: {}
+            rel: {},
+            share: { minutes: 15, result: '' }
         });
 
         // API Wrapper
@@ -768,7 +893,7 @@ function serveHtml() {
 
             new vis.Network(container, { nodes, edges }, {
                 nodes: { shape: 'dot', font: { color: '#fff' } },
-                edges: { color: '#666' },
+                edges: { color: '#666', font: { color: '#888', strokeWidth: 0 } },
                 physics: { stabilization: false }
             });
         };
@@ -780,9 +905,14 @@ function serveHtml() {
             if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low' };
             if(type === 'edit-profile') forms.subject = { ...selected.value };
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
-            if(type === 'add-location') forms.location = { subject_id: selected.value.id };
+            if(type === 'add-location') {
+                forms.location = { subject_id: selected.value.id };
+                locationSearchQuery.value = '';
+                locationSearchResults.value = [];
+            }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id };
+            if(type === 'share-secure') forms.share = { minutes: 30, result: '' };
         };
         const closeModal = () => modal.active = null;
 
@@ -806,6 +936,22 @@ function serveHtml() {
             viewSubject(selected.value.id); closeModal();
         };
         
+        // Location Search Logic
+        const searchLocations = async () => {
+            if(!locationSearchQuery.value) return;
+            try {
+                const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
+                locationSearchResults.value = await res.json();
+            } catch(e) { console.error(e); }
+        };
+
+        const selectLocation = (res) => {
+            forms.location.lat = parseFloat(res.lat);
+            forms.location.lng = parseFloat(res.lon);
+            forms.location.address = res.display_name;
+            locationSearchResults.value = [];
+        };
+        
         const submitIntel = async () => {
              await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
              viewSubject(selected.value.id); closeModal();
@@ -814,6 +960,11 @@ function serveHtml() {
         const submitRel = async () => {
              await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
              viewSubject(selected.value.id); closeModal();
+        };
+
+        const createShareLink = async () => {
+            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
+            forms.share.result = res.url;
         };
 
         const deleteItem = async (table, id) => {
@@ -877,7 +1028,8 @@ function serveHtml() {
 
         return { 
             view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel,
+            locationSearchQuery, locationSearchResults, searchLocations, selectLocation,
+            handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, createShareLink,
             triggerUpload, handleFile, deleteItem, archiveSubject, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
         };
       }
@@ -897,6 +1049,10 @@ export default {
 
     try {
         if (!schemaInitialized) await ensureSchema(env.DB);
+
+        // Share Page Route
+        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareMatch) return serveSharedHtml(shareMatch[1]);
 
         if (req.method === 'GET' && path === '/') return serveHtml();
 
@@ -923,7 +1079,7 @@ export default {
             if(req.method === 'POST') {
                 const p = await req.json();
                 await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(p.admin_id, p.full_name, p.alias, p.threat_level, p.status, p.occupation, p.nationality, p.ideology, p.modus_operandi, p.weakness, isoTimestamp()).run();
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), isoTimestamp()).run();
                 return response({success:true});
             }
             const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
@@ -938,7 +1094,7 @@ export default {
                 // Simple dynamic update
                 const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
                 const set = keys.map(k => `${k} = ?`).join(', ');
-                const vals = keys.map(k => p[k]);
+                const vals = keys.map(k => safeVal(p[k]));
                 await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
                 return response({success:true});
             }
@@ -949,14 +1105,14 @@ export default {
         if (path === '/api/interaction') {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, p.transcript, p.conclusion, p.evidence_url, isoTimestamp()).run();
+                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
             return response({success:true});
         }
 
         if (path === '/api/location') {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, p.address, p.lat, p.lng, p.type, p.notes, isoTimestamp()).run();
+                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
             return response({success:true});
         }
 
@@ -973,6 +1129,12 @@ export default {
                 .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
             return response({success:true});
         }
+
+        // Sharing Routes
+        if (path === '/api/share-links') return handleCreateShareLink(req, env.DB, url.origin);
+        
+        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
 
         if (path === '/api/delete') {
             const { table, id } = await req.json();
@@ -997,7 +1159,7 @@ export default {
             await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
             
             if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, created_at) VALUES (?,?,?,?)').bind(subjectId, key, contentType, isoTimestamp()).run();
+            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
             
             return response({success:true});
         }
