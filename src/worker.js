@@ -14,6 +14,8 @@ const MIGRATIONS = [
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
   "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
   "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
+  "ALTER TABLE subjects ADD COLUMN hometown TEXT",
+  "ALTER TABLE subjects ADD COLUMN previous_locations TEXT",
   // Physical Attributes
   "ALTER TABLE subjects ADD COLUMN height TEXT",
   "ALTER TABLE subjects ADD COLUMN weight TEXT",
@@ -28,6 +30,8 @@ const MIGRATIONS = [
   "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT",
   // Routine & Activities
   "CREATE TABLE IF NOT EXISTS subject_routine (id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT)",
+  "ALTER TABLE subject_routine ADD COLUMN quote TEXT",
+  "ALTER TABLE subject_routine ADD COLUMN follow_up TEXT",
   // Media Links
   "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
   "ALTER TABLE subject_media ADD COLUMN external_url TEXT",
@@ -102,8 +106,9 @@ async function ensureSchema(db) {
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
-          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT, 
-          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
+          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT,
+          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT,
+          hometown TEXT, previous_locations TEXT,
           habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
           status TEXT DEFAULT 'Active', last_sighted TEXT,
           height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT,
@@ -125,7 +130,7 @@ async function ensureSchema(db) {
           media_type TEXT DEFAULT 'file', external_url TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_routine (
-          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, quote TEXT, follow_up TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
           id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1,
@@ -223,8 +228,8 @@ async function handleGetSubjectFull(db, id) {
 async function handleUpdateSubject(req, db, id) {
     const p = await req.json();
     const allowed = [
-        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 
-        'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted',
+        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education',
+        'religion', 'location', 'hometown', 'previous_locations', 'contact', 'habits', 'notes', 'status', 'last_sighted',
         'height', 'weight', 'eye_color', 'hair_color', 'blood_type', 'identifying_marks',
         'mbti', 'alignment', 'social_links', 'digital_identifiers'
     ];
@@ -696,9 +701,17 @@ function serveHtml() {
                                             <span class="text-white font-medium text-sm text-right">{{ selectedSubject.location || '—' }}</span>
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Hometown</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.hometown || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Previous Locations</span>
+                                            <span class="text-white font-medium text-sm text-right whitespace-pre-wrap max-w-[240px]">{{ selectedSubject.previous_locations || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">DOB / Age</span>
                                             <span class="text-white font-medium text-sm text-right">
-                                                {{ selectedSubject.dob || '—' }} 
+                                                {{ selectedSubject.dob || '—' }}
                                                 <span v-if="selectedSubject.dob" class="text-indigo-400 font-bold">({{ calculateRealAge(selectedSubject.dob) }} yrs)</span>
                                                 <span v-else-if="selectedSubject.age">({{ selectedSubject.age }} yrs)</span>
                                             </span>
@@ -800,6 +813,8 @@ function serveHtml() {
                                         </div>
                                         <div class="text-xs text-indigo-300 mt-0.5"><i class="fa-solid fa-location-dot mr-1"></i> {{ r.location }} <span class="text-slate-500 mx-1">•</span> {{ r.duration }}</div>
                                         <p v-if="r.notes" class="text-xs text-slate-400 mt-2 bg-slate-800/30 p-2 rounded">{{ r.notes }}</p>
+                                        <p v-if="r.quote" class="text-xs text-indigo-200 italic mt-1">“{{ r.quote }}”</p>
+                                        <p v-if="r.follow_up" class="text-[11px] text-amber-300 mt-1">Follow-up: {{ r.follow_up }}</p>
                                     </div>
                                     <button @click="deleteItem('subject_routine', r.id)" class="text-slate-600 hover:text-red-500 p-2 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
                                 </div>
@@ -1141,13 +1156,21 @@ function serveHtml() {
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Information</label>
                                 <input v-model="forms.subject.contact" class="glass-input w-full p-3 rounded-lg" placeholder="Phone, Email, PGP Keys...">
                             </div>
-                             <div class="space-y-1">
+                            <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Education</label>
                                 <input v-model="forms.subject.education" class="glass-input w-full p-3 rounded-lg" placeholder="Degrees, Schools...">
                             </div>
                             <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
                                 <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Hometown</label>
+                                <input v-model="forms.subject.hometown" class="glass-input w-full p-3 rounded-lg" placeholder="City of origin">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Previous Locations</label>
+                                <textarea v-model="forms.subject.previous_locations" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="Comma-separated or newline list"></textarea>
                             </div>
                              <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Social Media Links</label>
@@ -1198,6 +1221,14 @@ function serveHtml() {
                          <div class="space-y-1">
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Notes</label>
                             <textarea v-model="forms.routine.notes" placeholder="Additional details..." class="glass-input w-full p-3 rounded-lg" rows="2"></textarea>
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Quote (Optional)</label>
+                            <input v-model="forms.routine.quote" placeholder="Memorable line or comment" class="glass-input w-full p-3 rounded-lg">
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Follow-up Needed</label>
+                            <input v-model="forms.routine.follow_up" placeholder="Next steps or leads" class="glass-input w-full p-3 rounded-lg">
                          </div>
                          <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Add Routine Activity</button>
                      </form>
@@ -1399,11 +1430,11 @@ function serveHtml() {
         
         // Forms
         const forms = reactive({
-            subject: {},
+            subject: { hometown: '', previous_locations: '' },
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
             event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
             rel: { subjectB: '', type: '' },
-            routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
+            routine: { activity: '', location: '', schedule: '', duration: '', notes: '', quote: '', follow_up: '' },
             mediaLink: { url: '', description: '' },
             avatarLink: { url: '' },
             share: { durationMinutes: 5 }
@@ -1814,11 +1845,11 @@ function serveHtml() {
                     source: intel.source || ''
                 };
             } else if (type === 'add-subject') {
-                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
+                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id'), hometown: '', previous_locations: '' };
             } else if (type === 'edit-profile') {
                 forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
             } else if (type === 'add-routine') {
-                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '' };
+                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '', quote: '', follow_up: '' };
             } else if (type === 'add-media-link') {
                 forms.mediaLink = { url: '', description: '' };
             } else if (type === 'avatar-link') {
@@ -1946,12 +1977,12 @@ function serveSharedHtml(token) {
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <style>
-    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.07), transparent 25%), radial-gradient(circle at 80% 0%, rgba(16,185,129,0.06), transparent 25%), #020617; color: #e2e8f0; }
-    .content-shell { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
-    @media (min-width: 768px) { .content-shell { padding: 2.25rem 2.5rem; } }
-    .glass-panel { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border: 1px solid rgba(148, 163, 184, 0.2); box-shadow: 0 20px 60px rgba(0,0,0,0.35); }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #0b1220; color: #e2e8f0; }
+    .content-shell { max-width: 1000px; margin: 0 auto; padding: 1.25rem; }
+    @media (min-width: 768px) { .content-shell { padding: 2rem 2.25rem; } }
+    .glass-panel { background: transparent; border: 0; box-shadow: none; }
     .pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.02em; }
-    .info-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.75rem; background: rgba(255,255,255,0.02); }
+    .info-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.35rem 0; border-bottom: 1px dashed rgba(148,163,184,0.3); }
     .info-label { color: #94a3b8; font-size: 0.8rem; }
     .info-value { text-align: right; word-break: break-word; color: #e2e8f0; font-weight: 600; }
     .timeline { position: relative; padding-left: 1.5rem; }
@@ -1984,26 +2015,23 @@ function serveSharedHtml(token) {
     <div id="status" class="glass-panel rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
 
     <section id="content" class="hidden space-y-5 sm:space-y-6 animate-[fadeIn_0.4s_ease]">
-      <div class="glass-panel rounded-3xl p-5 md:p-6 flex flex-col md:flex-row gap-5 items-start">
-        <div class="relative">
-          <img id="avatar" class="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl object-cover border border-slate-800 shadow-xl" alt="Subject portrait">
-          <span id="statusBadge" class="pill absolute -bottom-3 left-2 bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">Active</span>
-        </div>
+      <div class="glass-panel rounded-3xl p-2 md:p-0 flex flex-col md:flex-row gap-4 items-start">
+        <img id="avatar" class="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border border-slate-800" alt="Subject portrait">
         <div class="flex-1 space-y-2">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
               <p class="text-xs uppercase text-slate-400">Subject</p>
               <h2 id="name" class="text-3xl font-bold text-white"></h2>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <span id="age" class="pill bg-indigo-500/20 text-indigo-200 border border-indigo-400/40"></span>
-              <span id="lastSighted" class="pill bg-cyan-500/15 text-cyan-200 border border-cyan-400/30"></span>
+            <div class="flex flex-wrap gap-2 text-xs text-slate-400">
+              <span id="age" class="pill bg-slate-800/50 text-slate-200 border border-slate-700"></span>
+              <span id="lastSighted" class="pill bg-slate-800/50 text-slate-300 border border-slate-700"></span>
             </div>
           </div>
           <p id="occupation" class="text-sm text-slate-300"></p>
-          <div class="flex flex-wrap gap-2 text-sm text-slate-400">
-            <span class="badge"><i class="fa-solid fa-location-dot"></i><span id="location">—</span></span>
-            <span class="badge"><i class="fa-solid fa-globe"></i><span id="nationality">—</span></span>
+          <div class="flex flex-wrap gap-2 text-sm text-slate-300">
+            <span class="inline-flex items-center gap-1"><i class="fa-solid fa-location-dot text-slate-500"></i><span id="location">—</span></span>
+            <span class="inline-flex items-center gap-1"><i class="fa-solid fa-globe text-slate-500"></i><span id="nationality">—</span></span>
           </div>
         </div>
       </div>
@@ -2120,12 +2148,14 @@ function serveSharedHtml(token) {
         document.getElementById('occupation').textContent = data.occupation || 'Occupation unknown';
         document.getElementById('location').textContent = data.location || 'Location unknown';
         document.getElementById('nationality').textContent = data.nationality || '—';
-        document.getElementById('statusBadge').textContent = data.status || 'Active';
         document.getElementById('age').textContent = data.age ? data.age + ' yrs' : (data.dob || 'Age unknown');
         document.getElementById('lastSighted').textContent = data.last_sighted ? 'Last sighted ' + data.last_sighted : 'Last sighting unknown';
         setAvatar(data.avatar_path);
 
         document.getElementById('core').innerHTML =
+          infoRow('Location', data.location || '—') +
+          infoRow('Hometown', data.hometown || '—') +
+          infoRow('Previous Locations', data.previous_locations || '—') +
           infoRow('DOB', data.dob || '—') +
           infoRow('Status', data.status || 'Active', true) +
           infoRow('MBTI', data.mbti || '—') +
@@ -2146,8 +2176,10 @@ function serveSharedHtml(token) {
 
         addList(document.getElementById('routine'), data.routine || [], 'No routine observations captured.', (r) => {
           const card = document.createElement('div');
-          card.className = 'p-3 bg-slate-900/60 rounded-xl border border-slate-800';
-          card.innerHTML = '<div class="flex items-center justify-between"><p class="text-white font-semibold">' + r.activity + '</p><span class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">' + (r.schedule || '—') + '</span></div><p class="text-xs text-indigo-200 mt-1"><i class="fa-solid fa-location-dot mr-1"></i>' + (r.location || '—') + ' <span class="text-slate-500">•</span> ' + (r.duration || '—') + '</p><p class="text-sm text-slate-300 mt-1">' + (r.notes || '') + '</p>';
+          card.className = 'p-2 rounded-lg';
+          const quoteBlock = r.quote ? '<p class="text-sm text-indigo-200 mt-1 italic">"' + r.quote + '"</p>' : '';
+          const follow = r.follow_up ? '<p class="text-xs text-amber-200 mt-1">Follow-up: ' + r.follow_up + '</p>' : '';
+          card.innerHTML = '<div class="flex items-center justify-between"><p class="text-white font-semibold">' + r.activity + '</p><span class="text-[10px] text-slate-400">' + (r.schedule || '—') + '</span></div><p class="text-xs text-indigo-200 mt-1"><i class="fa-solid fa-location-dot mr-1"></i>' + (r.location || '—') + ' <span class="text-slate-500">•</span> ' + (r.duration || '—') + '</p><p class="text-sm text-slate-300 mt-1">' + (r.notes || '') + '</p>' + quoteBlock + follow;
           return card;
         });
 
@@ -2266,16 +2298,18 @@ export default {
             if (req.method === 'POST') {
                 const p = await req.json();
                 await env.DB.prepare(`INSERT INTO subjects (
-                    admin_id, full_name, occupation, location, dob, status, created_at, 
-                    height, weight, eye_color, hair_color, blood_type, identifying_marks, 
-                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality, 
+                    admin_id, full_name, occupation, location, hometown, previous_locations, dob, status, created_at,
+                    height, weight, eye_color, hair_color, blood_type, identifying_marks,
+                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality,
                     education, religion, contact, social_links, digital_identifiers
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
                     .bind(
-                        p.adminId, 
-                        p.full_name || 'Unknown Subject', 
-                        p.occupation || null, 
+                        p.adminId,
+                        p.full_name || 'Unknown Subject',
+                        p.occupation || null,
                         p.location || null,
+                        p.hometown || null,
+                        p.previous_locations || null,
                         p.dob || null,
                         p.status || 'Active',
                         isoTimestamp(),
@@ -2353,8 +2387,8 @@ export default {
         // Routine
         if (path === '/api/routine') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', isoTimestamp()).run();
+            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, quote, follow_up, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', p.quote || '', p.follow_up || '', isoTimestamp()).run();
             return response({ success: true });
         }
 
