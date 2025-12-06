@@ -72,6 +72,16 @@ function safeVal(v) {
   return v === undefined || v === '' ? null : v;
 }
 
+function coerceLatLng(record) {
+  if (!record) return record;
+  const toNum = (val) => (val === null || val === undefined ? null : Number(val));
+  return {
+    ...record,
+    lat: toNum(record.lat),
+    lng: toNum(record.lng),
+  };
+}
+
 // --- 2. RESPONSE HELPERS ---
 
 function jsonResponse(data, status = 200) {
@@ -323,7 +333,7 @@ async function handleGetSharedSubject(db, token) {
   return jsonResponse({
     ...subject,
     interactions: interactions.results,
-    locations: locations.results,
+    locations: (locations.results || []).map(coerceLatLng),
     media: media.results,
     meta: {
       remaining_seconds: Math.floor(remaining),
@@ -369,6 +379,42 @@ async function handleShareRevoke(db, token) {
   } catch (e) {
     return errorResponse('Failed to revoke link', 500, e.message);
   }
+}
+
+async function handleCreateLocation(db, payload) {
+  const errors = [];
+
+  const subjectId = Number(payload.subject_id);
+  if (!subjectId || Number.isNaN(subjectId)) errors.push('Valid subject_id is required');
+  if (!payload.name || !payload.name.trim()) errors.push('Location name is required');
+
+  const lat = Number(payload.lat);
+  const lng = Number(payload.lng);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) errors.push('Valid coordinates are required');
+
+  if (errors.length) return errorResponse(errors.join('; '), 400);
+
+  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
+  if (!subject) return errorResponse('Subject not found or archived', 404);
+
+  const createdAt = isoTimestamp();
+  await db.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(subjectId, payload.name.trim(), safeVal(payload.address), lat, lng, safeVal(payload.type) || 'pin', safeVal(payload.notes), createdAt)
+    .run();
+
+  return jsonResponse({
+    success: true,
+    location: {
+      subject_id: subjectId,
+      name: payload.name.trim(),
+      address: safeVal(payload.address),
+      lat,
+      lng,
+      type: safeVal(payload.type) || 'pin',
+      notes: safeVal(payload.notes),
+      created_at: createdAt,
+    },
+  });
 }
 
 // --- NEW SHARING LOGIC END ---
@@ -1598,9 +1644,7 @@ export default {
         }
 
         if (path === '/api/location') {
-          await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, created_at) VALUES (?,?,?,?,?,?,?)')
-            .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, isoTimestamp()).run();
-          return jsonResponse({ success: true });
+          return handleCreateLocation(env.DB, p);
         }
 
         if (path === '/api/intel') {
@@ -1701,7 +1745,7 @@ async function handleGetSubjectFull(db, id) {
     intel: intel.results,
     relationships: relationships.results,
     interactions: interactions.results,
-    locations: locations.results
+    locations: (locations.results || []).map(coerceLatLng)
   });
 }
 
@@ -1713,7 +1757,7 @@ async function handleGetMapData(db, adminId) {
         WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
     `;
   const res = await db.prepare(query).bind(adminId).all();
-  return jsonResponse(res.results);
+  return jsonResponse((res.results || []).map(coerceLatLng));
 }
 
 async function handleGetSubjectSuggestions(db, adminId) {
