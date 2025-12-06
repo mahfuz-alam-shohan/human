@@ -111,6 +111,8 @@ class Database {
     for (const stmt of statements) {
       try { await this.db.prepare(stmt).run(); } catch (e) { /* Ignore exists errors */ }
     }
+
+    await this.ensureShareMigrations();
   }
 
   async nuke() {
@@ -121,6 +123,31 @@ class Database {
     }
     await this.db.prepare("PRAGMA foreign_keys = ON;").run();
     await this.ensureSchema();
+  }
+
+  async ensureShareMigrations() {
+    try {
+      const info = await this.db.prepare("PRAGMA table_info('subject_shares')").all();
+      const cols = new Set((info?.results || []).map((c) => c.name));
+
+      const maybeAddColumn = async (name, ddl) => {
+        if (!cols.has(name)) {
+          try {
+            await this.db.prepare(ddl).run();
+          } catch (e) {
+            console.warn(`Migration skipped for ${name}:`, e?.message || e);
+          }
+        }
+      };
+
+      await maybeAddColumn('views', 'ALTER TABLE subject_shares ADD COLUMN views INTEGER DEFAULT 0');
+      await maybeAddColumn('started_at', 'ALTER TABLE subject_shares ADD COLUMN started_at TEXT');
+      await maybeAddColumn('duration_seconds', 'ALTER TABLE subject_shares ADD COLUMN duration_seconds INTEGER');
+      await maybeAddColumn('is_active', 'ALTER TABLE subject_shares ADD COLUMN is_active INTEGER DEFAULT 1');
+      await maybeAddColumn('created_at', 'ALTER TABLE subject_shares ADD COLUMN created_at TEXT');
+    } catch (e) {
+      console.warn('Share table migration check failed:', e?.message || e);
+    }
   }
 }
 
