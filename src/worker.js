@@ -177,7 +177,6 @@ async function nukeDatabase(db, bucket) {
     for(const t of tables) {
         try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
-    // Note: Bucket cleanup omitted for safety in this update, focusing on DB reset
     await db.prepare("PRAGMA foreign_keys = ON;").run();
     schemaInitialized = false; 
     return true;
@@ -225,7 +224,7 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
         db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.id as target_real_id
             FROM subject_relationships r
             LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
@@ -318,83 +317,145 @@ async function handleGetSharedSubject(db, token) {
 // --- Frontend HTML ---
 
 function serveSharedHtml(token) {
-    // Shared view HTML - kept minimal for brevity, ensure social links are rendered if needed
     const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-50">
+<html lang="en" class="h-full bg-slate-100">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>People OS | Secure Share</title>
+  <title>Subject Profile | Confidential</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <style>
-    body { font-family: 'Inter', sans-serif; }
-    .glass { background: white; border: 1px solid #e5e7eb; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    body { font-family: 'Inter', sans-serif; background-image: url('https://www.transparenttextures.com/patterns/carbon-fibre.png'); }
+    .glass { background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
     [v-cloak] { display: none; }
+    .timeline-line { position: absolute; left: 15px; top: 30px; bottom: 0; width: 2px; background: #e2e8f0; z-index: 0; }
   </style>
 </head>
-<body class="bg-gray-100 h-full">
-  <div id="app" v-cloak class="h-full flex flex-col max-w-2xl mx-auto bg-white shadow-xl">
-    <div v-if="loading" class="flex-1 flex items-center justify-center flex-col gap-4">
+<body class="h-full overflow-hidden text-slate-800">
+  <div id="app" v-cloak class="h-full flex flex-col max-w-3xl mx-auto bg-white shadow-2xl relative overflow-hidden">
+    
+    <div v-if="loading" class="flex-1 flex flex-col items-center justify-center gap-4 bg-slate-50">
         <div class="animate-spin text-blue-600 text-3xl"><i class="fa-solid fa-circle-notch"></i></div>
-        <div class="text-xs font-bold uppercase tracking-widest text-gray-400">Decrypting...</div>
+        <div class="text-xs font-bold uppercase tracking-widest text-slate-400">Authenticating Secure Link...</div>
     </div>
-    <div v-else-if="error" class="flex-1 flex items-center justify-center p-8 text-center">
-        <div>
-            <div class="text-red-500 text-5xl mb-4"><i class="fa-solid fa-lock"></i></div>
-            <h1 class="text-xl font-bold text-gray-900 mb-2">{{ error }}</h1>
+
+    <div v-else-if="error" class="flex-1 flex items-center justify-center p-8 text-center bg-slate-50">
+        <div class="max-w-md">
+            <div class="text-red-500 text-6xl mb-6"><i class="fa-solid fa-lock"></i></div>
+            <h1 class="text-2xl font-black text-slate-900 mb-2 uppercase tracking-tight">Access Denied</h1>
+            <p class="text-slate-500 text-sm font-medium">{{ error }}</p>
         </div>
     </div>
-    <div v-else class="flex-1 flex flex-col h-full overflow-hidden">
-        <div class="bg-gray-900 text-white p-4 flex justify-between items-center shrink-0">
-            <div class="flex items-center gap-2"><i class="fa-solid fa-shield-halved text-green-400"></i><span class="font-bold text-sm tracking-wide uppercase">Secure View</span></div>
-            <div class="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300" :class="{'text-red-400 animate-pulse': timer < 60}">{{ formatTime(timer) }}</div>
-        </div>
-        <div class="flex-1 overflow-y-auto p-6 space-y-6">
-            <div class="flex items-start gap-4">
-                 <div class="w-20 h-20 bg-gray-200 rounded-xl overflow-hidden border-4 border-gray-100 shadow-sm shrink-0">
-                    <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
+
+    <div v-else class="flex-1 flex flex-col h-full overflow-hidden relative">
+        <!-- Banner -->
+        <div class="h-32 bg-gradient-to-r from-slate-900 to-slate-800 shrink-0 relative">
+            <div class="absolute top-4 right-4 flex items-center gap-3">
+                <div class="bg-black/30 backdrop-blur px-3 py-1 rounded-full text-xs font-mono text-emerald-400 border border-emerald-500/30 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    SECURE CONNECTION
                 </div>
-                <div>
-                    <h1 class="text-2xl font-black text-gray-900 leading-tight">{{ data.full_name }}</h1>
-                    <div class="text-sm text-gray-500 font-medium mb-2">{{ data.occupation || 'Unknown' }}</div>
-                    <div class="flex flex-wrap gap-2">
-                         <span class="px-2 py-1 rounded bg-gray-100 text-gray-600 text-[10px] font-bold uppercase">{{ data.nationality }}</span>
-                         <span class="px-2 py-1 rounded text-[10px] font-bold uppercase" :class="getThreatColor(data.threat_level, true)">{{ data.threat_level }} Priority</span>
-                    </div>
+                <div class="bg-white/10 px-3 py-1 rounded-full text-xs font-mono text-white">
+                    <i class="fa-regular fa-clock mr-1"></i> {{ formatTime(timer) }}
                 </div>
             </div>
-            
-             <!-- Socials in Share View -->
-             <div v-if="data.social_links" class="flex flex-wrap gap-2">
-                <a v-for="link in parseSocials(data.social_links)" :href="link.url" target="_blank" class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-blue-600 hover:text-white transition-colors">
-                    <i :class="link.icon"></i>
-                </a>
-             </div>
+        </div>
 
-            <div class="space-y-6">
-                <div class="glass p-5">
-                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-3">Activity Log</h3>
-                    <div v-if="data.interactions.length === 0" class="text-sm text-gray-400 italic">No recent activity.</div>
-                    <div v-for="ix in data.interactions" class="mb-3 last:mb-0 border-l-2 border-blue-200 pl-3 pb-1">
-                        <div class="flex justify-between items-baseline mb-1">
-                            <span class="text-xs font-bold text-blue-600 uppercase">{{ ix.type }}</span>
-                            <span class="text-[10px] text-gray-400">{{ new Date(ix.date).toLocaleDateString() }}</span>
+        <div class="flex-1 overflow-y-auto bg-slate-50">
+            <div class="px-8 pb-8 -mt-16">
+                <!-- Header Card -->
+                <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-6 mb-6 relative">
+                    <div class="flex flex-col md:flex-row gap-6 items-start">
+                        <div class="w-32 h-32 bg-slate-200 rounded-xl border-4 border-white shadow-md overflow-hidden shrink-0 relative -mt-16 md:mt-0">
+                            <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
                         </div>
-                        <p class="text-sm text-gray-700 leading-snug">{{ ix.conclusion }}</p>
+                        <div class="flex-1 pt-2">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h1 class="text-3xl font-black text-slate-900 leading-none mb-2">{{ data.full_name }}</h1>
+                                    <div class="text-sm font-bold text-slate-500 uppercase tracking-wide mb-3">{{ data.occupation || 'No Occupation Listed' }}</div>
+                                </div>
+                                <div class="px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest border" :class="getThreatColor(data.threat_level, true)">
+                                    {{ data.threat_level }} Priority
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-2 gap-4 text-xs mt-2 border-t border-slate-100 pt-4">
+                                <div><span class="text-slate-400 font-bold uppercase">Nationality</span> <br> <span class="font-medium text-slate-800">{{ data.nationality || 'Unknown' }}</span></div>
+                                <div><span class="text-slate-400 font-bold uppercase">Affiliation</span> <br> <span class="font-medium text-slate-800">{{ data.ideology || 'None' }}</span></div>
+                            </div>
+
+                            <!-- Socials -->
+                            <div v-if="data.social_links" class="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
+                                <a v-for="link in parseSocials(data.social_links)" :href="link.url" target="_blank" class="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-blue-600 hover:text-white transition-all transform hover:-translate-y-1" :title="link.url">
+                                    <i :class="link.icon"></i>
+                                </a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                 <div class="glass p-5">
-                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-3">Media</h3>
-                    <div v-if="data.media.length === 0" class="text-sm text-gray-400 italic">No attachments.</div>
-                    <div class="grid grid-cols-2 gap-2">
-                         <a v-for="m in data.media" :href="resolveImg(m.object_key)" target="_blank" class="block bg-gray-50 rounded-lg p-3 text-center hover:bg-blue-50 transition-colors border border-gray-100">
-                            <i class="fa-solid fa-file-arrow-down text-xl text-gray-400 mb-2"></i>
-                            <div class="text-[10px] font-bold text-gray-700 truncate">{{ m.description }}</div>
-                         </a>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Left Column -->
+                    <div class="space-y-6">
+                        <div class="glass p-5">
+                            <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left"></i> Interaction Log</h3>
+                            <div v-if="data.interactions.length === 0" class="text-sm text-slate-400 italic text-center py-4">No recorded history.</div>
+                            <div class="space-y-0 relative">
+                                <div v-for="(ix, i) in data.interactions" :key="i" class="relative pl-8 pb-6 last:pb-0">
+                                    <div class="absolute left-[11px] top-[6px] w-2 h-2 rounded-full bg-blue-500 border-2 border-white z-10 shadow-sm"></div>
+                                    <div class="timeline-line" v-if="i !== data.interactions.length - 1"></div>
+                                    
+                                    <div class="flex justify-between items-baseline mb-1">
+                                        <span class="text-xs font-bold text-blue-600 uppercase">{{ ix.type }}</span>
+                                        <span class="text-[10px] font-mono text-slate-400">{{ new Date(ix.date).toLocaleDateString() }}</span>
+                                    </div>
+                                    <p class="text-sm text-slate-700 leading-snug bg-slate-50 p-3 rounded-lg border border-slate-100">{{ ix.conclusion || 'No conclusion recorded.' }}</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
+
+                    <!-- Right Column -->
+                    <div class="space-y-6">
+                        <div class="glass p-5">
+                            <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><i class="fa-solid fa-location-dot"></i> Known Locations</h3>
+                            <div v-if="data.locations.length === 0" class="text-sm text-slate-400 italic text-center py-4">No locations mapped.</div>
+                            <div class="space-y-3">
+                                <div v-for="loc in data.locations" class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                    <div class="w-8 h-8 rounded-full bg-white flex items-center justify-center text-blue-500 shadow-sm border border-slate-100 shrink-0"><i class="fa-solid fa-map-pin"></i></div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-bold text-slate-900 text-xs truncate">{{ loc.name }}</div>
+                                        <div class="text-[10px] text-slate-500 truncate">{{ loc.address }}</div>
+                                    </div>
+                                    <a :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="text-slate-400 hover:text-blue-600 px-2"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="glass p-5">
+                            <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><i class="fa-solid fa-paperclip"></i> Media & Files</h3>
+                            <div v-if="data.media.length === 0" class="text-sm text-slate-400 italic text-center py-4">No attachments found.</div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <a v-for="m in data.media" :href="resolveImg(m.object_key)" target="_blank" class="group block bg-slate-50 rounded-lg p-3 border border-slate-100 hover:border-blue-300 hover:shadow-md transition-all">
+                                    <div class="flex items-center gap-3">
+                                        <div class="text-2xl text-slate-300 group-hover:text-blue-500 transition-colors"><i class="fa-solid fa-file"></i></div>
+                                        <div class="min-w-0">
+                                            <div class="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-700">{{ m.description }}</div>
+                                            <div class="text-[9px] text-slate-400 uppercase">{{ m.content_type.split('/')[1] || 'FILE' }}</div>
+                                        </div>
+                                    </div>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-8 text-center border-t border-slate-200 pt-4">
+                    <p class="text-[10px] text-slate-400 font-mono uppercase">Generated by PeopleOS Intelligence Platform &bull; {{ new Date().getFullYear() }}</p>
                 </div>
             </div>
         </div>
@@ -419,8 +480,13 @@ function serveSharedHtml(token) {
             const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/cubes.png';
             
             const getThreatColor = (l, isBg = false) => {
-                const colors = { 'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600', 'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600', 'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600', 'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600' };
-                return colors[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500');
+                const colors = { 
+                    'Low': isBg ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'text-emerald-600', 
+                    'Medium': isBg ? 'bg-amber-50 text-amber-700 border-amber-200' : 'text-amber-600', 
+                    'High': isBg ? 'bg-orange-50 text-orange-700 border-orange-200' : 'text-orange-600', 
+                    'Critical': isBg ? 'bg-red-50 text-red-700 border-red-200' : 'text-red-600' 
+                };
+                return colors[l] || (isBg ? 'bg-slate-100 text-slate-700' : 'text-slate-500');
             };
 
              const parseSocials = (str) => {
@@ -753,8 +819,30 @@ function serveHtml() {
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Relationship Matrix</h3>
                             <button @click="openModal('add-rel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">Add Connection</button>
                         </div>
-                        <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden min-h-[400px]">
-                            <div id="relNetwork" class="absolute inset-0"></div>
+                        
+                        <!-- Graph Container with Sidebar List -->
+                        <div class="flex-1 flex gap-4 overflow-hidden">
+                            <!-- Visual Graph -->
+                            <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden min-h-[400px]">
+                                <div id="relNetwork" class="absolute inset-0"></div>
+                            </div>
+                            
+                            <!-- Relationship List Panel -->
+                            <div class="w-64 glass p-4 overflow-y-auto flex flex-col shrink-0">
+                                <h4 class="text-xs font-bold text-gray-400 uppercase mb-3">Known Connections</h4>
+                                <div v-if="selected.relationships.length === 0" class="text-xs text-gray-400 italic">No connections yet.</div>
+                                <div class="space-y-2">
+                                    <div v-for="rel in selected.relationships" :key="rel.id" class="flex items-center gap-2 p-2 rounded bg-white border border-gray-100 shadow-sm hover:border-blue-200 transition-colors cursor-pointer" @click="rel.target_real_id ? viewSubject(rel.target_real_id) : null">
+                                        <div class="w-8 h-8 rounded-full bg-gray-200 overflow-hidden shrink-0">
+                                            <img :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-xs font-bold text-gray-900 truncate">{{ rel.target_name }}</div>
+                                            <div class="text-[9px] text-blue-600 uppercase font-medium">{{ rel.relationship_type }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
