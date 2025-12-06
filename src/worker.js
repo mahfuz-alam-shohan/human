@@ -17,6 +17,17 @@ function sanitizeFileName(name) {
   return (name || 'file').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
 
+function calculateAge(dob) {
+    if (!dob) return null;
+    const birthDate = new Date(dob);
+    if (isNaN(birthDate.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
+    return age >= 0 ? age : null;
+}
+
 function generateToken() {
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
@@ -1134,6 +1145,7 @@ function serveHtml() {
 
         const viewSubject = async (id) => {
             selected.value = await api('/subjects/'+id);
+            if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob);
             currentTab.value = 'detail'; subTab.value = 'profile'; updateUrl();
         };
 
@@ -1158,6 +1170,7 @@ function serveHtml() {
             const isEdit = modal.active === 'edit-profile';
             const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
             const method = isEdit ? 'PATCH' : 'POST';
+            if (forms.subject.dob) forms.subject.age = calculateAge(forms.subject.dob);
             await api(ep, { method, body: JSON.stringify(forms.subject) });
             if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData();
             closeModal();
@@ -1200,11 +1213,16 @@ function serveHtml() {
 
         const createShareLink = async () => {
             try {
+                if (!selected.value || !selected.value.id) throw new Error('No profile selected');
                 const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
                 forms.share.result = res.url;
                 fetchShareLinks(); // Refresh list immediately
             } catch(e) { console.error("Share error", e); alert("Failed to create share link: " + e.message); }
         };
+
+        watch(() => forms.subject.dob, (val) => {
+            forms.subject.age = calculateAge(val);
+        });
 
         let mapInstance = null, pickerMapInstance = null;
 
@@ -1277,6 +1295,7 @@ function serveHtml() {
             Object.keys(errors).forEach(k => delete errors[k]);
             if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low' };
             if(type === 'edit-profile') forms.subject = { ...selected.value };
+            if(forms.subject.dob) forms.subject.age = calculateAge(forms.subject.dob);
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], null, false, true)); }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
