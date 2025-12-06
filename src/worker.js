@@ -2477,7 +2477,7 @@ export default {
                     height, weight, eye_color, hair_color, blood_type, identifying_marks,
                     mbti, alignment, habits, notes, last_sighted, age, gender, nationality,
                     education, religion, contact, social_links, digital_identifiers
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
                     .bind(
                         p.adminId,
                         p.full_name || 'Unknown Subject',
