@@ -201,18 +201,18 @@ async function handleGetGraph(db, adminId) {
     return response({ nodes: subjects.results, edges: rels.results });
 }
 
-async function handleGetSubjectFull(db, id) {
+async function getSubjectWithDetails(db, id) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-    if (!subject) return errorResponse("Subject not found", 404);
+    if (!subject) return null;
 
     const [media, dataPoints, events, relationships, routine] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         // Updated to fetch relationships where this subject is EITHER side A or B
         db.prepare(`
-            SELECT 
-              r.*, 
+            SELECT
+              r.*,
               COALESCE(s.full_name, r.custom_name) as target_name,
               COALESCE(s.avatar_path, r.custom_avatar) as target_avatar,
               CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END as target_id
@@ -223,14 +223,20 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
-    return response({ 
-        ...subject, 
-        media: media.results, 
-        dataPoints: dataPoints.results, 
-        events: events.results, 
+    return {
+        ...subject,
+        media: media.results,
+        dataPoints: dataPoints.results,
+        events: events.results,
         relationships: relationships.results,
         routine: routine.results
-    });
+    };
+}
+
+async function handleGetSubjectFull(db, id) {
+    const data = await getSubjectWithDetails(db, id);
+    if (!data) return errorResponse("Subject not found", 404);
+    return response(data);
 }
 
 async function handleUpdateSubject(req, db, id) {
@@ -347,16 +353,11 @@ async function handleGetSharedSubject(db, token) {
         };
     }
 
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND is_archived = 0').bind(link.subject_id).first();
-    if (!subject) {
+    const payload = await getSubjectWithDetails(db, link.subject_id);
+    if (!payload || payload.is_archived) {
         await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
         return errorResponse('Subject not found', 404);
     }
-
-    const fullResp = await handleGetSubjectFull(db, subject.id);
-    if (!fullResp.ok) return fullResp; // Propagate underlying failure status to caller
-
-    const payload = await fullResp.json();
 
     // Remove sensitive/internal metadata before sharing
     const {
