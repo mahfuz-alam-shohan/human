@@ -99,7 +99,7 @@ class Database {
 
     const statements = [
       `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, sex TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
@@ -113,6 +113,7 @@ class Database {
     }
 
     await this.ensureShareMigrations();
+    await this.ensureSubjectMigrations();
   }
 
   async nuke() {
@@ -147,6 +148,22 @@ class Database {
       await maybeAddColumn('created_at', 'ALTER TABLE subject_shares ADD COLUMN created_at TEXT');
     } catch (e) {
       console.warn('Share table migration check failed:', e?.message || e);
+    }
+  }
+
+  async ensureSubjectMigrations() {
+    try {
+      const info = await this.db.prepare("PRAGMA table_info('subjects')").all();
+      const cols = new Set((info?.results || []).map((c) => c.name));
+      if (!cols.has('sex')) {
+        try {
+          await this.db.prepare('ALTER TABLE subjects ADD COLUMN sex TEXT').run();
+        } catch (e) {
+          console.warn('Sex column migration skipped:', e?.message || e);
+        }
+      }
+    } catch (e) {
+      console.warn('Subject table migration check failed:', e?.message || e);
     }
   }
 }
@@ -244,7 +261,7 @@ async function handleGetSharedSubject(db, token) {
   // 4. Fetch Restricted Subject Data (No hidden notes, strictly public fields)
   const subject = await db.prepare(`
     SELECT full_name, alias, occupation, nationality, ideology, threat_level,
-           avatar_path, status, social_links, age, gender, height, weight,
+           avatar_path, status, social_links, age, sex, gender, height, weight,
            identifying_marks, last_sighted, created_at
     FROM subjects WHERE id = ?
   `).bind(link.subject_id).first();
@@ -385,7 +402,7 @@ function serveSharedHtml(token) {
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-zinc-800 pt-6">
                             <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Affiliation</div><div class="text-zinc-300 font-medium text-sm">{{ data.ideology || 'N/A' }}</div></div>
                             <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Nationality</div><div class="text-zinc-300 font-medium text-sm">{{ data.nationality || 'N/A' }}</div></div>
-                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Age / Sex</div><div class="text-zinc-300 font-medium text-sm">{{ data.age || '?' }} / {{ data.gender || '?' }}</div></div>
+                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Age / Sex</div><div class="text-zinc-300 font-medium text-sm">{{ data.age || '?' }} / {{ data.sex || data.gender || '?' }}</div></div>
                             <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Clearance</div><div class="text-xs font-bold px-2 py-0.5 inline-block rounded" :class="getThreatClass(data.threat_level)">{{ data.threat_level }}</div></div>
                         </div>
                     </div>
@@ -729,13 +746,14 @@ function serveHtml() {
                                         </div>
                                     </div>
                                 </div>
-                                <div class="glass p-6">
-                                    <h3 class="text-sm text-gray-900 font-bold uppercase mb-4">Physical Attributes</h3>
-                                    <div class="grid grid-cols-3 gap-4 text-center text-sm mb-4">
-                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div>{{selected.height || '--'}}</div>
-                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div>{{selected.weight || '--'}}</div>
-                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div>{{selected.age || '--'}}</div>
-                                    </div>
+                                  <div class="glass p-6">
+                                      <h3 class="text-sm text-gray-900 font-bold uppercase mb-4">Physical Attributes</h3>
+                                      <div class="grid grid-cols-4 gap-4 text-center text-sm mb-4">
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div>{{selected.height || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div>{{selected.weight || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Sex</div>{{selected.sex || selected.gender || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div>{{selected.age || '--'}}</div>
+                                      </div>
                                     <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
                                         <div class="text-gray-400 text-xs font-bold mb-1 uppercase">Distinguishing Features</div>
                                         <div class="text-gray-700 text-sm">{{selected.identifying_marks || 'None listed'}}</div>
@@ -890,7 +908,11 @@ function serveHtml() {
                     </div>
                     <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
                     <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-3 gap-4">
+                        <select v-model="forms.subject.sex" class="glass-input p-3 text-sm bg-white">
+                            <option disabled value="">Sex</option>
+                            <option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option>
+                        </select>
                         <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
                             <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                         </select>
@@ -1068,8 +1090,8 @@ function serveHtml() {
         const locationSearchResults = ref([]);
         const warMapSearch = ref('');
 
-        const forms = reactive({
-            subject: {},
+          const forms = reactive({
+              subject: { sex: '' },
             interaction: {},
             location: {},
             intel: {},
@@ -1261,7 +1283,7 @@ function serveHtml() {
             modal.active = type;
             const aid = localStorage.getItem('admin_id');
             Object.keys(errors).forEach(k => delete errors[k]);
-            if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low' };
+              if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low', sex: '' };
             if(type === 'edit-profile') forms.subject = { ...selected.value };
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
@@ -1375,8 +1397,8 @@ export default {
         }
         if (req.method === 'POST') {
           const p = await safeJson(req);
-          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.avatar_path), isoTimestamp()).run();
+          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, modus_operandi, weakness, dob, age, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.sex), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.avatar_path), isoTimestamp()).run();
           return jsonResponse({ success: true });
         }
       }
