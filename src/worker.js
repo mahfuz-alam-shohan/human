@@ -140,39 +140,49 @@ async function handleLogin(req, db) {
 
 async function handleShareCreate(req, db, origin) {
   const body = await safeJson(req);
+
+  // Basic validation
   if (!body.subjectId) return errorResponse('Subject ID required', 400);
+  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(body.subjectId).first();
+  if (!subject) return errorResponse('Subject not found or archived', 404);
 
   // Validate duration: Min 1 minute, Max 1 week (10080 mins)
-  const minutes = Math.max(1, Math.min(body.durationMinutes || 30, 10080)); 
+  const requestedMinutes = Number.parseInt(body.durationMinutes, 10);
+  const minutes = Math.max(1, Math.min(Number.isNaN(requestedMinutes) ? 30 : requestedMinutes, 10080));
   const durationSeconds = minutes * 60;
   const token = generateToken();
+  const createdAt = isoTimestamp();
 
   await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, is_active, views, created_at) VALUES (?, ?, ?, 1, 0, ?)')
-    .bind(body.subjectId, token, durationSeconds, isoTimestamp()).run();
-    
-  return jsonResponse({ url: `${origin}/share/${token}` });
+    .bind(subject.id, token, durationSeconds, createdAt).run();
+
+  const shareUrl = new URL(`/share/${token}`, origin).toString();
+  const expiresAt = new Date(new Date(createdAt).getTime() + durationSeconds * 1000).toISOString();
+
+  return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201);
 }
 
 async function handleGetSharedSubject(db, token) {
   // 1. Fetch Link Record
   const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
-  
+
   // 2. Validate Link Existence & State
   if (!link) return errorResponse('INVALID LINK', 404);
   if (!link.is_active) return errorResponse('LINK EXPIRED', 410);
 
   let remaining = link.duration_seconds;
   const now = new Date();
+  const startTime = link.started_at ? new Date(link.started_at) : now;
+  const expiresAt = new Date(startTime.getTime() + link.duration_seconds * 1000);
 
   // 3. Handle Timer Logic
   if (!link.started_at) {
     // First view: Start the clock
     await db.prepare('UPDATE subject_shares SET started_at = ?, views = 1 WHERE id = ?')
-      .bind(now.toISOString(), link.id).run();
+      .bind(startTime.toISOString(), link.id).run();
   } else {
     // Subsequent view: Calculate remaining time
-    const startedAt = new Date(link.started_at);
-    const elapsedSeconds = (now.getTime() - startedAt.getTime()) / 1000;
+    const elapsedSeconds = (now.getTime() - startTime.getTime()) / 1000;
     remaining = link.duration_seconds - elapsedSeconds;
 
     // Check Expiration
@@ -187,9 +197,9 @@ async function handleGetSharedSubject(db, token) {
 
   // 4. Fetch Restricted Subject Data (No hidden notes, strictly public fields)
   const subject = await db.prepare(`
-    SELECT full_name, alias, occupation, nationality, ideology, threat_level, 
-           avatar_path, status, social_links, age, gender, height, weight, 
-           identifying_marks, last_sighted, created_at 
+    SELECT full_name, alias, occupation, nationality, ideology, threat_level,
+           avatar_path, status, social_links, age, gender, height, weight,
+           identifying_marks, last_sighted, created_at
     FROM subjects WHERE id = ?
   `).bind(link.subject_id).first();
 
@@ -210,9 +220,11 @@ async function handleGetSharedSubject(db, token) {
     interactions: interactions.results,
     locations: locations.results,
     media: media.results,
-    meta: { 
+    meta: {
       remaining_seconds: Math.floor(remaining),
-      started_at: link.started_at || now.toISOString()
+      started_at: link.started_at || startTime.toISOString(),
+      expires_at: expiresAt.toISOString(),
+      views: link.views + 1
     }
   });
 }
