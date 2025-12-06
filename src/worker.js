@@ -923,9 +923,16 @@ function serveHtml() {
                         <input v-model="forms.subject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
                     </div>
                     <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
+                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <input v-model="forms.subject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
+                    </div>
+                    <textarea v-model="forms.subject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
                     <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
-                    
+
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
                 </form>
 
@@ -1283,7 +1290,26 @@ function serveHtml() {
             modal.active = type;
             const aid = localStorage.getItem('admin_id');
             Object.keys(errors).forEach(k => delete errors[k]);
-              if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low', sex: '' };
+              if(type === 'add-subject') forms.subject = {
+                admin_id: aid,
+                status: 'Active',
+                threat_level: 'Low',
+                full_name: '',
+                alias: '',
+                sex: '',
+                occupation: '',
+                nationality: '',
+                ideology: '',
+                dob: '',
+                age: null,
+                modus_operandi: '',
+                weakness: '',
+                avatar_path: '',
+                last_sighted: '',
+                height: '',
+                weight: '',
+                identifying_marks: ''
+              };
             if(type === 'edit-profile') forms.subject = { ...selected.value };
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
@@ -1397,8 +1423,29 @@ export default {
         }
         if (req.method === 'POST') {
           const p = await safeJson(req);
-          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, modus_operandi, weakness, dob, age, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.sex), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.avatar_path), isoTimestamp()).run();
+          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, modus_operandi, weakness, dob, age, avatar_path, last_sighted, height, weight, identifying_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .bind(
+              safeVal(p.admin_id),
+              safeVal(p.full_name),
+              safeVal(p.alias),
+              safeVal(p.threat_level),
+              safeVal(p.status),
+              safeVal(p.sex),
+              safeVal(p.occupation),
+              safeVal(p.nationality),
+              safeVal(p.ideology),
+              safeVal(p.modus_operandi),
+              safeVal(p.weakness),
+              safeVal(p.dob),
+              safeVal(p.age),
+              safeVal(p.avatar_path),
+              safeVal(p.last_sighted),
+              safeVal(p.height),
+              safeVal(p.weight),
+              safeVal(p.identifying_marks),
+              isoTimestamp()
+            )
+            .run();
           return jsonResponse({ success: true });
         }
       }
