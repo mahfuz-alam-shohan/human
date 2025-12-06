@@ -29,6 +29,17 @@ function generateToken() {
   return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function buildShareUrl(origin, token) {
+  try {
+    const base = origin || '';
+    const url = new URL(`/share/${token}`, base);
+    return url.toString();
+  } catch (e) {
+    // Fallback to relative if origin is malformed
+    return `/share/${token}`;
+  }
+}
+
 async function hashPassword(secret) {
   const data = encoder.encode(secret);
   const digest = await crypto.subtle.digest('SHA-256', data);
@@ -139,27 +150,32 @@ async function handleLogin(req, db) {
 // --- NEW SHARING LOGIC START ---
 
 async function handleShareCreate(req, db, origin) {
-  const body = await safeJson(req);
+  try {
+    const body = await safeJson(req);
 
-  // Basic validation
-  if (!body.subjectId) return errorResponse('Subject ID required', 400);
-  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(body.subjectId).first();
-  if (!subject) return errorResponse('Subject not found or archived', 404);
+    // Basic validation
+    if (!body.subjectId) return errorResponse('Subject ID required', 400);
+    const subjectId = Number(body.subjectId);
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
+    if (!subject) return errorResponse('Subject not found or archived', 404);
 
-  // Validate duration: Min 1 minute, Max 1 week (10080 mins)
-  const requestedMinutes = Number.parseInt(body.durationMinutes, 10);
-  const minutes = Math.max(1, Math.min(Number.isNaN(requestedMinutes) ? 30 : requestedMinutes, 10080));
-  const durationSeconds = minutes * 60;
-  const token = generateToken();
-  const createdAt = isoTimestamp();
+    // Validate duration: Min 1 minute, Max 1 week (10080 mins)
+    const requestedMinutes = Number.parseInt(body.durationMinutes, 10);
+    const minutes = Math.max(1, Math.min(Number.isNaN(requestedMinutes) ? 30 : requestedMinutes, 10080));
+    const durationSeconds = minutes * 60;
+    const token = generateToken();
+    const createdAt = isoTimestamp();
 
-  await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, is_active, views, created_at) VALUES (?, ?, ?, 1, 0, ?)')
-    .bind(subject.id, token, durationSeconds, createdAt).run();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, is_active, views, created_at) VALUES (?, ?, ?, 1, 0, ?)')
+      .bind(subject.id, token, durationSeconds, createdAt).run();
 
-  const shareUrl = new URL(`/share/${token}`, origin).toString();
-  const expiresAt = new Date(new Date(createdAt).getTime() + durationSeconds * 1000).toISOString();
+    const shareUrl = buildShareUrl(origin, token);
+    const expiresAt = new Date(new Date(createdAt).getTime() + durationSeconds * 1000).toISOString();
 
-  return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201);
+    return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201);
+  } catch (e) {
+    return errorResponse('Failed to create share link', 500, e.message);
+  }
 }
 
 async function handleGetSharedSubject(db, token) {
@@ -227,6 +243,35 @@ async function handleGetSharedSubject(db, token) {
       views: link.views + 1
     }
   });
+}
+
+async function handleShareList(db, subjectId, origin) {
+  try {
+    if (!subjectId) return errorResponse('Subject ID required', 400);
+    const result = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
+    const links = (result.results || []).map((link) => {
+      const startPoint = link.started_at || link.created_at;
+      const expiresAt = startPoint ? new Date(new Date(startPoint).getTime() + link.duration_seconds * 1000) : null;
+      return {
+        ...link,
+        expires_at: expiresAt ? expiresAt.toISOString() : null,
+        url: buildShareUrl(origin, link.token)
+      };
+    });
+    return jsonResponse(links);
+  } catch (e) {
+    return errorResponse('Failed to fetch share links', 500, e.message);
+  }
+}
+
+async function handleShareRevoke(db, token) {
+  if (!token) return errorResponse('Share token required', 400);
+  try {
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return jsonResponse({ success: true });
+  } catch (e) {
+    return errorResponse('Failed to revoke link', 500, e.message);
+  }
 }
 
 // --- NEW SHARING LOGIC END ---
@@ -908,6 +953,10 @@ function serveHtml() {
                             <input readonly :value="forms.share.result" class="relative w-full bg-white border border-blue-300 text-blue-600 text-xs p-3 rounded-lg pr-12 font-mono font-medium shadow-sm">
                             <button @click="copyToClipboard(forms.share.result)" class="absolute right-1 top-1 bottom-1 px-3 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><i class="fa-regular fa-copy"></i></button>
                         </div>
+
+                        <div v-if="forms.share.error" class="text-xs text-red-600 font-semibold bg-red-50 border border-red-100 rounded-lg p-3">
+                            {{ forms.share.error }}
+                        </div>
                     </div>
 
                     <div class="border-t border-gray-100 pt-4">
@@ -993,11 +1042,15 @@ function serveHtml() {
             location: {},
             intel: {},
             rel: {},
-            share: { minutes: 30, result: '' }
+            share: { minutes: 30, result: '', error: '' }
         });
 
         const api = async (ep, opts = {}) => {
-            const res = await fetch('/api' + ep, opts);
+            const finalOpts = { ...opts };
+            if (finalOpts.body && !finalOpts.headers?.['Content-Type']) {
+                finalOpts.headers = { ...(finalOpts.headers || {}), 'Content-Type': 'application/json' };
+            }
+            const res = await fetch('/api' + ep, finalOpts);
             if (!res.ok) {
                  const text = await res.text();
                  try { const json = JSON.parse(text); throw new Error(json.error || "Server Error"); }
@@ -1079,10 +1132,12 @@ function serveHtml() {
         const createShareLink = async () => {
             try {
                 if (!selected.value) return;
+                forms.share.error = '';
+                forms.share.result = '';
                 const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
                 forms.share.result = res.url;
                 fetchShareLinks();
-            } catch(e) { alert("Failed: " + e.message); }
+            } catch(e) { forms.share.error = e.message; }
         };
 
         // Improved Copy Logic for Iframes
@@ -1179,7 +1234,7 @@ function serveHtml() {
             if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false };
-            if(type === 'share-secure') { forms.share = { minutes: 30, result: '' }; fetchShareLinks(); }
+            if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); }
         };
         const closeModal = () => modal.active = null;
 
@@ -1312,14 +1367,8 @@ export default {
       // Share Links Management
       if (path === '/api/share-links') {
         if (req.method === 'POST') return handleShareCreate(req, env.DB, url.origin);
-        if (req.method === 'GET') {
-          const res = await env.DB.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(url.searchParams.get('subjectId')).all();
-          return jsonResponse(res.results);
-        }
-        if (req.method === 'DELETE') {
-          await env.DB.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(url.searchParams.get('token')).run();
-          return jsonResponse({ success: true });
-        }
+        if (req.method === 'GET') return handleShareList(env.DB, url.searchParams.get('subjectId'), url.origin);
+        if (req.method === 'DELETE') return handleShareRevoke(env.DB, url.searchParams.get('token'));
       }
 
       // Generic Writes
