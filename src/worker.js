@@ -47,10 +47,7 @@ let schemaInitialized = false;
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
-      // Enable Foreign Keys
       await db.prepare("PRAGMA foreign_keys = ON;").run();
-
-      // Consolidated Schema - No ALTER statements needed for fresh install
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY, 
@@ -158,6 +155,7 @@ async function ensureSchema(db) {
           token TEXT UNIQUE, 
           is_active INTEGER DEFAULT 1,
           duration_seconds INTEGER, 
+          views INTEGER DEFAULT 0,
           started_at TEXT, 
           created_at TEXT
         )`)
@@ -166,27 +164,21 @@ async function ensureSchema(db) {
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
-      // If error is table exists but schema wrong, we might need a manual burn
   }
 }
 
 async function nukeDatabase(db) {
-    // The "Burn Protocol" - Drops all tables explicitly
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
         'subject_relationships', 'subject_media', 'subject_intel', 
         'subjects', 'admins'
     ];
-    
-    // Disable FK constraints temporarily to allow dropping
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
-    
     for(const t of tables) {
-        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
+        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) {}
     }
-    
     await db.prepare("PRAGMA foreign_keys = ON;").run();
-    schemaInitialized = false; // Force ensureSchema on next run
+    schemaInitialized = false; 
     return true;
 }
 
@@ -210,6 +202,18 @@ async function handleGetDashboard(db, adminId) {
     `).bind(adminId, adminId, adminId).first();
 
     return response({ feed: recent.results, stats });
+}
+
+async function handleGetSuggestions(db, adminId) {
+    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    
+    return response({
+        occupations: occupations.results.map(r => r.occupation).filter(Boolean),
+        nationalities: nationalities.results.map(r => r.nationality).filter(Boolean),
+        ideologies: ideologies.results.map(r => r.ideology).filter(Boolean)
+    });
 }
 
 async function handleGetSubjectFull(db, id) {
@@ -240,7 +244,6 @@ async function handleGetSubjectFull(db, id) {
 }
 
 async function handleGetMapData(db, adminId) {
-    // Fetch all locations for all active subjects belonging to admin
     const query = `
         SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
         FROM subject_locations l
@@ -258,7 +261,7 @@ async function handleCreateShareLink(req, db, origin) {
     if (!subjectId) return errorResponse('subjectId required', 400);
     const durationSeconds = Math.max(30, Math.floor((durationMinutes || 15) * 60)); 
     const token = generateToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active) VALUES (?, ?, ?, ?, 1)')
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
         .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
     return response({ url: `${origin}/share/${token}` });
 }
@@ -278,12 +281,11 @@ async function handleGetSharedSubject(db, token) {
     if (!link) return errorResponse('LINK INVALID', 404);
     if (!link.is_active) return errorResponse('LINK REVOKED', 410);
 
-    // Timer Logic
+    // Timer Logic & View Counting
     if (link.duration_seconds) {
         const now = Date.now();
         const startedAt = link.started_at || isoTimestamp();
         
-        // Start timer on first access if not started
         if (!link.started_at) {
             await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
         }
@@ -296,10 +298,13 @@ async function handleGetSharedSubject(db, token) {
             return errorResponse('LINK EXPIRED', 410);
         }
         
+        // Increment View
+        await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
+
         // Fetch limited data
         const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status, created_at FROM subjects WHERE id = ?').bind(link.subject_id).first();
         const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 10').bind(link.subject_id).all();
-        const locations = await db.prepare('SELECT name, type, address FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+        const locations = await db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
         const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
 
         return response({
@@ -334,9 +339,10 @@ function serveHtml() {
     body { font-family: 'Inter', sans-serif; background-color: var(--dark-bg); color: #e5e5e5; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
     
-    .glass { background: rgba(23, 23, 23, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.08); }
+    .glass { background: rgba(23, 23, 23, 0.95); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
     .glass-input { background: rgba(0,0,0,0.4); border: 1px solid #333; color: white; transition: all 0.2s; }
     .glass-input:focus { border-color: var(--neon-red); outline: none; background: rgba(0,0,0,0.6); }
+    .glass-input.error { border-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
     
     .threat-low { border-left: 3px solid #10b981; }
     .threat-medium { border-left: 3px solid #f59e0b; }
@@ -360,6 +366,8 @@ function serveHtml() {
 
     .leaflet-container { background: #000; }
     .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(110%); }
+    .leaflet-popup-content-wrapper { background: #171717; color: white; border: 1px solid #333; border-radius: 0; }
+    .leaflet-popup-tip { background: #171717; }
     
     .touch-target { min-height: 48px; }
     
@@ -367,6 +375,9 @@ function serveHtml() {
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
+
+    .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+    @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
   </style>
 </head>
 <body class="h-full overflow-hidden selection:bg-red-900 selection:text-white">
@@ -397,7 +408,7 @@ function serveHtml() {
         <nav class="hidden md:flex flex-col w-20 bg-neutral-900 border-r border-neutral-800 items-center py-6 z-20">
             <div class="mb-8 text-red-600 text-2xl"><i class="fa-solid fa-eye"></i></div>
             <div class="flex-1 space-y-6 w-full px-2">
-                <button v-for="t in tabs" @click="currentTab = t.id" :class="currentTab === t.id ? 'text-red-500 bg-white/5' : 'text-gray-500 hover:text-gray-300'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-red-500 bg-white/5' : 'text-gray-500 hover:text-gray-300'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
                     <i :class="t.icon" class="text-lg"></i>
                     <span class="text-[9px] font-mono uppercase">{{t.label}}</span>
                 </button>
@@ -485,7 +496,7 @@ function serveHtml() {
                 <!-- Top Bar -->
                 <div class="h-16 border-b border-white/10 flex items-center px-4 justify-between bg-neutral-900/80 backdrop-blur shrink-0">
                     <div class="flex items-center gap-3">
-                        <button @click="currentTab='targets'" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-gray-400"><i class="fa-solid fa-arrow-left"></i></button>
+                        <button @click="changeTab('targets')" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-gray-400"><i class="fa-solid fa-arrow-left"></i></button>
                         <div>
                             <div class="font-black text-white text-sm uppercase tracking-wider">{{ selected.alias || selected.full_name }}</div>
                             <div class="text-[10px] text-gray-500 font-mono">ID: {{ String(selected.id).padStart(6, '0') }}</div>
@@ -501,7 +512,7 @@ function serveHtml() {
                 <!-- Sub Tabs -->
                 <div class="flex border-b border-white/10 overflow-x-auto bg-black/50 shrink-0">
                     <button v-for="t in ['profile','surveillance','interrogations','geoint','network','evidence']" 
-                        @click="subTab = t" 
+                        @click="changeSubTab(t)" 
                         :class="subTab === t ? 'text-red-500 border-b-2 border-red-500 bg-white/5' : 'text-gray-500'"
                         class="px-4 py-3 text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-colors">
                         {{ t }}
@@ -667,17 +678,40 @@ function serveHtml() {
             <!-- War Room Map Tab (Global) -->
             <div v-if="currentTab === 'map'" class="flex-1 relative">
                 <div id="warRoomMap" class="w-full h-full bg-neutral-900"></div>
-                <div class="absolute top-4 left-4 z-[400] glass p-4 max-w-xs">
+                <div class="absolute top-4 left-4 z-[400] glass p-4 max-w-xs pointer-events-none">
                     <h3 class="text-xs font-bold text-red-500 uppercase tracking-widest mb-2">Global Tracking</h3>
                     <p class="text-[10px] text-gray-400">Monitoring all active targets.</p>
                 </div>
+                
+                <!-- Map Search -->
+                <div class="absolute top-4 right-4 z-[400] w-64 glass p-1">
+                    <input v-model="warMapSearch" placeholder="LOCATE SUBJECT..." class="bg-transparent w-full text-xs p-2 text-white outline-none font-bold placeholder-gray-600">
+                </div>
+
+                <!-- Mini Bar -->
+                <transition name="slide-up">
+                    <div v-if="warMapSelected" class="absolute bottom-6 left-6 right-6 z-[400] glass p-4 animate-slide-up flex items-center gap-4 border-l-4 border-red-500">
+                        <div class="w-12 h-12 bg-neutral-800 rounded-full overflow-hidden border border-white/10 shrink-0">
+                            <img :src="resolveImg(warMapSelected.avatar_path)" class="w-full h-full object-cover">
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-baseline justify-between">
+                                <h3 class="font-bold text-white text-sm truncate">{{ warMapSelected.full_name }}</h3>
+                                <span class="text-[9px] font-mono text-red-400">{{ warMapSelected.threat_level }}</span>
+                            </div>
+                            <p class="text-[10px] text-gray-400 truncate">{{ warMapSelected.name }} ({{ warMapSelected.type }})</p>
+                        </div>
+                        <button @click="viewSubject(warMapSelected.subject_id)" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-4 py-2 uppercase rounded">OPEN DOSSIER</button>
+                        <button @click="warMapSelected = null" class="text-gray-500 hover:text-white px-2"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                </transition>
             </div>
 
         </main>
 
         <!-- Mobile Nav -->
         <nav class="md:hidden h-16 bg-neutral-900 border-t border-neutral-800 flex justify-around items-center shrink-0 z-20">
-            <button v-for="t in tabs" @click="currentTab = t.id" :class="currentTab === t.id ? 'text-red-500' : 'text-gray-600'" class="flex flex-col items-center gap-1">
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-red-500' : 'text-gray-600'" class="flex flex-col items-center gap-1">
                 <i :class="t.icon"></i>
             </button>
         </nav>
@@ -686,23 +720,40 @@ function serveHtml() {
 
     <!-- Modals -->
     <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg glass bg-neutral-900 p-6 shadow-2xl border border-white/10">
+        <div class="w-full max-w-lg glass bg-neutral-900 p-6 shadow-2xl border border-white/10 animate-fade-in" :class="{'shake': modal.shake}">
             <h3 class="text-sm font-bold text-white uppercase tracking-widest mb-6 border-b border-white/10 pb-2">{{ modalTitle }}</h3>
             
-            <!-- Forms -->
+            <!-- Add Subject / Edit -->
             <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
-                <input v-model="forms.subject.full_name" placeholder="REAL NAME" class="glass-input w-full p-3 text-xs" required>
+                <div class="space-y-1">
+                    <input v-model="forms.subject.full_name" placeholder="REAL NAME *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.full_name}">
+                </div>
                 <input v-model="forms.subject.alias" placeholder="CODENAME / ALIAS" class="glass-input w-full p-3 text-xs">
+                
                 <div class="grid grid-cols-2 gap-4">
                     <select v-model="forms.subject.threat_level" class="glass-input p-3 text-xs bg-black">
                         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                     </select>
-                    <input v-model="forms.subject.occupation" placeholder="COVER/OCCUPATION" class="glass-input p-3 text-xs">
+                    <input v-model="forms.subject.occupation" list="list-occupations" placeholder="COVER/OCCUPATION" class="glass-input p-3 text-xs">
                 </div>
-                <input v-model="forms.subject.nationality" placeholder="NATIONALITY" class="glass-input w-full p-3 text-xs">
-                <input v-model="forms.subject.ideology" placeholder="IDEOLOGY / AFFILIATION" class="glass-input w-full p-3 text-xs">
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-1">
+                        <label class="text-[9px] text-gray-500 uppercase">Date of Birth</label>
+                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-xs bg-black w-full text-white">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] text-gray-500 uppercase">Age (Auto)</label>
+                        <input v-model="forms.subject.age" type="number" class="glass-input p-2.5 text-xs w-full">
+                    </div>
+                </div>
+
+                <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="NATIONALITY" class="glass-input w-full p-3 text-xs">
+                <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="IDEOLOGY / AFFILIATION" class="glass-input w-full p-3 text-xs">
+                
                 <textarea v-model="forms.subject.modus_operandi" placeholder="MODUS OPERANDI / HABITS" rows="3" class="glass-input w-full p-3 text-xs"></textarea>
                 <textarea v-model="forms.subject.weakness" placeholder="KNOWN WEAKNESSES" rows="2" class="glass-input w-full p-3 text-xs border-red-900/50"></textarea>
+                
                 <button type="submit" class="w-full bg-red-700 hover:bg-red-600 text-white font-bold py-3 text-xs uppercase tracking-widest">SAVE DOSSIER</button>
                 <button v-if="modal.active === 'edit-profile'" type="button" @click="archiveSubject" class="w-full text-red-500 text-[10px] mt-2 hover:underline uppercase">ARCHIVE SUBJECT (DELETE)</button>
             </form>
@@ -718,30 +769,37 @@ function serveHtml() {
                         <option>Informant Report</option>
                     </select>
                 </div>
-                <textarea v-model="forms.interaction.transcript" placeholder="TRANSCRIPT / DIALOGUE LOG" rows="6" class="glass-input w-full p-3 text-xs font-mono" required></textarea>
+                <textarea v-model="forms.interaction.transcript" placeholder="TRANSCRIPT / DIALOGUE LOG *" rows="6" class="glass-input w-full p-3 text-xs font-mono" :class="{'error': errors.transcript}"></textarea>
                 <textarea v-model="forms.interaction.conclusion" placeholder="ANALYST CONCLUSION / DEBRIEF" rows="3" class="glass-input w-full p-3 text-xs"></textarea>
                 <input v-model="forms.interaction.evidence_url" placeholder="EXTERNAL EVIDENCE LINK (OPTIONAL)" class="glass-input w-full p-3 text-xs">
                 <button type="submit" class="w-full bg-amber-700 hover:bg-amber-600 text-white font-bold py-3 text-xs uppercase tracking-widest">LOG INTERACTION</button>
             </form>
 
             <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
-                <div class="relative">
+                <!-- Search moved above map -->
+                <div class="relative z-10">
                     <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH ADDRESS (Press Enter)" class="glass-input w-full p-3 text-xs border-blue-500/50">
                     <button type="button" @click="searchLocations" class="absolute right-2 top-2 text-blue-400"><i class="fa-solid fa-search"></i></button>
-                    <!-- Search Results Dropdown -->
-                    <div v-if="locationSearchResults.length" class="absolute z-50 w-full bg-black border border-gray-700 max-h-40 overflow-y-auto mt-1">
+                    <!-- Search Results -->
+                    <div v-if="locationSearchResults.length" class="absolute w-full bg-black border border-gray-700 max-h-40 overflow-y-auto mt-1 shadow-xl">
                         <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-2 hover:bg-blue-900/30 cursor-pointer text-[10px] border-b border-gray-800 last:border-0 text-white">
                             {{ res.display_name }}
                         </div>
                     </div>
                 </div>
 
-                <input v-model="forms.location.name" placeholder="LOCATION NAME (e.g. Safehouse Alpha)" class="glass-input w-full p-3 text-xs" required>
-                <div class="grid grid-cols-2 gap-4">
-                    <input v-model="forms.location.lat" placeholder="LATITUDE" type="number" step="any" class="glass-input p-3 text-xs">
-                    <input v-model="forms.location.lng" placeholder="LONGITUDE" type="number" step="any" class="glass-input p-3 text-xs">
+                <!-- Mini Map for selection -->
+                <div class="h-40 w-full bg-neutral-800 rounded border border-white/10 relative">
+                    <div id="locationPickerMap" class="absolute inset-0"></div>
+                    <div class="absolute bottom-2 right-2 bg-black/80 text-[9px] text-white p-1 px-2 pointer-events-none z-[500]">DOUBLE-CLICK TO PIN</div>
                 </div>
-                <p class="text-[9px] text-gray-500">Tip: Click anywhere on the map to set coordinates.</p>
+
+                <input v-model="forms.location.name" placeholder="LOCATION NAME (e.g. Safehouse Alpha) *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.loc_name}">
+                <div class="grid grid-cols-2 gap-4">
+                    <input v-model="forms.location.lat" placeholder="LAT" type="number" step="any" class="glass-input p-3 text-xs" readonly>
+                    <input v-model="forms.location.lng" placeholder="LNG" type="number" step="any" class="glass-input p-3 text-xs" readonly>
+                </div>
+                
                 <select v-model="forms.location.type" class="glass-input w-full p-3 text-xs bg-black">
                     <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Safehouse</option><option>Dead Drop</option><option>Unknown</option>
                 </select>
@@ -759,10 +817,10 @@ function serveHtml() {
                 <button @click="logout" class="text-gray-500 text-xs hover:text-white uppercase">Disconnect Session</button>
             </form>
 
-             <!-- Basic Intel/Rel Forms omitted for brevity but present in logic -->
+             <!-- Basic Intel/Rel Forms -->
              <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                <input v-model="forms.intel.label" placeholder="TOPIC" class="glass-input w-full p-3 text-xs" required>
-                <textarea v-model="forms.intel.value" placeholder="OBSERVATION" rows="3" class="glass-input w-full p-3 text-xs" required></textarea>
+                <input v-model="forms.intel.label" placeholder="TOPIC *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.intel_label}">
+                <textarea v-model="forms.intel.value" placeholder="OBSERVATION *" rows="3" class="glass-input w-full p-3 text-xs" :class="{'error': errors.intel_val}"></textarea>
                 <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">ADD LOG</button>
              </form>
 
@@ -770,7 +828,7 @@ function serveHtml() {
                 <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-xs bg-black">
                     <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
                 </select>
-                <input v-model="forms.rel.type" placeholder="RELATIONSHIP TYPE" class="glass-input w-full p-3 text-xs" required>
+                <input v-model="forms.rel.type" placeholder="RELATIONSHIP TYPE *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.rel_type}">
                 <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">LINK SUBJECTS</button>
              </form>
 
@@ -780,7 +838,6 @@ function serveHtml() {
                     <p class="text-sm text-gray-400">Manage Secure Links</p>
                 </div>
                 
-                <!-- Create New -->
                 <div class="bg-white/5 p-3 rounded">
                     <div class="flex gap-2">
                         <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2 w-20 text-center text-white text-xs" placeholder="MIN" min="1">
@@ -791,11 +848,10 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- Existing Links -->
                 <div class="max-h-40 overflow-y-auto space-y-2">
                     <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-2 bg-black/40 border border-white/5 text-[10px]">
                         <div>
-                            <div class="text-gray-300">Created: {{ new Date(link.created_at).toLocaleDateString() }}</div>
+                            <div class="text-gray-300">Created: {{ new Date(link.created_at).toLocaleDateString() }} <span class="text-blue-400 ml-2">({{ link.views }} views)</span></div>
                             <div class="text-gray-500 font-mono">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Timer' : 'No Timer' }}</div>
                         </div>
                         <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 font-bold uppercase">REVOKE</button>
@@ -807,6 +863,11 @@ function serveHtml() {
         </div>
     </div>
 
+    <!-- Datalists for Suggestions -->
+    <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
+    <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
+    <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
+
     <input type="file" ref="fileInput" class="hidden" @change="handleFile" accept="image/*,application/pdf">
 
   </div>
@@ -816,6 +877,7 @@ function serveHtml() {
 
     createApp({
       setup() {
+        // State
         const view = ref('auth');
         const loading = ref(false);
         const auth = reactive({ email: '', password: '' });
@@ -824,20 +886,27 @@ function serveHtml() {
             { id: 'targets', label: 'Targets', icon: 'fa-solid fa-crosshairs' },
             { id: 'map', label: 'War Room', icon: 'fa-solid fa-map' },
         ];
-        const currentTab = ref('dashboard');
-        const subTab = ref('profile');
+        
+        // URL State Parsing
+        const params = new URLSearchParams(window.location.search);
+        const currentTab = ref(params.get('tab') || 'dashboard');
+        const subTab = ref(params.get('subTab') || 'profile');
         
         const stats = ref({});
         const feed = ref([]);
         const subjects = ref([]);
+        const suggestions = reactive({ occupations: [], nationalities: [], ideologies: [] });
         const selected = ref(null);
         const activeShareLinks = ref([]);
         const search = ref('');
-        const modal = reactive({ active: null });
+        const modal = reactive({ active: null, shake: false });
+        const errors = reactive({});
         
-        // Location Search State
+        // Map State
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
+        const warMapSelected = ref(null);
+        const warMapSearch = ref('');
 
         const forms = reactive({
             subject: {},
@@ -846,6 +915,31 @@ function serveHtml() {
             intel: {},
             rel: {},
             share: { minutes: 30, result: '' }
+        });
+
+        // URL Sync
+        const updateUrl = () => {
+            const url = new URL(window.location);
+            url.searchParams.set('tab', currentTab.value);
+            if(currentTab.value === 'detail') {
+                url.searchParams.set('subTab', subTab.value);
+                if(selected.value) url.searchParams.set('id', selected.value.id);
+            } else {
+                url.searchParams.delete('subTab');
+                url.searchParams.delete('id');
+            }
+            window.history.replaceState({}, '', url);
+        };
+
+        // Helpers
+        const calculateAge = (dob) => {
+            if(!dob) return '';
+            const diff = Date.now() - new Date(dob).getTime();
+            return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+        };
+
+        watch(() => forms.subject.dob, (val) => {
+            if(val) forms.subject.age = calculateAge(val);
         });
 
         // API Wrapper
@@ -871,80 +965,160 @@ function serveHtml() {
 
         const fetchData = async () => {
             const adminId = localStorage.getItem('admin_id');
-            const d = await api('/dashboard?adminId='+adminId);
+            const [d, s, sugg] = await Promise.all([
+                api('/dashboard?adminId='+adminId),
+                api('/subjects?adminId='+adminId),
+                api('/suggestions?adminId='+adminId)
+            ]);
             stats.value = d.stats;
             feed.value = d.feed;
-            subjects.value = await api('/subjects?adminId='+adminId);
+            subjects.value = s;
+            suggestions.occupations = sugg.occupations;
+            suggestions.nationalities = sugg.nationalities;
+            suggestions.ideologies = sugg.ideologies;
         };
 
         const viewSubject = async (id) => {
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
-            subTab.value = 'profile';
+            subTab.value = 'profile'; // Reset to profile on open
+            updateUrl();
         };
 
+        const changeTab = (t) => { currentTab.value = t; updateUrl(); };
+        const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
+
+        // Form Validation & Submit
+        const validate = (fields) => {
+            let valid = true;
+            Object.keys(errors).forEach(k => delete errors[k]); // Clear prev
+            fields.forEach(f => {
+                if(!f.val || f.val.trim() === '') {
+                    errors[f.key] = true;
+                    valid = false;
+                }
+            });
+            if(!valid) {
+                modal.shake = true;
+                setTimeout(() => modal.shake = false, 500);
+            }
+            return valid;
+        };
+
+        const submitSubject = async () => {
+            if(!validate([{key:'full_name', val: forms.subject.full_name}])) return;
+            
+            const isEdit = modal.active === 'edit-profile';
+            const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
+            const method = isEdit ? 'PATCH' : 'POST';
+            await api(ep, { method, body: JSON.stringify(forms.subject) });
+            
+            if(isEdit) selected.value = { ...selected.value, ...forms.subject };
+            else fetchData();
+            closeModal();
+        };
+
+        const submitInteraction = async () => {
+            if(!validate([{key:'transcript', val: forms.interaction.transcript}])) return;
+            await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
+            viewSubject(selected.value.id); closeModal();
+        };
+
+        const submitLocation = async () => {
+            if(!validate([{key:'loc_name', val: forms.location.name}])) return;
+            await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
+            viewSubject(selected.value.id); closeModal();
+        };
+        
+        const submitIntel = async () => {
+             if(!validate([{key:'intel_label', val: forms.intel.label}, {key:'intel_val', val: forms.intel.value}])) return;
+             await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
+             viewSubject(selected.value.id); closeModal();
+        };
+
+        const submitRel = async () => {
+             if(!validate([{key:'rel_type', val: forms.rel.type}])) return;
+             await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
+             viewSubject(selected.value.id); closeModal();
+        };
+
+        // Sharing
         const fetchShareLinks = async () => {
             if(!selected.value) return;
             const res = await api('/share-links?subjectId=' + selected.value.id);
-            activeShareLinks.value = res.filter(l => l.is_active);
+            activeShareLinks.value = res; // Show all to see revoked too? or just active. Let's show all but revoked status
         };
 
-        // --- Maps ---
+        const createShareLink = async () => {
+            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
+            forms.share.result = res.url;
+            fetchShareLinks();
+        };
+
+        const revokeLink = async (token) => {
+            await api('/share-links?token=' + token, { method: 'DELETE' });
+            fetchShareLinks();
+        };
+
+        // Maps
         let mapInstance = null;
-        let mapMarkers = [];
+        let pickerMapInstance = null;
 
-        const initMap = (elementId, locations, onClick, isGlobal = false) => {
-            if(mapInstance) { mapInstance.remove(); mapInstance = null; }
-            const container = document.getElementById(elementId);
-            if(!container) return;
+        const initMap = (elementId, locations, onClick, isGlobal = false, isPicker = false) => {
+            const el = document.getElementById(elementId);
+            if(!el) return;
+            
+            // Clean up
+            if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
+            if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
 
-            mapInstance = L.map(elementId, { attributionControl: false }).setView([20, 0], 2);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-            }).addTo(mapInstance);
+            const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-            locations.forEach(loc => {
-                if(loc.lat && loc.lng) {
-                    let icon;
-                    
-                    if (isGlobal && loc.avatar_path) {
-                        // Avatar Pin for Global Map
-                        const imgUrl = resolveImg(loc.avatar_path);
-                        icon = L.divIcon({
-                            className: 'custom-div-icon',
-                            html: \`<div class="marker-pin" style="background: #ef4444;"></div><img src="\${imgUrl}" style="border: 2px solid #ef4444;">\`,
-                            iconSize: [30, 42],
-                            iconAnchor: [15, 42]
-                        });
-                    } else {
-                        // Standard Pin
-                        icon = L.divIcon({
-                            className: 'custom-div-icon',
-                            html: \`<div class="marker-pin"></div><i class="fa-solid fa-location-dot" style="position:absolute;top:2px;left:8px;font-size:14px;color:#c30b82"></i>\`,
-                            iconSize: [30, 42],
-                            iconAnchor: [15, 42]
-                        });
+            if(isPicker) {
+                pickerMapInstance = map;
+                // Double click to set pin in picker
+                map.on('dblclick', e => {
+                    forms.location.lat = e.latlng.lat;
+                    forms.location.lng = e.latlng.lng;
+                    L.marker(e.latlng).addTo(map);
+                });
+            } else {
+                mapInstance = map;
+                // Pins
+                locations.forEach(loc => {
+                    if(loc.lat && loc.lng) {
+                        let icon;
+                        if (isGlobal && loc.avatar_path) {
+                            const imgUrl = resolveImg(loc.avatar_path);
+                            icon = L.divIcon({
+                                className: 'custom-div-icon',
+                                html: \`<div class="marker-pin" style="background: \${loc.threat_level === 'Critical' ? '#7f1d1d' : '#ef4444'};"></div><img src="\${imgUrl}" style="border: 2px solid #ef4444;">\`,
+                                iconSize: [30, 42], iconAnchor: [15, 42]
+                            });
+                        } else {
+                            icon = L.divIcon({
+                                className: 'custom-div-icon',
+                                html: \`<div class="marker-pin"></div><i class="fa-solid fa-location-dot" style="position:absolute;top:2px;left:8px;font-size:14px;color:#c30b82"></i>\`,
+                                iconSize: [30, 42], iconAnchor: [15, 42]
+                            });
+                        }
+                        const m = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
+                        
+                        if(isGlobal) {
+                            m.on('click', () => { warMapSelected.value = loc; });
+                        } else {
+                            m.bindPopup(\`<b>\${loc.name}</b><br>\${loc.type}\`);
+                        }
                     }
-
-                    const m = L.marker([loc.lat, loc.lng], { icon }).addTo(mapInstance)
-                        .bindPopup(\`<b>\${loc.name || loc.full_name}</b><br>\${loc.type || loc.alias || ''}\`);
-                    mapMarkers.push(m);
-                }
-            });
-
-            if(onClick) {
-                mapInstance.on('click', e => onClick(e.latlng));
+                });
             }
         };
 
-        // Watchers for Map Init
+        // Watchers
         watch(() => subTab.value, (val) => {
             if(val === 'geoint' && selected.value) {
-                nextTick(() => initMap('subjectMap', selected.value.locations || [], (coords) => {
-                    openModal('add-location');
-                    forms.location.lat = coords.lat;
-                    forms.location.lng = coords.lng;
-                }));
+                nextTick(() => initMap('subjectMap', selected.value.locations || [], null));
             }
             if(val === 'network' && selected.value) {
                 nextTick(initNetwork);
@@ -960,69 +1134,12 @@ function serveHtml() {
             }
         });
 
-        // --- Network Graph ---
-        const initNetwork = () => {
-            const container = document.getElementById('relNetwork');
-            if(!container || !selected.value) return;
-            
-            const nodes = [{id: selected.value.id, label: selected.value.alias, color: '#ef4444', size: 30}];
-            const edges = [];
-            
-            selected.value.relationships.forEach(r => {
-                const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
-                nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#444' });
-                edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type });
-            });
+        watch(warMapSearch, (val) => {
+            // Filter logic could be here if we kept references to markers, 
+            // for now simpler to re-init map or just rely on manual search in data
+        });
 
-            new vis.Network(container, { nodes, edges }, {
-                nodes: { shape: 'dot', font: { color: '#fff' } },
-                edges: { color: '#666', font: { color: '#888', strokeWidth: 0 } },
-                physics: { stabilization: false }
-            });
-        };
-
-        // Modals & Forms
-        const openModal = (type) => {
-            modal.active = type;
-            const aid = localStorage.getItem('admin_id');
-            if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low' };
-            if(type === 'edit-profile') forms.subject = { ...selected.value };
-            if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
-            if(type === 'add-location') {
-                forms.location = { subject_id: selected.value.id };
-                locationSearchQuery.value = '';
-                locationSearchResults.value = [];
-            }
-            if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
-            if(type === 'add-rel') forms.rel = { subjectA: selected.value.id };
-            if(type === 'share-secure') {
-                forms.share = { minutes: 30, result: '' };
-                fetchShareLinks();
-            }
-        };
-        const closeModal = () => modal.active = null;
-
-        const submitSubject = async () => {
-            const isEdit = modal.active === 'edit-profile';
-            const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
-            const method = isEdit ? 'PATCH' : 'POST';
-            await api(ep, { method, body: JSON.stringify(forms.subject) });
-            if(isEdit) selected.value = { ...selected.value, ...forms.subject };
-            else fetchData();
-            closeModal();
-        };
-
-        const submitInteraction = async () => {
-            await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
-            viewSubject(selected.value.id); closeModal();
-        };
-
-        const submitLocation = async () => {
-            await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
-            viewSubject(selected.value.id); closeModal();
-        };
-        
-        // Location Search Logic
+        // Location Search
         const searchLocations = async () => {
             if(!locationSearchQuery.value) return;
             try {
@@ -1036,55 +1153,73 @@ function serveHtml() {
             forms.location.lng = parseFloat(res.lon);
             forms.location.address = res.display_name;
             locationSearchResults.value = [];
-        };
-        
-        const submitIntel = async () => {
-             await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
-             viewSubject(selected.value.id); closeModal();
-        };
-
-        const submitRel = async () => {
-             await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
-             viewSubject(selected.value.id); closeModal();
+            // Center picker map
+            if(pickerMapInstance) {
+                pickerMapInstance.setView([res.lat, res.lon], 13);
+                L.marker([res.lat, res.lon]).addTo(pickerMapInstance);
+            }
         };
 
-        const createShareLink = async () => {
-            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
-            forms.share.result = res.url;
-            fetchShareLinks();
-        };
+        // Modals
+        const openModal = (type) => {
+            modal.active = type;
+            const aid = localStorage.getItem('admin_id');
+            // Reset errors
+            Object.keys(errors).forEach(k => delete errors[k]);
 
-        const revokeLink = async (token) => {
-            await api('/share-links?token=' + token, { method: 'DELETE' });
-            fetchShareLinks();
+            if(type === 'add-subject') forms.subject = { admin_id: aid, status: 'Active', threat_level: 'Low' };
+            if(type === 'edit-profile') forms.subject = { ...selected.value };
+            if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
+            if(type === 'add-location') {
+                forms.location = { subject_id: selected.value.id };
+                locationSearchQuery.value = '';
+                locationSearchResults.value = [];
+                nextTick(() => initMap('locationPickerMap', [], null, false, true));
+            }
+            if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
+            if(type === 'add-rel') forms.rel = { subjectA: selected.value.id };
+            if(type === 'share-secure') {
+                forms.share = { minutes: 30, result: '' };
+                fetchShareLinks();
+            }
+        };
+        const closeModal = () => modal.active = null;
+
+        // Init
+        const initNetwork = () => {
+            const container = document.getElementById('relNetwork');
+            if(!container || !selected.value) return;
+            const nodes = [{id: selected.value.id, label: selected.value.alias, color: '#ef4444', size: 30}];
+            const edges = [];
+            selected.value.relationships.forEach(r => {
+                const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#444' });
+                edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type });
+            });
+            new vis.Network(container, { nodes, edges }, {
+                nodes: { shape: 'dot', font: { color: '#fff' } },
+                edges: { color: '#666' }
+            });
         };
 
         const copyToClipboard = (text) => {
             if(navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("COPIED"));
         };
 
-        const deleteItem = async (table, id) => {
-            if(confirm('Confirm deletion?')) {
-                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
-                viewSubject(selected.value.id);
-            }
+        const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
+        const getThreatColor = (l) => ({'Low':'text-green-500','Medium':'text-amber-500','High':'text-red-500','Critical':'text-red-700 animate-pulse'}[l] || 'text-gray-500');
+        const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
+        const openSettings = () => openModal('settings');
+        const logout = () => { localStorage.clear(); location.reload(); };
+        const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase()) || (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))));
+        const exportData = () => {
+            const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = (selected.value.alias || 'subject') + '.json';
+            link.click();
         };
-
-        const archiveSubject = async () => {
-            if(confirm('ARCHIVE TARGET? This hides them from active lists.')) {
-                await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) });
-                closeModal(); currentTab.value = 'targets'; fetchData();
-            }
-        };
-
-        const burnProtocol = async () => {
-            if(prompt("TYPE 'BURN' TO CONFIRM NUCLEAR RESET") === 'BURN') {
-                await api('/nuke', { method: 'POST' });
-                localStorage.clear();
-                location.reload();
-            }
-        };
-
+        
         // File Upload
         const fileInput = ref(null);
         const uploadType = ref(null);
@@ -1103,32 +1238,43 @@ function serveHtml() {
                 viewSubject(selected.value.id);
             };
         };
-
-        // Helpers
-        const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
-        const getThreatColor = (l) => ({'Low':'text-green-500','Medium':'text-amber-500','High':'text-red-500','Critical':'text-red-700 animate-pulse'}[l] || 'text-gray-500');
-        const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
-        const openSettings = () => openModal('settings');
-        const logout = () => { localStorage.clear(); location.reload(); };
-        const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase()) || (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))));
-        const exportData = () => {
-            const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'});
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = (selected.value.alias || 'subject') + '.json';
-            link.click();
+        const deleteItem = async (table, id) => {
+            if(confirm('Confirm deletion?')) {
+                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
+                viewSubject(selected.value.id);
+            }
+        };
+        const archiveSubject = async () => {
+            if(confirm('ARCHIVE TARGET? This hides them from active lists.')) {
+                await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) });
+                closeModal(); changeTab('targets'); fetchData();
+            }
+        };
+        const burnProtocol = async () => {
+            if(prompt("TYPE 'BURN' TO CONFIRM NUCLEAR RESET") === 'BURN') {
+                await api('/nuke', { method: 'POST' });
+                localStorage.clear();
+                location.reload();
+            }
         };
 
         onMounted(() => {
-            if(localStorage.getItem('admin_id')) { view.value = 'app'; fetchData(); }
+            if(localStorage.getItem('admin_id')) { 
+                view.value = 'app'; 
+                fetchData(); 
+                // Restore View
+                const params = new URLSearchParams(window.location.search);
+                const id = params.get('id');
+                if(id) viewSubject(id);
+            }
         });
 
         return { 
             view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation,
+            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSelected, warMapSearch,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
-            createShareLink, revokeLink, fetchShareLinks, copyToClipboard,
-            triggerUpload, handleFile, deleteItem, archiveSubject, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
+            createShareLink, revokeLink, fetchShareLinks, copyToClipboard, changeTab, changeSubTab, errors, suggestions, archiveSubject,
+            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
         };
       }
     }).mount('#app');
@@ -1172,12 +1318,13 @@ export default {
 
         // Data Fetching
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
         
         if (path === '/api/subjects') {
             if(req.method === 'POST') {
                 const p = await req.json();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), isoTimestamp()).run();
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), isoTimestamp()).run();
                 return response({success:true});
             }
             const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
