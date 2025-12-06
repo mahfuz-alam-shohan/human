@@ -2233,7 +2233,14 @@ function serveSharedHtml(token) {
         shell.innerHTML = '<p class="text-sm text-slate-500">No social profiles shared.</p>';
         return;
       }
-      shell.innerHTML = socials.map(s => `<a href="${s.url}" target="_blank" rel="noreferrer" class="w-9 h-9 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-700/40 flex items-center justify-center"><i class="${s.icon}"></i></a>`).join('');
+      shell.innerHTML = socials
+        .map(({ url, icon }) =>
+          '<a href="' +
+          url +
+          '" target="_blank" rel="noreferrer" class="w-9 h-9 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-700/40 flex items-center justify-center">' +
+          '<i class="' + icon + '"></i></a>'
+        )
+        .join('');
     };
 
     const resolveShareImage = (path) => {
