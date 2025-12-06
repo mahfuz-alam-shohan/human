@@ -1,7 +1,6 @@
 const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
-const ALLOWED_ORIGINS = ['*']; 
 const APP_TITLE = "PEOPLE OS";
 
 // --- Helper Functions ---
@@ -24,7 +23,8 @@ function generateToken() {
   return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
 }
 
-function response(data, status = 200) {
+// Robust Response Helpers
+function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
         headers: { 
@@ -36,8 +36,9 @@ function response(data, status = 200) {
     });
 }
 
-function errorResponse(msg, status = 500) {
-    return response({ error: msg }, status);
+function errorResponse(msg, status = 500, details = null) {
+    console.error(`API Error: ${msg}`, details);
+    return jsonResponse({ error: msg, details }, status);
 }
 
 function safeVal(v) {
@@ -46,158 +47,95 @@ function safeVal(v) {
 
 // --- Database Layer ---
 
-let schemaInitialized = false;
+// Definition of the full schema for self-healing
+const SCHEMA_STMTS = [
+    `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_interactions (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, type TEXT, transcript TEXT, conclusion TEXT, evidence_url TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_locations (id INTEGER PRIMARY KEY, subject_id INTEGER, name TEXT, address TEXT, lat REAL, lng REAL, type TEXT, notes TEXT, created_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`
+];
 
 async function ensureSchema(db) {
-  if (schemaInitialized) return;
-  try {
-      await db.prepare("PRAGMA foreign_keys = ON;").run();
-
-      // Sequential execution to prevent batch failures
-      const statements = [
-        `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_interactions (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, type TEXT, transcript TEXT, conclusion TEXT, evidence_url TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_locations (id INTEGER PRIMARY KEY, subject_id INTEGER, name TEXT, address TEXT, lat REAL, lng REAL, type TEXT, notes TEXT, created_at TEXT)`,
-        `CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`
-      ];
-
-      for (const stmt of statements) {
-          try { await db.prepare(stmt).run(); } catch(e) { console.error("Table creation error:", e); }
-      }
-
-      schemaInitialized = true;
-  } catch (err) { 
-      console.error("Init Error", err); 
-  }
+    // Always enable FKs
+    await db.prepare("PRAGMA foreign_keys = ON;").run();
+    // Run creation statements safely
+    for (const stmt of SCHEMA_STMTS) {
+        try { await db.prepare(stmt).run(); } catch(e) { console.warn("Schema init warning (safe to ignore if table exists):", e.message); }
+    }
 }
 
-async function nukeDatabase(db, bucket) {
-    const tables = [
-        'subject_shares', 'subject_locations', 'subject_interactions', 
-        'subject_relationships', 'subject_media', 'subject_intel', 
-        'subjects', 'admins'
-    ];
+async function nukeDatabase(db) {
+    const tables = ['subject_shares', 'subject_locations', 'subject_interactions', 'subject_relationships', 'subject_media', 'subject_intel', 'subjects', 'admins'];
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
     for(const t of tables) {
         try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
     await db.prepare("PRAGMA foreign_keys = ON;").run();
-    schemaInitialized = false; 
+    await ensureSchema(db); // Rebuild empty immediately
     return true;
 }
 
-// --- API Handlers ---
+// --- API Logic ---
 
-async function handleGetDashboard(db, adminId) {
-    const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Contact Added' as desc, created_at as date FROM subjects WHERE admin_id = ?
-        UNION ALL
-        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
-        UNION ALL
-        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
-        ORDER BY date DESC LIMIT 20
-    `).bind(adminId, adminId, adminId).all();
-
-    const stats = await db.prepare(`
-        SELECT 
-            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
-            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
-            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
-    `).bind(adminId, adminId, adminId).first();
-
-    return response({ feed: recent.results, stats });
-}
-
-async function handleGetSuggestions(db, adminId) {
-    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    
-    return response({
-        occupations: occupations.results.map(r => r.occupation).filter(Boolean),
-        nationalities: nationalities.results.map(r => r.nationality).filter(Boolean),
-        ideologies: ideologies.results.map(r => r.ideology).filter(Boolean)
-    });
-}
-
-async function handleGetSubjectFull(db, id) {
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-    if (!subject) return errorResponse("Subject not found", 404);
-
-    const [media, intel, relationships, interactions, locations] = await Promise.all([
-        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
-        db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.id as target_real_id
-            FROM subject_relationships r
-            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
-            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(id, id, id).all(),
-        db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
-    ]);
-
-    return response({
-        ...subject,
-        media: media.results,
-        intel: intel.results,
-        relationships: relationships.results,
-        interactions: interactions.results,
-        locations: locations.results
-    });
-}
-
-async function handleGetMapData(db, adminId) {
-    const query = `
-        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
-        FROM subject_locations l
-        JOIN subjects s ON l.subject_id = s.id
-        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
-    `;
-    const res = await db.prepare(query).bind(adminId).all();
-    return response(res.results);
-}
-
-// --- Share Logic ---
-
-async function handleCreateShareLink(req, db, origin) {
+// Wrapper to safely parse JSON body
+async function safeJson(req) {
     try {
-        const body = await req.json();
-        if (!body || !body.subjectId) return errorResponse('subjectId required', 400);
-        
-        const { subjectId, durationMinutes } = body;
-        
-        // Defensive check: Ensure table exists
-        try { await db.prepare('SELECT 1 FROM subject_shares LIMIT 1').run(); } 
-        catch (e) { await db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`).run(); }
-
-        const durationSeconds = Math.max(30, Math.floor((durationMinutes || 15) * 60)); 
-        const token = generateToken();
-        await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
-            .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
-        return response({ url: `${origin}/share/${token}` });
-    } catch(e) {
-        return errorResponse("Failed to create link: " + e.message, 500);
-    }
-}
-
-async function handleListShareLinks(db, subjectId) {
-    try {
-        const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-        return response(res.results);
+        const text = await req.text();
+        return text ? JSON.parse(text) : {};
     } catch (e) {
-        // Return empty list if table missing
-        return response([]);
+        throw new Error("Invalid JSON body");
     }
 }
 
-async function handleRevokeShareLink(db, token) {
-    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
-    return response({ success: true });
+// --- Handlers ---
+
+async function handleLogin(req, db) {
+    const { email, password } = await safeJson(req);
+    if (!email || !password) return errorResponse("Missing credentials", 400);
+
+    const admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+    
+    // Auto-register first user (Demo Mode)
+    if (!admin) {
+        const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
+        if (count.c === 0) {
+            const hash = await hashPassword(password);
+            const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+            return jsonResponse({ id: res.meta.last_row_id, message: "Admin created" });
+        }
+        return errorResponse("Admin not found", 404);
+    }
+
+    const hashed = await hashPassword(password);
+    if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401);
+    return jsonResponse({ id: admin.id });
+}
+
+async function handleShareCreate(req, db, origin) {
+    const body = await safeJson(req);
+    if (!body.subjectId) return errorResponse('subjectId required', 400);
+    
+    const durationSeconds = Math.max(30, Math.floor((body.durationMinutes || 15) * 60)); 
+    const token = generateToken();
+    
+    try {
+        await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
+            .bind(body.subjectId, token, durationSeconds, isoTimestamp()).run();
+        return jsonResponse({ url: `${origin}/share/${token}` });
+    } catch(e) {
+        // Self-healing: if table missing, recreate and retry once
+        if(e.message.includes('no such table')) {
+            await ensureSchema(db);
+            await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
+            .bind(body.subjectId, token, durationSeconds, isoTimestamp()).run();
+            return jsonResponse({ url: `${origin}/share/${token}` });
+        }
+        throw e;
+    }
 }
 
 async function handleGetSharedSubject(db, token) {
@@ -205,10 +143,12 @@ async function handleGetSharedSubject(db, token) {
     if (!link) return errorResponse('LINK INVALID', 404);
     if (!link.is_active) return errorResponse('LINK REVOKED', 410);
 
+    // Timer Check
     if (link.duration_seconds) {
         const now = Date.now();
         const startedAt = link.started_at || isoTimestamp();
         
+        // Start timer on first view if not set
         if (!link.started_at) {
             await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
         }
@@ -223,12 +163,18 @@ async function handleGetSharedSubject(db, token) {
         
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
+        // Fetch limited data for public view
         const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status, social_links, created_at FROM subjects WHERE id = ?').bind(link.subject_id).first();
-        const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 10').bind(link.subject_id).all();
-        const locations = await db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
-        const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+        
+        if(!subject) return errorResponse("Subject data unavailable", 404);
 
-        return response({
+        const [interactions, locations, media] = await Promise.all([
+            db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 10').bind(link.subject_id).all(),
+            db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all(),
+            db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all()
+        ]);
+
+        return jsonResponse({
             ...subject,
             interactions: interactions.results,
             locations: locations.results,
@@ -236,12 +182,175 @@ async function handleGetSharedSubject(db, token) {
             meta: { remaining_seconds: Math.floor(remaining) }
         });
     }
+    return errorResponse("Invalid Link Config", 500);
 }
 
-// --- Frontend HTML ---
+// --- Main Worker Entry Point ---
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    
+    // Normalize path: strip trailing slash if not root
+    const path = url.pathname.endsWith('/') && url.pathname.length > 1 ? url.pathname.slice(0, -1) : url.pathname;
+
+    // CORS Preflight
+    if (req.method === 'OPTIONS') {
+        return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' }});
+    }
+
+    try {
+        // Ensure DB is ready (Lazy Load)
+        if(req.method !== 'GET') await ensureSchema(env.DB); 
+
+        // --- PUBLIC ROUTES ---
+        
+        // Share View (HTML)
+        const shareHtmlMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareHtmlMatch) return serveSharedHtml(shareHtmlMatch[1]);
+
+        // Main App (HTML)
+        if (req.method === 'GET' && (path === '/' || path === '/index.html')) return serveHtml();
+
+        // Media (Images)
+        if (req.method === 'GET' && path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
+        }
+
+        // --- API ROUTES ---
+
+        // Share Data (JSON)
+        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        // Auth
+        if (path === '/api/login' && req.method === 'POST') return handleLogin(req, env.DB);
+
+        // --- PROTECTED ROUTES (Simple checks for now) ---
+        
+        if (path === '/api/dashboard') {
+            return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        }
+
+        if (path === '/api/subjects') {
+            if (req.method === 'GET') {
+                const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
+                return jsonResponse(res.results);
+            }
+            if (req.method === 'POST') {
+                const p = await safeJson(req);
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, social_links, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.social_links), safeVal(p.avatar_path), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+        }
+
+        if (path === '/api/share-links') {
+            if (req.method === 'POST') return handleShareCreate(req, env.DB, url.origin);
+            if (req.method === 'GET') {
+                const res = await env.DB.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(url.searchParams.get('subjectId')).all();
+                return jsonResponse(res.results);
+            }
+            if (req.method === 'DELETE') {
+                await env.DB.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(url.searchParams.get('token')).run();
+                return jsonResponse({ success: true });
+            }
+        }
+
+        // Individual Subject Operations
+        const subjectIdMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (subjectIdMatch) {
+            const id = subjectIdMatch[1];
+            if (req.method === 'GET') return handleGetSubjectFull(env.DB, id);
+            if (req.method === 'PATCH') {
+                const p = await safeJson(req);
+                const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
+                if(keys.length > 0) {
+                    const set = keys.map(k => `${k} = ?`).join(', ');
+                    const vals = keys.map(k => safeVal(p[k]));
+                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                }
+                return jsonResponse({success:true});
+            }
+        }
+
+        // Aux Data Handlers
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+
+        // Creation Handlers
+        if (req.method === 'POST') {
+            const p = await safeJson(req);
+            
+            if (path === '/api/interaction') {
+                await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
+                    .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+            
+            if (path === '/api/location') {
+                await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                    .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/intel') {
+                await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
+                    .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/relationship') {
+                await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, custom_name, custom_avatar, created_at) VALUES (?,?,?,?,?,?)')
+                    .bind(p.subjectA, safeVal(p.targetId), p.type, safeVal(p.customName), safeVal(p.customAvatar), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/delete') {
+                const { table, id } = p;
+                const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
+                if(safeTables.includes(table)) {
+                    if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
+                    else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+                    return jsonResponse({success:true});
+                }
+            }
+
+            if (path === '/api/nuke') {
+                await nukeDatabase(env.DB);
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/upload-avatar' || path === '/api/upload-media') {
+                const { subjectId, data, filename, contentType } = p;
+                const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+                const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+                await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
+                
+                if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+                else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+        }
+
+        return errorResponse("Route Not Found", 404);
+
+    } catch (e) {
+        // --- ULTIMATE SAFETY NET ---
+        // This catches literally anything else so you never get HTML
+        return jsonResponse({ error: "Internal Server Error", message: e.message, stack: e.stack }, 500);
+    }
+  }
+};
+
+// --- Frontend Assets ---
 
 function serveSharedHtml(token) {
-    const html = `<!DOCTYPE html>
+    // This is the read-only view for share links
+    return new Response(`<!DOCTYPE html>
 <html lang="en" class="h-full bg-slate-100">
 <head>
   <meta charset="utf-8" />
@@ -275,7 +384,6 @@ function serveSharedHtml(token) {
     </div>
 
     <div v-else class="flex-1 flex flex-col h-full overflow-hidden relative">
-        <!-- Banner -->
         <div class="h-32 bg-gradient-to-r from-slate-900 to-slate-800 shrink-0 relative">
             <div class="absolute top-4 right-4 flex items-center gap-3">
                 <div class="bg-black/30 backdrop-blur px-3 py-1 rounded-full text-xs font-mono text-emerald-400 border border-emerald-500/30 flex items-center gap-2">
@@ -290,7 +398,6 @@ function serveSharedHtml(token) {
 
         <div class="flex-1 overflow-y-auto bg-slate-50">
             <div class="px-8 pb-8 -mt-16">
-                <!-- Header Card -->
                 <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-6 mb-6 relative">
                     <div class="flex flex-col md:flex-row gap-6 items-start">
                         <div class="w-32 h-32 bg-slate-200 rounded-xl border-4 border-white shadow-md overflow-hidden shrink-0 relative -mt-16 md:mt-0">
@@ -312,7 +419,6 @@ function serveSharedHtml(token) {
                                 <div><span class="text-slate-400 font-bold uppercase">Affiliation</span> <br> <span class="font-medium text-slate-800">{{ data.ideology || 'None' }}</span></div>
                             </div>
 
-                            <!-- Socials -->
                             <div v-if="data.social_links" class="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
                                 <a v-for="link in parseSocials(data.social_links)" :href="link.url" target="_blank" class="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-blue-600 hover:text-white transition-all transform hover:-translate-y-1" :title="link.url">
                                     <i :class="link.icon"></i>
@@ -323,7 +429,6 @@ function serveSharedHtml(token) {
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Left Column -->
                     <div class="space-y-6">
                         <div class="glass p-5">
                             <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left"></i> Interaction Log</h3>
@@ -332,7 +437,6 @@ function serveSharedHtml(token) {
                                 <div v-for="(ix, i) in data.interactions" :key="i" class="relative pl-8 pb-6 last:pb-0">
                                     <div class="absolute left-[11px] top-[6px] w-2 h-2 rounded-full bg-blue-500 border-2 border-white z-10 shadow-sm"></div>
                                     <div class="timeline-line" v-if="i !== data.interactions.length - 1"></div>
-                                    
                                     <div class="flex justify-between items-baseline mb-1">
                                         <span class="text-xs font-bold text-blue-600 uppercase">{{ ix.type }}</span>
                                         <span class="text-[10px] font-mono text-slate-400">{{ new Date(ix.date).toLocaleDateString() }}</span>
@@ -343,7 +447,6 @@ function serveSharedHtml(token) {
                         </div>
                     </div>
 
-                    <!-- Right Column -->
                     <div class="space-y-6">
                         <div class="glass p-5">
                             <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><i class="fa-solid fa-location-dot"></i> Known Locations</h3>
@@ -376,10 +479,6 @@ function serveSharedHtml(token) {
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <div class="mt-8 text-center border-t border-slate-200 pt-4">
-                    <p class="text-[10px] text-slate-400 font-mono uppercase">Generated by PeopleOS Intelligence Platform &bull; {{ new Date().getFullYear() }}</p>
                 </div>
             </div>
         </div>
@@ -430,16 +529,13 @@ function serveSharedHtml(token) {
             onMounted(async () => {
                 try {
                     const res = await fetch('/api/share/' + token);
-                    const text = await res.text();
-                    try {
-                        const json = JSON.parse(text);
-                        if(json.error) throw new Error(json.error);
-                        data.value = json;
-                        timer.value = json.meta.remaining_seconds;
-                        setInterval(() => { if(timer.value > 0) timer.value--; else if(!error.value) error.value = "Link Expired"; }, 1000);
-                    } catch(e) {
-                        throw new Error("Server Response Error. " + text.substring(0,50));
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || "Failed to load");
                     }
+                    data.value = await res.json();
+                    timer.value = data.value.meta.remaining_seconds;
+                    setInterval(() => { if(timer.value > 0) timer.value--; else if(!error.value) error.value = "Link Expired"; }, 1000);
                 } catch(e) { error.value = e.message || "Access Denied"; } finally { loading.value = false; }
             });
             return { loading, error, data, timer, formatTime, getThreatColor, resolveImg, parseSocials };
@@ -447,8 +543,7 @@ function serveSharedHtml(token) {
     }).mount('#app');
   </script>
 </body>
-</html>`;
-    return new Response(html, { headers: { 'Content-Type': 'text/html' }});
+</html>`, { headers: { 'Content-Type': 'text/html' }});
 }
 
 function serveHtml() {
@@ -457,7 +552,7 @@ function serveHtml() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
-  <title>People OS</title>
+  <title>${APP_TITLE}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -1022,6 +1117,22 @@ function serveHtml() {
                             <button @click="copyToClipboard(forms.share.result)" class="absolute right-2 top-2 text-blue-400 hover:text-blue-600 p-1"><i class="fa-regular fa-copy"></i></button>
                         </div>
                     </div>
+                    <div>
+                        <h5 class="text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Active Links</h5>
+                        <div class="max-h-40 overflow-y-auto space-y-2">
+                            <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                                <div>
+                                    <div class="text-gray-900 text-xs font-bold">Created {{ new Date(link.created_at).toLocaleDateString() }}</div>
+                                    <div class="text-gray-500 text-[10px] mt-0.5 flex items-center gap-2">
+                                        <span class="bg-gray-100 px-1.5 rounded">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Limit' : 'No Limit' }}</span>
+                                        <span v-if="link.views > 0" class="text-blue-600 font-bold"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
+                                    </div>
+                                </div>
+                                <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 text-[10px] font-bold bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">KILL</button>
+                            </div>
+                            <div v-if="activeShareLinks.length === 0" class="text-center text-xs text-gray-400 py-4 italic">No active share links.</div>
+                        </div>
+                    </div>
                  </div>
             </div>
         </div>
@@ -1171,10 +1282,16 @@ function serveHtml() {
             activeShareLinks.value = res;
         };
 
+        const revokeLink = async (token) => {
+            await api('/share-links?token=' + token, { method: 'DELETE' });
+            fetchShareLinks();
+        };
+
         const createShareLink = async () => {
             try {
                 const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
                 forms.share.result = res.url;
+                fetchShareLinks(); // Refresh list immediately
             } catch(e) { console.error("Share error", e); alert("Failed to create share link: " + e.message); }
         };
 
@@ -1352,7 +1469,7 @@ function serveHtml() {
             view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
             activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSelected, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
-            createShareLink, fetchShareLinks, copyToClipboard, changeTab, changeSubTab, errors, suggestions, archiveSubject, updateSubject,
+            createShareLink, fetchShareLinks, revokeLink, copyToClipboard, changeTab, changeSubTab, errors, suggestions, archiveSubject, updateSubject,
             triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData, parseSocials
         };
       }
@@ -1368,140 +1485,137 @@ function serveHtml() {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
-    // Remove trailing slash if present (except for root)
-    const path = url.pathname.endsWith('/') && url.pathname.length > 1 
-        ? url.pathname.slice(0, -1) 
-        : url.pathname;
+    const path = url.pathname.endsWith('/') && url.pathname.length > 1 ? url.pathname.slice(0, -1) : url.pathname;
 
-    // Handle OPTIONS for CORS
     if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: { 
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        }});
+        return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' }});
     }
 
     try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return serveSharedHtml(shareMatch[1]);
-        if (req.method === 'GET' && path === '/') return serveHtml();
+        if(req.method !== 'GET') await ensureSchema(env.DB); 
 
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
-            }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
-        }
+        const shareHtmlMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareHtmlMatch) return serveSharedHtml(shareHtmlMatch[1]);
 
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, social_links, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.social_links), safeVal(p.avatar_path), isoTimestamp()).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-            return response(res.results);
-        }
+        if (req.method === 'GET' && (path === '/' || path === '/index.html')) return serveHtml();
 
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
-                if (keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ');
-                    const vals = keys.map(k => safeVal(p[k]));
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path === '/api/location') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, custom_name, custom_avatar, created_at) VALUES (?,?,?,?,?,?)')
-                .bind(p.subjectA, safeVal(p.targetId), p.type, safeVal(p.customName), safeVal(p.customAvatar), isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
-        }
-        
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        if (path === '/api/nuke') { await nukeDatabase(env.DB, env.BUCKET); return response({success:true}); }
-
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
+        if (req.method === 'GET' && path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
             const obj = await env.BUCKET.get(key);
             if (!obj) return new Response('Not found', { status: 404 });
             return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
         }
 
-        return new Response('Not Found', { status: 404 });
-    } catch(e) { return errorResponse(e.message); }
+        // API
+        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        if (path === '/api/login' && req.method === 'POST') return handleLogin(req, env.DB);
+
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+
+        if (path === '/api/subjects') {
+            if (req.method === 'GET') {
+                const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
+                return jsonResponse(res.results);
+            }
+            if (req.method === 'POST') {
+                const p = await safeJson(req);
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, social_links, avatar_path, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.social_links), safeVal(p.avatar_path), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+        }
+
+        if (path === '/api/share-links') {
+            if (req.method === 'POST') return handleShareCreate(req, env.DB, url.origin);
+            if (req.method === 'GET') {
+                const res = await env.DB.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(url.searchParams.get('subjectId')).all();
+                return jsonResponse(res.results);
+            }
+            if (req.method === 'DELETE') {
+                await env.DB.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(url.searchParams.get('token')).run();
+                return jsonResponse({ success: true });
+            }
+        }
+
+        const subjectIdMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (subjectIdMatch) {
+            const id = subjectIdMatch[1];
+            if (req.method === 'GET') return handleGetSubjectFull(env.DB, id);
+            if (req.method === 'PATCH') {
+                const p = await safeJson(req);
+                const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
+                if(keys.length > 0) {
+                    const set = keys.map(k => `${k} = ?`).join(', ');
+                    const vals = keys.map(k => safeVal(p[k]));
+                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                }
+                return jsonResponse({success:true});
+            }
+        }
+
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+
+        if (req.method === 'POST') {
+            const p = await safeJson(req);
+            
+            if (path === '/api/interaction') {
+                await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
+                    .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+            
+            if (path === '/api/location') {
+                await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                    .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/intel') {
+                await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
+                    .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/relationship') {
+                await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, custom_name, custom_avatar, created_at) VALUES (?,?,?,?,?,?)')
+                    .bind(p.subjectA, safeVal(p.targetId), p.type, safeVal(p.customName), safeVal(p.customAvatar), isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/delete') {
+                const { table, id } = p;
+                const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
+                if(safeTables.includes(table)) {
+                    if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
+                    else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+                    return jsonResponse({success:true});
+                }
+            }
+
+            if (path === '/api/nuke') {
+                await nukeDatabase(env.DB);
+                return jsonResponse({success:true});
+            }
+
+            if (path === '/api/upload-avatar' || path === '/api/upload-media') {
+                const { subjectId, data, filename, contentType } = p;
+                const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+                const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+                await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
+                
+                if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+                else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
+                return jsonResponse({success:true});
+            }
+        }
+
+        return errorResponse("Route Not Found", 404);
+
+    } catch (e) {
+        return jsonResponse({ error: "Internal Server Error", message: e.message, stack: e.stack }, 500);
+    }
   }
 };
