@@ -333,7 +333,7 @@ function serveHtml() {
 <html lang="en" class="h-full bg-gray-50">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
   <title>People OS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
@@ -400,11 +400,11 @@ function serveHtml() {
             <form @submit.prevent="handleAuth" class="space-y-4">
                 <div>
                     <label class="text-xs font-bold text-gray-500 uppercase ml-1">Email / ID</label>
-                    <input v-model="auth.email" type="email" placeholder="user@domain.com" class="glass-input w-full p-3 text-sm mt-1" required>
+                    <input v-model="auth.email" type="email" placeholder="user@domain.com" class="glass-input w-full p-3 text-base md:text-sm mt-1" required>
                 </div>
                 <div>
                     <label class="text-xs font-bold text-gray-500 uppercase ml-1">Password</label>
-                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 text-sm mt-1" required>
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 text-base md:text-sm mt-1" required>
                 </div>
                 <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg shadow-blue-500/20">
                     {{ loading ? 'Accessing...' : 'Secure Login' }}
@@ -482,7 +482,7 @@ function serveHtml() {
                 <div class="p-4 border-b border-gray-200 bg-white flex gap-3 shadow-sm z-10">
                     <div class="relative flex-1">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400"></i>
-                        <input v-model="search" placeholder="Search contacts..." class="w-full bg-gray-100 border-none rounded-lg py-3 pl-10 text-sm focus:ring-2 focus:ring-blue-500">
+                        <input v-model="search" placeholder="Search contacts..." class="w-full bg-gray-100 border-none rounded-lg py-3 pl-10 text-base md:text-sm focus:ring-2 focus:ring-blue-500">
                     </div>
                     <button @click="openModal('add-subject')" class="bg-blue-600 hover:bg-blue-700 text-white px-5 rounded-lg font-bold text-sm shadow-lg shadow-blue-500/20 transition-all"><i class="fa-solid fa-user-plus mr-2"></i>New</button>
                 </div>
@@ -517,7 +517,7 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('add-interaction')" class="bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-200 transition-colors"><i class="fa-solid fa-comment-dots mr-1.5"></i>Log Meeting</button>
+                        <button @click="openModal('add-interaction')" class="bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-200 transition-colors"><i class="fa-solid fa-comment-dots mr-1.5"></i>Log</button>
                         <button @click="openModal('share-secure')" class="text-gray-400 hover:text-blue-600 px-3 transition-colors" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
                         <button @click="exportData" class="text-gray-400 hover:text-gray-700 px-3 transition-colors"><i class="fa-solid fa-download"></i></button>
                     </div>
@@ -546,7 +546,7 @@ function serveHtml() {
                                 </div>
                                 <div class="glass p-4 space-y-2">
                                     <div class="text-xs text-gray-500 uppercase font-bold">Priority Status</div>
-                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
+                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-base md:text-sm p-2 text-gray-900 font-medium">
                                         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                                     </select>
                                 </div>
@@ -616,8 +616,8 @@ function serveHtml() {
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Geographic Data</h3>
                             <button @click="openModal('add-location')" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-50 shadow-sm">Pin New Location</button>
                         </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 min-h-[400px]">
-                            <div class="md:col-span-2 bg-white rounded-xl border border-gray-200 overflow-hidden h-full min-h-[400px] shadow-sm relative">
+                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="md:col-span-2 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm relative h-64 md:h-full md:min-h-[400px]">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
                             </div>
                             <div class="space-y-3 overflow-y-auto max-h-[600px]">
@@ -640,7 +640,7 @@ function serveHtml() {
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Relationship Matrix</h3>
                             <button @click="openModal('add-rel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">Add Connection</button>
                         </div>
-                        <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
+                        <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden min-h-[400px]">
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
@@ -706,7 +706,7 @@ function serveHtml() {
                 <div class="absolute top-4 right-4 z-[400] w-72 glass shadow-lg p-1">
                     <div class="relative">
                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-gray-400 text-xs"></i>
-                        <input v-model="warMapSearch" placeholder="Find contact on map..." class="bg-transparent w-full text-sm p-2 pl-8 text-gray-800 outline-none font-medium placeholder-gray-400">
+                        <input v-model="warMapSearch" placeholder="Find contact on map..." class="bg-transparent w-full text-base md:text-sm p-2 pl-8 text-gray-800 outline-none font-medium placeholder-gray-400">
                     </div>
                 </div>
 
@@ -733,8 +733,9 @@ function serveHtml() {
 
         <!-- Mobile Nav -->
         <nav class="md:hidden h-16 bg-white border-t border-gray-200 flex justify-around items-center shrink-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-600' : 'text-gray-400'" class="flex flex-col items-center gap-1">
-                <i :class="t.icon" class="text-lg"></i>
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-600 bg-blue-50 rounded-lg' : 'text-gray-400'" class="flex flex-col items-center justify-center p-2 w-16 transition-all">
+                <i :class="t.icon" class="text-xl mb-1"></i>
+                <span class="text-[10px] font-bold" v-if="currentTab === t.id">{{t.label}}</span>
             </button>
         </nav>
 
@@ -742,161 +743,163 @@ function serveHtml() {
 
     <!-- Modals -->
     <div v-if="modal.active" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg glass bg-white p-6 shadow-2xl border border-white/50 animate-fade-in transform transition-all" :class="{'shake': modal.shake}">
-            <div class="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+        <div class="w-full max-w-lg glass bg-white shadow-2xl border border-white/50 animate-fade-in transform transition-all flex flex-col max-h-[85vh]" :class="{'shake': modal.shake}">
+            <div class="flex justify-between items-center p-6 border-b border-gray-100 shrink-0">
                 <h3 class="text-sm font-extrabold text-gray-900 uppercase tracking-wide">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
             </div>
             
-            <!-- Add Subject / Edit -->
-            <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
-                <div class="space-y-1">
-                    <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
-                </div>
-                <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
-                
-                <div class="grid grid-cols-2 gap-4">
-                    <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
-                        <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                    </select>
-                    <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Job Title" class="glass-input p-3 text-sm">
-                </div>
-
-                <div class="grid grid-cols-2 gap-4">
+            <div class="overflow-y-auto p-6">
+                <!-- Add Subject / Edit -->
+                <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
                     <div class="space-y-1">
-                        <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Date of Birth</label>
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
+                        <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-base md:text-sm font-medium" :class="{'error': errors.full_name}">
                     </div>
-                    <div class="space-y-1">
-                        <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Age (Auto)</label>
-                        <input v-model="forms.subject.age" type="number" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
+                    <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-base md:text-sm">
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <select v-model="forms.subject.threat_level" class="glass-input p-3 text-base md:text-sm bg-white">
+                            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+                        </select>
+                        <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Job Title" class="glass-input p-3 text-base md:text-sm">
                     </div>
-                </div>
 
-                <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
-                <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliations / Groups" class="glass-input w-full p-3 text-sm">
-                
-                <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
-                
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
-                <button v-if="modal.active === 'edit-profile'" type="button" @click="archiveSubject" class="w-full text-red-500 text-xs mt-2 hover:text-red-700 font-bold uppercase">Delete Contact</button>
-            </form>
-
-            <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
-                    <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm bg-white text-gray-900" required>
-                    <select v-model="forms.interaction.type" class="glass-input p-3 text-sm bg-white">
-                        <option>Meeting</option>
-                        <option>Call</option>
-                        <option>Email</option>
-                        <option>Observation</option>
-                        <option>Other</option>
-                    </select>
-                </div>
-                <textarea v-model="forms.interaction.transcript" placeholder="Notes / Discussion *" rows="6" class="glass-input w-full p-3 text-sm font-mono" :class="{'error': errors.transcript}"></textarea>
-                <textarea v-model="forms.interaction.conclusion" placeholder="Summary / Next Steps" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                <input v-model="forms.interaction.evidence_url" placeholder="External Link (Optional)" class="glass-input w-full p-3 text-sm">
-                <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-amber-500/20">Save Log</button>
-            </form>
-
-            <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
-                <!-- Search moved above map -->
-                <div class="relative z-10">
-                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200">
-                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
-                    <!-- Search Results -->
-                    <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg">
-                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
-                            {{ res.display_name }}
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Date of Birth</label>
+                            <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-base md:text-sm bg-white w-full text-gray-900">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Age (Auto)</label>
+                            <input v-model="forms.subject.age" type="number" class="glass-input p-2.5 text-base md:text-sm w-full bg-gray-50" readonly>
                         </div>
                     </div>
-                </div>
 
-                <!-- Mini Map for selection -->
-                <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden">
-                    <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
-                    <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Double-Click to Pin</div>
-                </div>
+                    <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-base md:text-sm">
+                    <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliations / Groups" class="glass-input w-full p-3 text-base md:text-sm">
+                    
+                    <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-base md:text-sm"></textarea>
+                    <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-base md:text-sm border-red-100"></textarea>
+                    
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
+                    <button v-if="modal.active === 'edit-profile'" type="button" @click="archiveSubject" class="w-full text-red-500 text-xs mt-2 hover:text-red-700 font-bold uppercase">Delete Contact</button>
+                </form>
 
-                <input v-model="forms.location.name" placeholder="Location Name (e.g. Office) *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.loc_name}">
-                <div class="grid grid-cols-2 gap-4">
-                    <input v-model="forms.location.lat" placeholder="Lat" type="number" step="any" class="glass-input p-3 text-sm bg-gray-50" readonly>
-                    <input v-model="forms.location.lng" placeholder="Lng" type="number" step="any" class="glass-input p-3 text-sm bg-gray-50" readonly>
-                </div>
-                
-                <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm bg-white">
-                    <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Unknown</option>
-                </select>
-                <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-sm">
-                <textarea v-model="forms.location.notes" placeholder="Access Notes / Details" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Pin Location</button>
-            </form>
-
-            <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
-                <div class="p-6 bg-red-50 border border-red-100 rounded-xl">
-                    <h4 class="text-red-600 font-bold uppercase text-xs mb-2">Danger Zone</h4>
-                    <p class="text-gray-500 text-xs mb-4">Factory Reset wipes ALL data including Admin credentials. System will reboot to setup mode. This cannot be undone.</p>
-                    <button @click="burnProtocol" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg text-xs uppercase tracking-widest w-full shadow-lg shadow-red-500/20">Factory Reset System</button>
-                </div>
-                <button @click="logout" class="text-gray-400 text-xs hover:text-gray-800 font-bold uppercase tracking-wider">Log Out</button>
-            </form>
-
-             <!-- Basic Intel/Rel Forms -->
-             <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                <input v-model="forms.intel.label" placeholder="Topic *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_label}">
-                <textarea v-model="forms.intel.value" placeholder="Observation *" rows="4" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_val}"></textarea>
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Save Entry</button>
-             </form>
-
-             <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm bg-white">
-                    <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
-                </select>
-                <input v-model="forms.rel.type" placeholder="Relationship Type *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.rel_type}">
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
-             </form>
-
-             <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                <div class="text-center">
-                    <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 text-xl">
-                        <i class="fa-solid fa-link"></i>
+                <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-base md:text-sm bg-white text-gray-900" required>
+                        <select v-model="forms.interaction.type" class="glass-input p-3 text-base md:text-sm bg-white">
+                            <option>Meeting</option>
+                            <option>Call</option>
+                            <option>Email</option>
+                            <option>Observation</option>
+                            <option>Other</option>
+                        </select>
                     </div>
-                    <h4 class="font-bold text-gray-900">Share Read-Only Access</h4>
-                    <p class="text-xs text-gray-500 mt-1">Generate a temporary link. It will expire automatically.</p>
-                </div>
-                
-                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                    <div class="flex gap-2">
-                        <div class="relative w-24">
-                            <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2.5 w-full text-center text-sm font-bold pl-2 pr-8" placeholder="15" min="1">
-                            <span class="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">MIN</span>
-                        </div>
-                        <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md">Create Link</button>
-                    </div>
-                    <div v-if="forms.share.result" class="mt-3 relative">
-                        <input readonly :value="forms.share.result" class="w-full bg-white border border-blue-200 text-blue-600 text-xs p-3 rounded-lg pr-10 font-mono" @click="copyToClipboard(forms.share.result)">
-                        <button @click="copyToClipboard(forms.share.result)" class="absolute right-2 top-2 text-blue-400 hover:text-blue-600 p-1"><i class="fa-regular fa-copy"></i></button>
-                    </div>
-                </div>
+                    <textarea v-model="forms.interaction.transcript" placeholder="Notes / Discussion *" rows="6" class="glass-input w-full p-3 text-base md:text-sm font-mono" :class="{'error': errors.transcript}"></textarea>
+                    <textarea v-model="forms.interaction.conclusion" placeholder="Summary / Next Steps" rows="3" class="glass-input w-full p-3 text-base md:text-sm"></textarea>
+                    <input v-model="forms.interaction.evidence_url" placeholder="External Link (Optional)" class="glass-input w-full p-3 text-base md:text-sm">
+                    <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-amber-500/20">Save Log</button>
+                </form>
 
-                <div>
-                    <h5 class="text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Active Links</h5>
-                    <div class="max-h-40 overflow-y-auto space-y-2">
-                        <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
-                            <div>
-                                <div class="text-gray-900 text-xs font-bold">Created {{ new Date(link.created_at).toLocaleDateString() }}</div>
-                                <div class="text-gray-500 text-[10px] mt-0.5 flex items-center gap-2">
-                                    <span class="bg-gray-100 px-1.5 rounded">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Limit' : 'No Limit' }}</span>
-                                    <span v-if="link.views > 0" class="text-blue-600 font-bold"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
-                                </div>
+                <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                    <!-- Search moved above map -->
+                    <div class="relative z-[100]">
+                        <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-base md:text-sm border-blue-200">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
+                        <!-- Search Results -->
+                        <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-[101]">
+                            <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
+                                {{ res.display_name }}
                             </div>
-                            <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 text-[10px] font-bold bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">KILL</button>
                         </div>
-                        <div v-if="activeShareLinks.length === 0" class="text-center text-xs text-gray-400 py-4 italic">No active share links.</div>
                     </div>
-                </div>
-             </div>
+
+                    <!-- Mini Map for selection -->
+                    <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden z-0">
+                        <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
+                        <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Double-Click to Pin</div>
+                    </div>
+
+                    <input v-model="forms.location.name" placeholder="Location Name (e.g. Office) *" class="glass-input w-full p-3 text-base md:text-sm" :class="{'error': errors.loc_name}">
+                    <div class="grid grid-cols-2 gap-4">
+                        <input v-model="forms.location.lat" placeholder="Lat" type="number" step="any" class="glass-input p-3 text-base md:text-sm bg-gray-50" readonly>
+                        <input v-model="forms.location.lng" placeholder="Lng" type="number" step="any" class="glass-input p-3 text-base md:text-sm bg-gray-50" readonly>
+                    </div>
+                    
+                    <select v-model="forms.location.type" class="glass-input w-full p-3 text-base md:text-sm bg-white">
+                        <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Unknown</option>
+                    </select>
+                    <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-base md:text-sm">
+                    <textarea v-model="forms.location.notes" placeholder="Access Notes / Details" rows="2" class="glass-input w-full p-3 text-base md:text-sm"></textarea>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Pin Location</button>
+                </form>
+
+                <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
+                    <div class="p-6 bg-red-50 border border-red-100 rounded-xl">
+                        <h4 class="text-red-600 font-bold uppercase text-xs mb-2">Danger Zone</h4>
+                        <p class="text-gray-500 text-xs mb-4">Factory Reset wipes ALL data including Admin credentials. System will reboot to setup mode. This cannot be undone.</p>
+                        <button @click="burnProtocol" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg text-xs uppercase tracking-widest w-full shadow-lg shadow-red-500/20">Factory Reset System</button>
+                    </div>
+                    <button @click="logout" class="text-gray-400 text-xs hover:text-gray-800 font-bold uppercase tracking-wider">Log Out</button>
+                </form>
+
+                 <!-- Basic Intel/Rel Forms -->
+                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
+                    <input v-model="forms.intel.label" placeholder="Topic *" class="glass-input w-full p-3 text-base md:text-sm" :class="{'error': errors.intel_label}">
+                    <textarea v-model="forms.intel.value" placeholder="Observation *" rows="4" class="glass-input w-full p-3 text-base md:text-sm" :class="{'error': errors.intel_val}"></textarea>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Save Entry</button>
+                 </form>
+
+                 <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
+                    <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-base md:text-sm bg-white">
+                        <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
+                    </select>
+                    <input v-model="forms.rel.type" placeholder="Relationship Type *" class="glass-input w-full p-3 text-base md:text-sm" :class="{'error': errors.rel_type}">
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
+                 </form>
+
+                 <div v-if="modal.active === 'share-secure'" class="space-y-6">
+                    <div class="text-center">
+                        <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 text-xl">
+                            <i class="fa-solid fa-link"></i>
+                        </div>
+                        <h4 class="font-bold text-gray-900">Share Read-Only Access</h4>
+                        <p class="text-xs text-gray-500 mt-1">Generate a temporary link. It will expire automatically.</p>
+                    </div>
+                    
+                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                        <div class="flex gap-2">
+                            <div class="relative w-24">
+                                <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2.5 w-full text-center text-sm font-bold pl-2 pr-8" placeholder="15" min="1">
+                                <span class="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">MIN</span>
+                            </div>
+                            <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md">Create Link</button>
+                        </div>
+                        <div v-if="forms.share.result" class="mt-3 relative">
+                            <input readonly :value="forms.share.result" class="w-full bg-white border border-blue-200 text-blue-600 text-xs p-3 rounded-lg pr-10 font-mono" @click="copyToClipboard(forms.share.result)">
+                            <button @click="copyToClipboard(forms.share.result)" class="absolute right-2 top-2 text-blue-400 hover:text-blue-600 p-1"><i class="fa-regular fa-copy"></i></button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h5 class="text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Active Links</h5>
+                        <div class="max-h-40 overflow-y-auto space-y-2">
+                            <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                                <div>
+                                    <div class="text-gray-900 text-xs font-bold">Created {{ new Date(link.created_at).toLocaleDateString() }}</div>
+                                    <div class="text-gray-500 text-[10px] mt-0.5 flex items-center gap-2">
+                                        <span class="bg-gray-100 px-1.5 rounded">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Limit' : 'No Limit' }}</span>
+                                        <span v-if="link.views > 0" class="text-blue-600 font-bold"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
+                                    </div>
+                                </div>
+                                <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 text-[10px] font-bold bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">KILL</button>
+                            </div>
+                            <div v-if="activeShareLinks.length === 0" class="text-center text-xs text-gray-400 py-4 italic">No active share links.</div>
+                        </div>
+                    </div>
+                 </div>
+            </div>
 
         </div>
     </div>
@@ -1124,6 +1127,8 @@ function serveHtml() {
                     map.eachLayer((layer) => { if(layer instanceof L.Marker) map.removeLayer(layer); });
                     L.marker(e.latlng).addTo(map);
                 });
+                // Invalidate size on picker open
+                setTimeout(() => map.invalidateSize(), 100);
             } else {
                 mapInstance = map;
                 // Pins
