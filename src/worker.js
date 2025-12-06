@@ -1306,7 +1306,7 @@ function serveHtml() {
             locationSearchLoading.value = true;
             locationSearchResults.value = [];
             try {
-                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationSearchQuery.value)}`, { headers: { 'User-Agent': 'PeopleOS/1.0' } });
+                const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } });
                 locationSearchResults.value = await res.json();
             } catch(e) {
                 locationSearchResults.value = [];
