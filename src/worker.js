@@ -211,7 +211,10 @@ async function handleGetSharedSubject(db, token) {
 
   // 2. Validate Link Existence & State
   if (!link) return errorResponse('INVALID LINK', 404);
-  if (!link.is_active) return errorResponse('LINK EXPIRED', 410);
+
+  // D1 can return numeric columns as strings. Normalize to a boolean-safe number check
+  const isActive = Number(link.is_active) === 1;
+  if (!isActive) return errorResponse('LINK EXPIRED', 410);
 
   let remaining = link.duration_seconds;
   const now = new Date();
@@ -279,8 +282,10 @@ async function handleShareList(db, subjectId, origin) {
     const links = (result.results || []).map((link) => {
       const startPoint = link.started_at || link.created_at;
       const expiresAt = startPoint ? new Date(new Date(startPoint).getTime() + link.duration_seconds * 1000) : null;
+      const isActive = Number(link.is_active) === 1;
       return {
         ...link,
+        is_active: isActive,
         expires_at: expiresAt ? expiresAt.toISOString() : null,
         url: buildShareUrl(origin, link.token)
       };
@@ -1148,7 +1153,8 @@ function serveHtml() {
 
         const fetchShareLinks = async () => {
             if(!selected.value) return;
-            activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id);
+            const links = await api('/share-links?subjectId=' + selected.value.id);
+            activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : [];
         };
 
         const revokeLink = async (token) => {
