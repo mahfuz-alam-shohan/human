@@ -129,7 +129,7 @@ class Database {
 
     const statements = [
       `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, sex TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, sex TEXT, occupation TEXT, nationality TEXT, ideology TEXT, religion TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
@@ -190,6 +190,13 @@ class Database {
           await this.db.prepare('ALTER TABLE subjects ADD COLUMN sex TEXT').run();
         } catch (e) {
           console.warn('Sex column migration skipped:', e?.message || e);
+        }
+      }
+      if (!cols.has('religion')) {
+        try {
+          await this.db.prepare('ALTER TABLE subjects ADD COLUMN religion TEXT').run();
+        } catch (e) {
+          console.warn('Religion column migration skipped:', e?.message || e);
         }
       }
     } catch (e) {
@@ -780,6 +787,7 @@ function serveHtml() {
                                         <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Nationality</span> <span class="font-medium text-gray-900">{{selected.nationality || '—'}}</span></div>
                                         <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Job Title</span> <span class="font-medium text-gray-900">{{selected.occupation || '—'}}</span></div>
                                         <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Affiliations</span> <span class="font-medium text-gray-900">{{selected.ideology || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Religion</span> <span class="font-medium text-gray-900">{{selected.religion || '—'}}</span></div>
                                         <div class="col-span-2 border-t border-gray-100 pt-4">
                                             <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Routine & Habits</span>
                                             <p class="text-gray-600 leading-relaxed">{{selected.modus_operandi || 'No routine information logged.'}}</p>
@@ -966,8 +974,9 @@ function serveHtml() {
                         <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
                         <input v-model="forms.subject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
                     </div>
-                    <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
-                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm">
+                    <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
+                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
+                    <input v-model="forms.subject.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <input v-model="forms.subject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
                         <input v-model="forms.subject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
@@ -976,6 +985,16 @@ function serveHtml() {
                     <textarea v-model="forms.subject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
                     <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
+
+                    <datalist id="nationalityOptions">
+                        <option v-for="nat in fieldSuggestions.nationality" :value="nat"></option>
+                    </datalist>
+                    <datalist id="ideologyOptions">
+                        <option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option>
+                    </datalist>
+                    <datalist id="religionOptions">
+                        <option v-for="rel in fieldSuggestions.religion" :value="rel"></option>
+                    </datalist>
 
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
                 </form>
@@ -1150,14 +1169,16 @@ function serveHtml() {
         const locationSearchResults = ref([]);
         const warMapSearch = ref('');
 
-          const forms = reactive({
-              subject: { sex: '' },
+        const forms = reactive({
+            subject: { sex: '', religion: '' },
             interaction: {},
             location: {},
             intel: {},
             rel: {},
             share: { minutes: 30, result: '', error: '' }
         });
+
+        const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
 
         const api = async (ep, opts = {}) => {
             const finalOpts = { ...opts };
@@ -1191,8 +1212,15 @@ function serveHtml() {
 
         const fetchData = async () => withAction(async () => {
             const adminId = localStorage.getItem('admin_id');
-            const [d, s] = await Promise.all([api('/dashboard?adminId='+adminId), api('/subjects?adminId='+adminId)]);
+            const [d, s, sugg] = await Promise.all([
+                api('/dashboard?adminId='+adminId),
+                api('/subjects?adminId='+adminId),
+                api('/subject-suggestions?adminId='+adminId)
+            ]);
             stats.value = d.stats; feed.value = d.feed; subjects.value = s;
+            fieldSuggestions.nationality = sugg.nationality || [];
+            fieldSuggestions.ideology = sugg.ideology || [];
+            fieldSuggestions.religion = sugg.religion || [];
             if(!selected.value && subjects.value.length) await viewSubject(subjects.value[0].id);
         });
 
@@ -1378,6 +1406,7 @@ function serveHtml() {
                 occupation: '',
                 nationality: '',
                 ideology: '',
+                religion: '',
                 dob: '',
                 age: null,
                 modus_operandi: '',
@@ -1497,6 +1526,7 @@ export default {
       if (path === '/api/login' && req.method === 'POST') return handleLogin(req, env.DB);
       if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
       if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+      if (path === '/api/subject-suggestions') return handleGetSubjectSuggestions(env.DB, url.searchParams.get('adminId'));
 
       // Subjects
       if (path === '/api/subjects') {
@@ -1506,7 +1536,7 @@ export default {
         }
         if (req.method === 'POST') {
           const p = await safeJson(req);
-          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, modus_operandi, weakness, dob, age, avatar_path, last_sighted, height, weight, identifying_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, religion, modus_operandi, weakness, dob, age, avatar_path, last_sighted, height, weight, identifying_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
             .bind(
               safeVal(p.admin_id),
               safeVal(p.full_name),
@@ -1517,6 +1547,7 @@ export default {
               safeVal(p.occupation),
               safeVal(p.nationality),
               safeVal(p.ideology),
+              safeVal(p.religion),
               safeVal(p.modus_operandi),
               safeVal(p.weakness),
               safeVal(p.dob),
@@ -1676,11 +1707,33 @@ async function handleGetSubjectFull(db, id) {
 
 async function handleGetMapData(db, adminId) {
   const query = `
-        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
+        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level
         FROM subject_locations l
         JOIN subjects s ON l.subject_id = s.id
         WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
     `;
   const res = await db.prepare(query).bind(adminId).all();
   return jsonResponse(res.results);
+}
+
+async function handleGetSubjectSuggestions(db, adminId) {
+  if (!adminId) return errorResponse('Admin ID required', 400);
+
+  const fetchDistinct = async (column) => {
+    const res = await db.prepare(`
+      SELECT DISTINCT ${column} as value
+      FROM subjects
+      WHERE admin_id = ? AND ${column} IS NOT NULL AND TRIM(${column}) != ''
+      ORDER BY ${column} COLLATE NOCASE
+    `).bind(adminId).all();
+    return (res.results || []).map((r) => r.value);
+  };
+
+  const [nationality, ideology, religion] = await Promise.all([
+    fetchDistinct('nationality'),
+    fetchDistinct('ideology'),
+    fetchDistinct('religion')
+  ]);
+
+  return jsonResponse({ nationality, ideology, religion });
 }
