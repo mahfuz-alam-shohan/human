@@ -612,6 +612,9 @@ function serveHtml() {
 
         <!-- Content Area -->
         <main class="flex-1 relative overflow-hidden bg-gray-50 flex flex-col">
+            <div v-if="actionLoading" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-30 flex items-center justify-center text-sm font-bold text-gray-700">
+                <i class="fa-solid fa-spinner animate-spin mr-2"></i> Working...
+            </div>
             
             <!-- Dashboard -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
@@ -950,8 +953,11 @@ function serveHtml() {
 
                 <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative z-[100]">
-                        <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200">
+                        <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200" :disabled="locationSearchLoading">
                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
+                        <div v-if="locationSearchLoading" class="absolute right-3 top-3 text-blue-500 text-xs font-bold flex items-center gap-1">
+                            <i class="fa-solid fa-spinner animate-spin"></i> Searching...
+                        </div>
                         <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-[101]">
                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
                                 {{ res.display_name }}
@@ -960,11 +966,15 @@ function serveHtml() {
                     </div>
                     <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden z-0">
                         <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
-                        <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Double-Click to Pin</div>
+                        <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Tap or Click to Pin</div>
+                    </div>
+                    <div class="text-[11px] text-gray-500 bg-blue-50 border border-blue-100 p-2 rounded-lg" :class="{'border-red-200 bg-red-50 text-red-600': errors.loc_coords}">
+                        <i class="fa-solid" :class="forms.location.lat ? 'fa-location-crosshairs text-blue-500' : 'fa-hand-pointer text-gray-400'"></i>
+                        <span class="ml-2 font-medium">{{ forms.location.lat ? ('Pinned at ' + forms.location.lat.toFixed(4) + ', ' + forms.location.lng.toFixed(4)) : 'Select a point on the map to place the pin.' }}</span>
                     </div>
                     <input v-model="forms.location.name" placeholder="Location Name *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.loc_name}">
                     <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-sm">
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Pin Location</button>
+                    <button type="submit" :disabled="actionLoading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 disabled:opacity-60">{{ actionLoading ? 'Saving...' : 'Pin Location' }}</button>
                 </form>
 
                  <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
@@ -1078,6 +1088,8 @@ function serveHtml() {
       setup() {
         const view = ref('auth');
         const loading = ref(false);
+        const actionLoading = ref(false);
+        const locationSearchLoading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [{ id: 'dashboard', label: 'Home', icon: 'fa-solid fa-house' }, { id: 'targets', label: 'Contacts', icon: 'fa-solid fa-address-book' }, { id: 'map', label: 'Global Map', icon: 'fa-solid fa-earth-americas' }];
         
@@ -1120,6 +1132,12 @@ function serveHtml() {
             return res.json();
         };
 
+        let actionDepth = 0;
+        const withAction = async (fn) => {
+            actionDepth++; actionLoading.value = true;
+            try { await fn(); } finally { actionDepth = Math.max(0, actionDepth - 1); if (actionDepth === 0) actionLoading.value = false; }
+        };
+
         const handleAuth = async () => {
             loading.value = true;
             try {
@@ -1130,17 +1148,18 @@ function serveHtml() {
             } catch(e) { alert(e.message); } finally { loading.value = false; }
         };
 
-        const fetchData = async () => {
+        const fetchData = async () => withAction(async () => {
             const adminId = localStorage.getItem('admin_id');
             const [d, s] = await Promise.all([api('/dashboard?adminId='+adminId), api('/subjects?adminId='+adminId)]);
             stats.value = d.stats; feed.value = d.feed; subjects.value = s;
-        };
+            if(!selected.value && subjects.value.length) await viewSubject(subjects.value[0].id);
+        });
 
-        const viewSubject = async (id) => {
+        const viewSubject = async (id) => withAction(async () => {
             selected.value = await api('/subjects/'+id);
             if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob);
             currentTab.value = 'detail'; subTab.value = 'profile';
-        };
+        });
 
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
@@ -1150,7 +1169,7 @@ function serveHtml() {
              await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
         };
 
-        const submitSubject = async () => {
+        const submitSubject = async () => withAction(async () => {
             const isEdit = modal.active === 'edit-profile';
             const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
             const method = isEdit ? 'PATCH' : 'POST';
@@ -1158,27 +1177,31 @@ function serveHtml() {
             await api(ep, { method, body: JSON.stringify(forms.subject) });
             if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData();
             closeModal();
-        };
+        });
 
-        const submitInteraction = async () => {
+        const submitInteraction = async () => withAction(async () => {
             await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
             viewSubject(selected.value.id); closeModal();
-        };
+        });
 
-        const submitLocation = async () => {
+        const submitLocation = async () => withAction(async () => {
+            Object.keys(errors).forEach(k => delete errors[k]);
+            if(!forms.location.name) errors.loc_name = 'Required';
+            if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map';
+            if(errors.loc_name || errors.loc_coords) return;
             await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
             viewSubject(selected.value.id); closeModal();
-        };
+        });
         
-        const submitIntel = async () => {
+        const submitIntel = async () => withAction(async () => {
              await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
              viewSubject(selected.value.id); closeModal();
-        };
+        });
 
-        const submitRel = async () => {
+        const submitRel = async () => withAction(async () => {
              await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
              viewSubject(selected.value.id); closeModal();
-        };
+        });
 
         const fetchShareLinks = async () => {
             if(!selected.value) return;
@@ -1186,18 +1209,20 @@ function serveHtml() {
             activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : [];
         };
 
-        const revokeLink = async (token) => {
+        const revokeLink = async (token) => withAction(async () => {
             await api('/share-links?token=' + token, { method: 'DELETE' });
             fetchShareLinks();
-        };
+        });
 
         const createShareLink = async () => {
             try {
                 if (!selected.value) return;
                 forms.share.error = '';
                 forms.share.result = '';
-                const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
-                forms.share.result = res.url;
+                await withAction(async () => {
+                    const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
+                    forms.share.result = res.url;
+                });
                 fetchShareLinks();
             } catch(e) { forms.share.error = e.message; }
         };
@@ -1229,7 +1254,7 @@ function serveHtml() {
 
         watch(() => forms.subject.dob, (val) => { forms.subject.age = calculateAge(val); });
 
-        let mapInstance = null, pickerMapInstance = null;
+        let mapInstance = null, pickerMapInstance = null, pickerMarker = null;
 
         const initMap = (elementId, locations, isGlobal = false, isPicker = false) => {
             const el = document.getElementById(elementId);
@@ -1242,11 +1267,7 @@ function serveHtml() {
 
             if(isPicker) {
                 pickerMapInstance = map;
-                map.on('dblclick', e => {
-                    forms.location.lat = e.latlng.lat; forms.location.lng = e.latlng.lng;
-                    map.eachLayer((layer) => { if(layer instanceof L.Marker) map.removeLayer(layer); });
-                    L.marker(e.latlng).addTo(map);
-                });
+                map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng));
                 setTimeout(() => map.invalidateSize(), 100);
             } else {
                 mapInstance = map;
@@ -1274,16 +1295,32 @@ function serveHtml() {
             if(val === 'map') nextTick(async () => { const allLocs = await api('/map-data?adminId=' + localStorage.getItem('admin_id')); initMap('warRoomMap', allLocs, true); });
         });
 
+        const placePickerMarker = (map, lat, lng) => {
+            forms.location.lat = lat; forms.location.lng = lng;
+            if (pickerMarker) map.removeLayer(pickerMarker);
+            pickerMarker = L.marker([lat, lng]).addTo(map);
+        };
+
         const searchLocations = async () => {
             if(!locationSearchQuery.value) return;
-            const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`, { headers: { 'User-Agent': 'PeopleOS/1.0' } });
-            locationSearchResults.value = await res.json();
+            locationSearchLoading.value = true;
+            locationSearchResults.value = [];
+            try {
+                const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } });
+                locationSearchResults.value = await res.json();
+            } catch(e) {
+                locationSearchResults.value = [];
+                errors.loc_coords = 'Unable to search locations right now';
+            } finally { locationSearchLoading.value = false; }
         };
 
         const selectLocation = (res) => {
             forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name;
             locationSearchResults.value = [];
-            if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
+            if(pickerMapInstance) {
+                pickerMapInstance.setView([res.lat, res.lon], 15);
+                placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng);
+            }
         };
 
         const openModal = (type) => {
@@ -1351,15 +1388,15 @@ function serveHtml() {
                 viewSubject(selected.value.id);
             };
         };
-        const deleteItem = async (table, id) => { if(confirm('Delete this item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
+          const deleteItem = async (table, id) => { if(confirm('Delete this item?')) { await withAction(async () => { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); await viewSubject(selected.value.id); }); } };
         const burnProtocol = async () => { if(prompt("Type 'BURN' to confirm factory reset.") === 'BURN') { await api('/nuke', { method: 'POST' }); localStorage.clear(); location.reload(); } };
         const modalTitle = computed(() => { const m = { 'add-subject': 'Add Contact', 'edit-profile': 'Edit Contact', 'add-interaction': 'Log Meeting', 'add-location': 'Pin Location', 'add-intel': 'Add Observation', 'add-rel': 'Add Connection', 'share-secure': 'Share Access', 'settings': 'Settings' }; return m[modal.active] || 'System Dialog'; });
 
         onMounted(() => { if(localStorage.getItem('admin_id')) { view.value = 'app'; fetchData(); } });
 
         return { 
-            view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSearch, modalTitle,
+            view, auth, loading, actionLoading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
+            activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, fetchShareLinks, revokeLink, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
             triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
