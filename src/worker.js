@@ -5,6 +5,19 @@
 
 const encoder = new TextEncoder();
 const APP_TITLE = "PEOPLE OS";
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+class BadRequestError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BadRequestError';
+    this.status = 400;
+  }
+}
 
 // --- 1. UTILITIES & HELPERS ---
 
@@ -66,9 +79,7 @@ function jsonResponse(data, status = 200) {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      ...CORS_HEADERS,
     },
   });
 }
@@ -83,8 +94,27 @@ async function safeJson(req) {
     const text = await req.text();
     return text ? JSON.parse(text) : {};
   } catch (e) {
-    throw new Error('Invalid JSON body');
+    throw new BadRequestError('Invalid JSON body');
   }
+}
+
+function ensureEnv(env) {
+  if (!env || !env.DB || !env.BUCKET) {
+    throw new Error('Required bindings are missing (DB or BUCKET)');
+  }
+}
+
+function evaluateShareStatus(link, now = new Date()) {
+  const durationSeconds = Number(link.duration_seconds) || 0;
+  if (!durationSeconds) return { expired: false, remainingSeconds: null, expiresAt: null };
+
+  if (!link.started_at) {
+    return { expired: false, remainingSeconds: durationSeconds, expiresAt: null };
+  }
+
+  const expiresAt = new Date(new Date(link.started_at).getTime() + durationSeconds * 1000);
+  const remainingSeconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
+  return { expired: remainingSeconds <= 0, remainingSeconds, expiresAt };
 }
 
 // --- 3. DATABASE LAYER ---
@@ -231,12 +261,17 @@ async function handleGetSharedSubject(db, token) {
 
   // D1 can return numeric columns as strings. Normalize to a boolean-safe number check
   const isActive = Number(link.is_active) === 1;
-  if (!isActive) return errorResponse('LINK EXPIRED', 410);
+  const { expired, remainingSeconds, expiresAt: evaluatedExpiry } = evaluateShareStatus(link);
 
-  let remaining = link.duration_seconds;
+  if (expired || !isActive) {
+    if (isActive) await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+    return errorResponse('LINK EXPIRED', 410);
+  }
+
+  let remaining = remainingSeconds ?? link.duration_seconds;
   const now = new Date();
   const startTime = link.started_at ? new Date(link.started_at) : now;
-  const expiresAt = new Date(startTime.getTime() + link.duration_seconds * 1000);
+  const computedExpiry = evaluatedExpiry || new Date(startTime.getTime() + link.duration_seconds * 1000);
 
   // 3. Handle Timer Logic
   if (!link.started_at) {
@@ -286,7 +321,7 @@ async function handleGetSharedSubject(db, token) {
     meta: {
       remaining_seconds: Math.floor(remaining),
       started_at: link.started_at || startTime.toISOString(),
-      expires_at: expiresAt.toISOString(),
+      expires_at: computedExpiry.toISOString(),
       views: link.views + 1
     }
   });
@@ -296,17 +331,23 @@ async function handleShareList(db, subjectId, origin) {
   try {
     if (!subjectId) return errorResponse('Subject ID required', 400);
     const result = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    const links = (result.results || []).map((link) => {
-      const startPoint = link.started_at || link.created_at;
-      const expiresAt = startPoint ? new Date(new Date(startPoint).getTime() + link.duration_seconds * 1000) : null;
+    const now = new Date();
+    const links = await Promise.all((result.results || []).map(async (link) => {
       const isActive = Number(link.is_active) === 1;
+      const status = evaluateShareStatus(link, now);
+
+      if (status.expired && isActive) {
+        await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+      }
+
       return {
         ...link,
-        is_active: isActive,
-        expires_at: expiresAt ? expiresAt.toISOString() : null,
+        is_active: !status.expired && isActive,
+        expires_at: status.expiresAt ? status.expiresAt.toISOString() : null,
+        remaining_seconds: status.remainingSeconds,
         url: buildShareUrl(origin, link.token)
       };
-    });
+    }));
     return jsonResponse(links);
   } catch (e) {
     return errorResponse('Failed to fetch share links', 500, e.message);
@@ -1418,18 +1459,23 @@ export default {
 
     if (req.method === 'OPTIONS') {
       return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        },
+        headers: CORS_HEADERS,
       });
     }
 
-    const db = new Database(env.DB);
-
     try {
+      ensureEnv(env);
+      const db = new Database(env.DB);
       await db.ensureSchema();
+
+      if (path === '/api/health' && req.method === 'GET') {
+        const now = isoTimestamp();
+        return jsonResponse({
+          status: 'ok',
+          service: APP_TITLE,
+          timestamp: now,
+        });
+      }
 
       // PUBLIC ROUTES
       const shareHtmlMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
@@ -1441,7 +1487,7 @@ export default {
         const key = path.replace('/api/media/', '');
         const obj = await env.BUCKET.get(key);
         if (!obj) return new Response('Not found', { status: 404 });
-        return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' } });
+        return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg', ...CORS_HEADERS } });
       }
 
       // API ROUTES
@@ -1570,7 +1616,11 @@ export default {
       return errorResponse("Route Not Found", 404);
 
     } catch (e) {
-      return jsonResponse({ error: "Internal Server Error", message: e.message, stack: e.stack }, 500);
+      const status = e instanceof BadRequestError ? e.status : 500;
+      const payload = status === 500
+        ? { error: "Internal Server Error", message: e.message, stack: e.stack }
+        : { error: e.message };
+      return jsonResponse(payload, status);
     }
   }
 };
