@@ -12,10 +12,13 @@ const MIGRATIONS = [
   "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0",
   "ALTER TABLE subject_data_points ADD COLUMN confidence INTEGER DEFAULT 100",
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
-  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
+  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'",
   "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
   "ALTER TABLE subjects ADD COLUMN hometown TEXT",
   "ALTER TABLE subjects ADD COLUMN previous_locations TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_name TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_avatar TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_notes TEXT",
   // Physical Attributes
   "ALTER TABLE subjects ADD COLUMN height TEXT",
   "ALTER TABLE subjects ADD COLUMN weight TEXT",
@@ -123,7 +126,8 @@ async function ensureSchema(db) {
           id INTEGER PRIMARY KEY, subject_id INTEGER, title TEXT, description TEXT, event_date TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
-          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT,
+          custom_name TEXT, custom_avatar TEXT, custom_notes TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
           id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT,
@@ -188,10 +192,10 @@ async function handleGetSuggestions(db, adminId) {
 async function handleGetGraph(db, adminId) {
     const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation, status FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
     const rels = await db.prepare(`
-        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
-        FROM subject_relationships r 
-        JOIN subjects s ON r.subject_a_id = s.id 
-        WHERE s.admin_id = ?
+        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label
+        FROM subject_relationships r
+        JOIN subjects s ON r.subject_a_id = s.id
+        WHERE s.admin_id = ? AND r.subject_b_id IS NOT NULL
     `).bind(adminId).all();
     
     return response({ nodes: subjects.results, edges: rels.results });
@@ -207,11 +211,15 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         // Updated to fetch relationships where this subject is EITHER side A or B
         db.prepare(`
-            SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
-            FROM subject_relationships r 
-            JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            SELECT 
+              r.*, 
+              COALESCE(s.full_name, r.custom_name) as target_name,
+              COALESCE(s.avatar_path, r.custom_avatar) as target_avatar,
+              CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END as target_id
+            FROM subject_relationships r
+            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(id, id, id).all(),
+        `).bind(id, id, id, id).all(),
         db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
@@ -1010,6 +1018,7 @@ function serveHtml() {
                                         <div>
                                             <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
                                             <div class="text-xs text-indigo-400 font-mono">{{ r.relationship_type }}</div>
+                                            <div v-if="r.notes || r.custom_notes" class="text-[11px] text-slate-400 max-w-[220px]">{{ r.notes || r.custom_notes }}</div>
                                         </div>
                                     </div>
                                     <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-link-slash"></i></button>
@@ -1304,14 +1313,47 @@ function serveHtml() {
 
                      <!-- Rel Form -->
                      <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                        <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
-                            <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
-                        </select>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" @click="forms.rel.mode = 'subject'" :class="forms.rel.mode === 'subject' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'" class="w-full py-3 rounded-lg font-bold text-xs">Existing Subject</button>
+                            <button type="button" @click="forms.rel.mode = 'custom'" :class="forms.rel.mode === 'custom' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'" class="w-full py-3 rounded-lg font-bold text-xs">External Contact</button>
+                        </div>
+                        <div v-if="forms.rel.mode === 'subject'" class="space-y-3">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Link to another subject</label>
+                            <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                            </select>
+                            <p class="text-xs text-slate-500">Choose someone already in the system.</p>
+                        </div>
+                        <div v-else class="space-y-3">
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Name *</label>
+                                <input v-model="forms.rel.customName" placeholder="Full name" class="glass-input w-full p-3 rounded-lg mt-1" required>
+                            </div>
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Portrait (Upload or Link)</label>
+                                <div class="flex gap-2 flex-wrap">
+                                    <input v-model="forms.rel.customAvatar" placeholder="https://image.url/face.jpg" class="glass-input flex-1 min-w-[200px] p-3 rounded-lg">
+                                    <input type="file" accept="image/*" @change="handleRelAvatarUpload" class="glass-input p-2 text-xs rounded-lg bg-slate-800 text-white cursor-pointer">
+                                </div>
+                                <div v-if="forms.rel.customAvatar" class="flex items-center gap-2 text-xs text-slate-400">
+                                    <img :src="resolveImagePath(forms.rel.customAvatar)" class="w-10 h-10 rounded-full object-cover border border-slate-700">
+                                    <span>Preview of stored portrait.</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Notes about this contact</label>
+                                <textarea v-model="forms.rel.customNotes" rows="2" class="glass-input w-full p-3 rounded-lg" placeholder="Role, identifiers, affiliations..."></textarea>
+                            </div>
+                        </div>
                         <div>
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Relationship Label (Displays on Graph)</label>
-                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1">
+                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1" required>
                         </div>
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Connection Notes</label>
+                            <textarea v-model="forms.rel.notes" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="Context for this link"></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Save Connection</button>
                      </form>
 
                      <!-- Avatar Options -->
@@ -1433,7 +1475,7 @@ function serveHtml() {
             subject: { hometown: '', previous_locations: '' },
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
             event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
-            rel: { subjectB: '', type: '' },
+            rel: { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' },
             routine: { activity: '', location: '', schedule: '', duration: '', notes: '', quote: '', follow_up: '' },
             mediaLink: { url: '', description: '' },
             avatarLink: { url: '' },
@@ -1737,6 +1779,41 @@ function serveHtml() {
              if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-avatar');
         };
 
+        const uploadContactImage = (file) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX = 800;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+                    else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+                    notify("Uploading portrait...", "info");
+                    const res = await api('/upload-contact', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            data: b64,
+                            filename: file.name,
+                            contentType: 'image/jpeg'
+                        })
+                    });
+                    forms.rel.customAvatar = res.key;
+                    notify("Portrait saved");
+                };
+            };
+        };
+
+        const handleRelAvatarUpload = (e) => {
+            if (e.target.files[0]) uploadContactImage(e.target.files[0]);
+        };
+
         // Events, Rels, Routine, Links
         const submitEvent = async () => {
             const isEdit = modal.active === 'edit-event';
@@ -1747,8 +1824,18 @@ function serveHtml() {
             closeModal(); viewSubject(selectedSubject.value.id); notify(isEdit ? "Event Updated" : "Event Logged");
         };
         const submitRel = async () => {
-            await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
+            const payload = { ...forms.rel, subjectA: selectedSubject.value.id };
+            if (forms.rel.mode === 'custom' && !forms.rel.customName) {
+                notify('Contact name required', 'error');
+                return;
+            }
+            if (forms.rel.mode === 'subject' && !forms.rel.subjectB) {
+                notify('Select a subject to connect', 'error');
+                return;
+            }
+            await api('/relationship', { method: 'POST', body: JSON.stringify(payload) });
             closeModal(); viewSubject(selectedSubject.value.id); notify("Connection Established");
+            forms.rel = { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' };
         };
         const submitRoutine = async () => {
             await api('/routine', { method: 'POST', body: JSON.stringify({ ...forms.routine, subjectId: selectedSubject.value.id }) });
@@ -1833,6 +1920,8 @@ function serveHtml() {
                 modal.parentId = typeof payload === 'number' ? payload : null;
             } else if (type === 'add-event') {
                 forms.event = { date: new Date().toISOString().split('T')[0], title: '', description: '' };
+            } else if (type === 'add-rel') {
+                forms.rel = { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' };
             } else if (type === 'edit-intel') {
                 const intel = payload || {};
                 modal.editId = intel.id;
@@ -1954,7 +2043,7 @@ function serveHtml() {
             expandedState, graphSearch, modalStep, toasts, shareLinks,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
             viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink, submitAvatarLink,
-            handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
+            handleMediaUpload, handleAvatarUpload, handleRelAvatarUpload, triggerMediaUpload, triggerAvatar,
             openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath,
             createShareLink, revokeShareLink, copyShareLink,
             fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge, selectedNode
@@ -2050,6 +2139,13 @@ function serveSharedHtml(token) {
             <span class="text-[10px] text-slate-500">Limited</span>
           </div>
           <div class="text-sm text-slate-300 space-y-2" id="contact"></div>
+          <div class="pt-2 border-t border-slate-800">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Social Links</h4>
+              <span class="text-[10px] text-slate-500">Icons only</span>
+            </div>
+            <div id="socials" class="flex flex-wrap gap-2"></div>
+          </div>
         </div>
       </div>
 
@@ -2068,6 +2164,14 @@ function serveSharedHtml(token) {
           </div>
           <div id="routine" class="space-y-3"></div>
         </div>
+      </div>
+
+      <div class="glass-panel rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Connections</h3>
+          <span class="text-[10px] text-slate-500">Subject + external</span>
+        </div>
+        <div id="relationships" class="space-y-3"></div>
       </div>
 
       <div class="glass-panel rounded-2xl p-4">
@@ -2096,6 +2200,53 @@ function serveSharedHtml(token) {
 
     const infoRow = (label, value, highlight = false) =>
       '<div class="info-row"><span class="info-label">' + label + '</span><span class="info-value ' + (highlight ? 'text-indigo-200' : 'text-white') + '">' + value + '</span></div>';
+
+    const parseSocialLinks = (text) => {
+      if (!text) return [];
+      const urls = text.match(/\bhttps?:\/\/[^\s,]+/gi) || [];
+      return urls.map((url) => {
+        const lower = url.toLowerCase();
+        let icon = 'fa-solid fa-link';
+        if(lower.includes('twitter.com') || lower.includes('x.com')) icon = 'fa-brands fa-x-twitter';
+        else if(lower.includes('facebook.com') || lower.includes('fb.com')) icon = 'fa-brands fa-facebook';
+        else if(lower.includes('linkedin.com')) icon = 'fa-brands fa-linkedin';
+        else if(lower.includes('instagram.com')) icon = 'fa-brands fa-instagram';
+        else if(lower.includes('github.com')) icon = 'fa-brands fa-github';
+        else if(lower.includes('youtube.com')) icon = 'fa-brands fa-youtube';
+        else if(lower.includes('tiktok.com')) icon = 'fa-brands fa-tiktok';
+        else if(lower.includes('reddit.com')) icon = 'fa-brands fa-reddit';
+        else if(lower.includes('discord')) icon = 'fa-brands fa-discord';
+        else if(lower.includes('telegram.org') || lower.includes('t.me')) icon = 'fa-brands fa-telegram';
+        else if(lower.includes('whatsapp.com') || lower.includes('wa.me')) icon = 'fa-brands fa-whatsapp';
+        else if(lower.includes('medium.com')) icon = 'fa-brands fa-medium';
+        else if(lower.includes('pinterest.com')) icon = 'fa-brands fa-pinterest';
+        else if(lower.includes('snapchat.com')) icon = 'fa-brands fa-snapchat';
+        return { url, icon };
+      });
+    };
+
+    const renderSocialLinks = (text) => {
+      const shell = document.getElementById('socials');
+      const socials = parseSocialLinks(text);
+      if (!shell) return;
+      if (!socials.length) {
+        shell.innerHTML = '<p class="text-sm text-slate-500">No social profiles shared.</p>';
+        return;
+      }
+      shell.innerHTML = socials
+        .map(({ url, icon }) =>
+          '<a href="' +
+          url +
+          '" target="_blank" rel="noreferrer" class="w-9 h-9 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-700/40 flex items-center justify-center">' +
+          '<i class="' + icon + '"></i></a>'
+        )
+        .join('');
+    };
+
+    const resolveShareImage = (path) => {
+      if (!path) return 'https://ui-avatars.com/api/?name=Contact&background=random';
+      return path.startsWith('http') ? path : '/api/media/' + path;
+    };
 
     const addList = (el, items, emptyText, renderer) => {
       if (!items.length) {
@@ -2164,8 +2315,8 @@ function serveSharedHtml(token) {
 
         document.getElementById('contact').innerHTML =
           infoRow('Contact', data.contact || '—') +
-          infoRow('Social Links', data.social_links || '—', true) +
           infoRow('Digital IDs', data.digital_identifiers || '—', true);
+        renderSocialLinks(data.social_links);
 
         addList(document.getElementById('events'), data.events || [], 'No timeline events logged.', (evt) => {
           const wrap = document.createElement('div');
@@ -2180,6 +2331,21 @@ function serveSharedHtml(token) {
           const quoteBlock = r.quote ? '<p class="text-sm text-indigo-200 mt-1 italic">"' + r.quote + '"</p>' : '';
           const follow = r.follow_up ? '<p class="text-xs text-amber-200 mt-1">Follow-up: ' + r.follow_up + '</p>' : '';
           card.innerHTML = '<div class="flex items-center justify-between"><p class="text-white font-semibold">' + r.activity + '</p><span class="text-[10px] text-slate-400">' + (r.schedule || '—') + '</span></div><p class="text-xs text-indigo-200 mt-1"><i class="fa-solid fa-location-dot mr-1"></i>' + (r.location || '—') + ' <span class="text-slate-500">•</span> ' + (r.duration || '—') + '</p><p class="text-sm text-slate-300 mt-1">' + (r.notes || '') + '</p>' + quoteBlock + follow;
+          return card;
+        });
+
+        addList(document.getElementById('relationships'), data.relationships || [], 'No known connections.', (rel) => {
+          const card = document.createElement('div');
+          card.className = 'flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800';
+          const avatar = document.createElement('img');
+          avatar.className = 'w-12 h-12 rounded-full object-cover border border-slate-700';
+          avatar.src = resolveShareImage(rel.target_avatar || rel.custom_avatar);
+          card.appendChild(avatar);
+          const text = document.createElement('div');
+          text.innerHTML = '<p class="text-white font-semibold">' + (rel.target_name || rel.custom_name || 'Unknown contact') + '</p>' +
+            '<p class="text-[11px] text-indigo-200">' + (rel.relationship_type || 'Linked') + '</p>' +
+            (rel.notes || rel.custom_notes ? '<p class="text-xs text-slate-400 max-w-[360px]">' + (rel.notes || rel.custom_notes) + '</p>' : '');
+          card.appendChild(text);
           return card;
         });
 
@@ -2251,6 +2417,15 @@ async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
         await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?, ?, ?, ?, ?)')
             .bind(subjectId, key, contentType, description, isoTimestamp()).run();
     }
+    return response({ success: true, key });
+}
+
+async function handleUploadContact(req, bucket) {
+    const { data, filename, contentType } = await req.json();
+    if (!data || !filename) return errorResponse('Image and filename required', 400);
+    const key = `contact-${Date.now()}-${sanitizeFileName(filename)}`;
+    const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    await bucket.put(key, binary, { httpMetadata: { contentType: contentType || 'image/jpeg' } });
     return response({ success: true, key });
 }
 
@@ -2379,8 +2554,18 @@ export default {
 
         if (path === '/api/relationship') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
+            if (!p.subjectB && !p.customName) return errorResponse('Target subject or contact name required', 400);
+            const stmt = await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, notes, created_at, custom_name, custom_avatar, custom_notes) VALUES (?,?,?,?,?,?,?,?)');
+            await stmt.bind(
+                p.subjectA,
+                p.subjectB || null,
+                p.type || 'Connection',
+                p.notes || '',
+                isoTimestamp(),
+                p.customName || null,
+                p.customAvatar || null,
+                p.customNotes || ''
+            ).run();
             return response({ success: true });
         }
 
@@ -2419,6 +2604,7 @@ export default {
         // Media
         if (path === '/api/upload-photo') return handleUploadPhoto(req, env.DB, env.BUCKET, false);
         if (path === '/api/upload-avatar') return handleUploadPhoto(req, env.DB, env.BUCKET, true);
+        if (path === '/api/upload-contact') return handleUploadContact(req, env.BUCKET);
 
         if (path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
