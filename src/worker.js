@@ -348,16 +348,61 @@ async function handleGetSharedSubject(db, token) {
     }
 
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND is_archived = 0').bind(link.subject_id).first();
-    if (!subject) return errorResponse('Subject not found', 404);
+    if (!subject) {
+        await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+        return errorResponse('Subject not found', 404);
+    }
 
-    const data = await handleGetSubjectFull(db, subject.id);
-    const payload = await data.json();
+    const fullResp = await handleGetSubjectFull(db, subject.id);
+    if (!fullResp.ok) return fullResp; // Propagate underlying failure status to caller
 
-    // Remove admin metadata before sharing
-    const { admin_id, is_archived, dataPoints, ...safeSubject } = payload;
+    const payload = await fullResp.json();
+
+    // Remove sensitive/internal metadata before sharing
+    const {
+        admin_id,
+        is_archived,
+        dataPoints,
+        contact,
+        digital_identifiers,
+        habits,
+        notes,
+        ...safeSubject
+    } = payload;
+
+    // Only expose a curated subset of subject fields to the shared view
+    const publicSubject = {
+        full_name: safeSubject.full_name,
+        dob: safeSubject.dob,
+        age: safeSubject.age,
+        gender: safeSubject.gender,
+        occupation: safeSubject.occupation,
+        nationality: safeSubject.nationality,
+        education: safeSubject.education,
+        religion: safeSubject.religion,
+        location: safeSubject.location,
+        hometown: safeSubject.hometown,
+        previous_locations: safeSubject.previous_locations,
+        status: safeSubject.status,
+        last_sighted: safeSubject.last_sighted,
+        avatar_path: safeSubject.avatar_path,
+        height: safeSubject.height,
+        weight: safeSubject.weight,
+        eye_color: safeSubject.eye_color,
+        hair_color: safeSubject.hair_color,
+        blood_type: safeSubject.blood_type,
+        identifying_marks: safeSubject.identifying_marks,
+        mbti: safeSubject.mbti,
+        alignment: safeSubject.alignment,
+        social_links: safeSubject.social_links,
+        media: safeSubject.media,
+        events: safeSubject.events,
+        relationships: safeSubject.relationships,
+        routine: safeSubject.routine,
+    };
 
     // Hide internal intel entries from public view
-    return response({ ...safeSubject, dataPoints: [], share: shareMeta });
+    return response({ ...publicSubject, dataPoints: [], share: shareMeta });
 }
 
 async function handleExpireShareLink(req, db) {
