@@ -1652,3 +1652,30 @@ export default {
             await nukeDatabase(env.DB, env.BUCKET);
             return response({success:true});
         }
+
+        // Media Handlers
+        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
+            const { subjectId, data, filename, contentType } = await req.json();
+            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
+            
+            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
+            
+            return response({success:true});
+        }
+
+        if (path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
+        }
+
+        return new Response('Not Found', { status: 404 });
+    } catch(e) {
+        return errorResponse(e.message);
+    }
+  }
+};
