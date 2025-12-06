@@ -15,7 +15,8 @@ async function hashPassword(secret) {
 }
 
 function sanitizeFileName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
+  // Added safety check: (name || 'file') prevents crash if name is undefined
+  return (name || 'file').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
 
 function generateToken() {
