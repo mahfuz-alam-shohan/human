@@ -970,7 +970,7 @@ function serveHtml() {
                     </div>
                     <div class="text-[11px] text-gray-500 bg-blue-50 border border-blue-100 p-2 rounded-lg" :class="{'border-red-200 bg-red-50 text-red-600': errors.loc_coords}">
                         <i class="fa-solid" :class="forms.location.lat ? 'fa-location-crosshairs text-blue-500' : 'fa-hand-pointer text-gray-400'"></i>
-                        <span class="ml-2 font-medium">{{ forms.location.lat ? `Pinned at ${forms.location.lat.toFixed(4)}, ${forms.location.lng.toFixed(4)}` : 'Select a point on the map to place the pin.' }}</span>
+                        <span class="ml-2 font-medium">{{ forms.location.lat ? ('Pinned at ' + forms.location.lat.toFixed(4) + ', ' + forms.location.lng.toFixed(4)) : 'Select a point on the map to place the pin.' }}</span>
                     </div>
                     <input v-model="forms.location.name" placeholder="Location Name *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.loc_name}">
                     <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-sm">
