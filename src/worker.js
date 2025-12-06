@@ -53,118 +53,21 @@ async function ensureSchema(db) {
   try {
       await db.prepare("PRAGMA foreign_keys = ON;").run();
 
-      await db.batch([
-        db.prepare(`CREATE TABLE IF NOT EXISTS admins (
-            id INTEGER PRIMARY KEY, 
-            email TEXT UNIQUE, 
-            password_hash TEXT, 
-            created_at TEXT
-        )`),
-        
-        db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
-          id INTEGER PRIMARY KEY, 
-          admin_id INTEGER, 
-          full_name TEXT, 
-          alias TEXT, 
-          dob TEXT, 
-          age INTEGER, 
-          gender TEXT,
-          occupation TEXT, 
-          nationality TEXT, 
-          ideology TEXT, 
-          location TEXT, 
-          contact TEXT,
-          hometown TEXT, 
-          previous_locations TEXT,
-          modus_operandi TEXT, 
-          notes TEXT, 
-          weakness TEXT, 
-          avatar_path TEXT, 
-          is_archived INTEGER DEFAULT 0,
-          status TEXT DEFAULT 'Active', 
-          threat_level TEXT DEFAULT 'Low', 
-          last_sighted TEXT,
-          height TEXT, 
-          weight TEXT, 
-          eye_color TEXT, 
-          hair_color TEXT, 
-          blood_type TEXT, 
-          identifying_marks TEXT,
-          social_links TEXT, 
-          digital_identifiers TEXT,
-          created_at TEXT, 
-          updated_at TEXT
-        )`),
+      // Sequential execution to prevent batch failures
+      const statements = [
+        `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, occupation TEXT, nationality TEXT, ideology TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_interactions (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, type TEXT, transcript TEXT, conclusion TEXT, evidence_url TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_locations (id INTEGER PRIMARY KEY, subject_id INTEGER, name TEXT, address TEXT, lat REAL, lng REAL, type TEXT, notes TEXT, created_at TEXT)`,
+        `CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`
+      ];
 
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_intel (
-          id INTEGER PRIMARY KEY, 
-          subject_id INTEGER, 
-          category TEXT, 
-          label TEXT, 
-          value TEXT, 
-          analysis TEXT, 
-          confidence INTEGER DEFAULT 100, 
-          source TEXT, 
-          created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
-          id INTEGER PRIMARY KEY, 
-          subject_id INTEGER, 
-          object_key TEXT, 
-          content_type TEXT, 
-          description TEXT, 
-          media_type TEXT DEFAULT 'file', 
-          external_url TEXT, 
-          created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
-          id INTEGER PRIMARY KEY, 
-          subject_a_id INTEGER, 
-          subject_b_id INTEGER, 
-          relationship_type TEXT, 
-          notes TEXT, 
-          custom_name TEXT, 
-          custom_avatar TEXT, 
-          custom_notes TEXT, 
-          created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_interactions (
-            id INTEGER PRIMARY KEY, 
-            subject_id INTEGER, 
-            date TEXT, 
-            type TEXT, 
-            transcript TEXT, 
-            conclusion TEXT, 
-            evidence_url TEXT, 
-            created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_locations (
-            id INTEGER PRIMARY KEY, 
-            subject_id INTEGER, 
-            name TEXT, 
-            address TEXT, 
-            lat REAL, 
-            lng REAL, 
-            type TEXT, 
-            notes TEXT, 
-            created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
-          id INTEGER PRIMARY KEY, 
-          subject_id INTEGER REFERENCES subjects(id), 
-          token TEXT UNIQUE, 
-          is_active INTEGER DEFAULT 1,
-          duration_seconds INTEGER, 
-          views INTEGER DEFAULT 0,
-          started_at TEXT, 
-          created_at TEXT
-        )`)
-      ]);
+      for (const stmt of statements) {
+          try { await db.prepare(stmt).run(); } catch(e) { console.error("Table creation error:", e); }
+      }
 
       schemaInitialized = true;
   } catch (err) { 
@@ -262,18 +165,34 @@ async function handleGetMapData(db, adminId) {
 // --- Share Logic ---
 
 async function handleCreateShareLink(req, db, origin) {
-    const { subjectId, durationMinutes } = await req.json();
-    if (!subjectId) return errorResponse('subjectId required', 400);
-    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 15) * 60)); 
-    const token = generateToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
-        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
-    return response({ url: `${origin}/share/${token}` });
+    try {
+        const body = await req.json();
+        if (!body || !body.subjectId) return errorResponse('subjectId required', 400);
+        
+        const { subjectId, durationMinutes } = body;
+        
+        // Defensive check: Ensure table exists
+        try { await db.prepare('SELECT 1 FROM subject_shares LIMIT 1').run(); } 
+        catch (e) { await db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`).run(); }
+
+        const durationSeconds = Math.max(30, Math.floor((durationMinutes || 15) * 60)); 
+        const token = generateToken();
+        await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
+            .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
+        return response({ url: `${origin}/share/${token}` });
+    } catch(e) {
+        return errorResponse("Failed to create link: " + e.message, 500);
+    }
 }
 
 async function handleListShareLinks(db, subjectId) {
-    const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    return response(res.results);
+    try {
+        const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
+        return response(res.results);
+    } catch (e) {
+        // Return empty list if table missing
+        return response([]);
+    }
 }
 
 async function handleRevokeShareLink(db, token) {
