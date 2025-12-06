@@ -1403,7 +1403,9 @@ export default {
     }
 
     try {
-        if(req.method !== 'GET') await ensureSchema(env.DB); 
+        // Ensure schema exists for all requests that touch the database so public
+        // share links work even before any write operations are performed.
+        await ensureSchema(env.DB);
 
         const shareHtmlMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
         if (req.method === 'GET' && shareHtmlMatch) return serveSharedHtml(shareHtmlMatch[1]);
