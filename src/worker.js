@@ -706,8 +706,13 @@ function serveHtml() {
 
         <!-- Content Area -->
         <main class="flex-1 relative overflow-hidden bg-gray-50 flex flex-col">
-            <div v-if="actionLoading" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-30 flex items-center justify-center text-sm font-bold text-gray-700">
-                <i class="fa-solid fa-spinner animate-spin mr-2"></i> Working...
+            <div
+              v-if="actionLoading"
+              class="absolute top-4 right-4 z-30 bg-white shadow-lg border border-gray-200 rounded-lg px-4 py-2 text-sm font-bold text-gray-700 flex items-center gap-2 pointer-events-none"
+              aria-live="polite"
+            >
+                <i class="fa-solid fa-spinner animate-spin"></i>
+                <span>Working...</span>
             </div>
             
             <!-- Dashboard -->
