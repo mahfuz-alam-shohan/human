@@ -171,7 +171,7 @@ async function ensureSchema(db) {
   }
 }
 
-async function nukeDatabase(db) {
+async function nukeDatabase(db, bucket) {
     // The "Burn Protocol" - Drops all tables explicitly
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
@@ -186,6 +186,14 @@ async function nukeDatabase(db) {
         try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
     
+    // Attempt to list and delete bucket contents (Best effort)
+    try {
+        const list = await bucket.list();
+        if(list.objects) {
+            await Promise.all(list.objects.map(o => bucket.delete(o.key)));
+        }
+    } catch(e) { console.error("Bucket clean error", e); }
+
     await db.prepare("PRAGMA foreign_keys = ON;").run();
     schemaInitialized = false; // Force ensureSchema on next run
     return true;
@@ -327,6 +335,172 @@ async function handleGetSharedSubject(db, token) {
 }
 
 // --- Frontend HTML ---
+
+function serveSharedHtml(token) {
+    const html = `<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>People OS | Secure Share</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .glass { background: white; border: 1px solid #e5e7eb; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-gray-100 h-full overflow-hidden">
+  <div id="app" v-cloak class="h-full flex flex-col max-w-2xl mx-auto bg-white shadow-2xl overflow-hidden relative">
+    
+    <div v-if="loading" class="flex-1 flex items-center justify-center flex-col gap-4">
+        <div class="animate-spin text-blue-600 text-3xl"><i class="fa-solid fa-circle-notch"></i></div>
+        <div class="text-xs font-bold uppercase tracking-widest text-gray-400">Decrypting Link...</div>
+    </div>
+
+    <div v-else-if="error" class="flex-1 flex items-center justify-center p-8 text-center">
+        <div>
+            <div class="text-red-500 text-5xl mb-4"><i class="fa-solid fa-lock"></i></div>
+            <h1 class="text-xl font-bold text-gray-900 mb-2">{{ error }}</h1>
+            <p class="text-gray-500 text-sm">This secure link is no longer valid or has expired.</p>
+        </div>
+    </div>
+
+    <div v-else class="flex-1 flex flex-col h-full overflow-hidden">
+        <!-- Secure Header -->
+        <div class="bg-gray-900 text-white p-4 flex justify-between items-center shrink-0">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-shield-halved text-green-400"></i>
+                <span class="font-bold text-sm tracking-wide uppercase">Secure View</span>
+            </div>
+            <div class="text-xs font-mono bg-gray-800 px-2 py-1 rounded text-gray-300" :class="{'text-red-400 animate-pulse': timer < 60}">
+                <i class="fa-regular fa-clock mr-1"></i> {{ formatTime(timer) }}
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-6 space-y-8">
+            <!-- Header -->
+            <div class="flex items-start gap-4">
+                 <div class="w-20 h-20 bg-gray-200 rounded-xl overflow-hidden border-4 border-gray-100 shadow-sm shrink-0">
+                    <img v-if="data.avatar_path" :src="'/api/media/'+data.avatar_path" class="w-full h-full object-cover">
+                    <div v-else class="w-full h-full flex items-center justify-center text-gray-400"><i class="fa-solid fa-user text-2xl"></i></div>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-black text-gray-900 leading-tight">{{ data.full_name }}</h1>
+                    <div class="text-sm text-gray-500 font-medium mb-2">{{ data.occupation || 'Unknown Occupation' }}</div>
+                    <div class="flex flex-wrap gap-2">
+                         <span class="px-2 py-1 rounded bg-gray-100 text-gray-600 text-[10px] font-bold uppercase">{{ data.nationality }}</span>
+                         <span class="px-2 py-1 rounded text-[10px] font-bold uppercase" :class="getThreatColor(data.threat_level, true)">{{ data.threat_level }} Priority</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sections -->
+            <div class="space-y-6">
+                <div class="glass p-5">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-3">Recent Activity</h3>
+                    <div v-if="data.interactions.length === 0" class="text-sm text-gray-400 italic">No recent activity logged.</div>
+                    <div v-for="ix in data.interactions" class="mb-3 last:mb-0 border-l-2 border-blue-200 pl-3 pb-1">
+                        <div class="flex justify-between items-baseline mb-1">
+                            <span class="text-xs font-bold text-blue-600 uppercase">{{ ix.type }}</span>
+                            <span class="text-[10px] text-gray-400">{{ new Date(ix.date).toLocaleDateString() }}</span>
+                        </div>
+                        <p class="text-sm text-gray-700 leading-snug">{{ ix.conclusion || 'No summary available.' }}</p>
+                    </div>
+                </div>
+
+                <div class="glass p-5">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-3">Known Locations</h3>
+                    <div v-if="data.locations.length === 0" class="text-sm text-gray-400 italic">No locations pinned.</div>
+                    <div class="space-y-2">
+                        <div v-for="loc in data.locations" class="flex items-center gap-3 text-sm p-2 bg-gray-50 rounded-lg">
+                            <i class="fa-solid fa-location-dot text-gray-400"></i>
+                            <div class="flex-1">
+                                <div class="font-bold text-gray-900">{{ loc.name }}</div>
+                                <div class="text-xs text-gray-500">{{ loc.address }}</div>
+                            </div>
+                            <a :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="text-blue-600 hover:text-blue-800"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                        </div>
+                    </div>
+                </div>
+
+                 <div class="glass p-5">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-3">Attached Media</h3>
+                    <div v-if="data.media.length === 0" class="text-sm text-gray-400 italic">No media attached.</div>
+                    <div class="grid grid-cols-2 gap-2">
+                         <a v-for="m in data.media" :href="'/api/media/'+m.object_key" target="_blank" class="block bg-gray-50 rounded-lg p-3 text-center hover:bg-blue-50 transition-colors border border-gray-100">
+                            <i class="fa-solid fa-file-arrow-down text-xl text-gray-400 mb-2"></i>
+                            <div class="text-[10px] font-bold text-gray-700 truncate">{{ m.description }}</div>
+                         </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center text-[10px] text-gray-400 py-4">
+                Generated via PeopleOS. Access logged.
+            </div>
+        </div>
+    </div>
+  </div>
+  <script>
+    const { createApp, ref, onMounted } = Vue;
+    createApp({
+        setup() {
+            const loading = ref(true);
+            const error = ref(null);
+            const data = ref(null);
+            const timer = ref(0);
+            
+            const token = "${token}";
+
+            const formatTime = (s) => {
+                const m = Math.floor(s / 60);
+                const sec = s % 60;
+                return \`\${m}:\${sec.toString().padStart(2, '0')}\`;
+            };
+
+            const getThreatColor = (l, isBg = false) => {
+                const colors = {
+                    'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600',
+                    'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600',
+                    'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600',
+                    'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600'
+                };
+                return colors[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500');
+            };
+
+            onMounted(async () => {
+                try {
+                    const res = await fetch('/api/share/' + token);
+                    const json = await res.json();
+                    if(json.error) throw new Error(json.error);
+                    
+                    data.value = json;
+                    timer.value = json.meta.remaining_seconds;
+                    
+                    setInterval(() => {
+                        if(timer.value > 0) timer.value--;
+                        else if(!error.value) error.value = "Link Expired";
+                    }, 1000);
+                    
+                } catch(e) {
+                    error.value = e.message || "Access Denied";
+                } finally {
+                    loading.value = false;
+                }
+            });
+
+            return { loading, error, data, timer, formatTime, getThreatColor };
+        }
+    }).mount('#app');
+  </script>
+</body>
+</html>`;
+    return new Response(html, { headers: { 'Content-Type': 'text/html' }});
+}
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -1474,33 +1648,6 @@ export default {
         }
 
         if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
+            await nukeDatabase(env.DB, env.BUCKET);
             return response({success:true});
         }
-
-        // Media Handlers
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        return errorResponse(e.message);
-    }
-  }
-};
