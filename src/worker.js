@@ -31,7 +31,9 @@ const MIGRATIONS = [
   // Media Links
   "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
   "ALTER TABLE subject_media ADD COLUMN external_url TEXT",
-  "CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, created_at TEXT)"
+  "CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, started_at TEXT, created_at TEXT)",
+  "ALTER TABLE subject_shares ADD COLUMN duration_seconds INTEGER",
+  "ALTER TABLE subject_shares ADD COLUMN started_at TEXT"
 ];
 
 // --- Helper Functions ---
@@ -126,7 +128,8 @@ async function ensureSchema(db) {
           id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
-          id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1,
+          duration_seconds INTEGER, started_at TEXT, created_at TEXT
         )`)
       ]);
 
@@ -273,22 +276,24 @@ async function handleExportCSV(db, adminId) {
 }
 
 async function handleCreateShareLink(req, db, origin) {
-    const { subjectId } = await req.json();
+    const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
+
+    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 0) * 60)) || 300;
 
     const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
     if (!subject) return errorResponse('Subject not found', 404);
 
     const token = generateShareToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, created_at) VALUES (?, ?, ?)')
-        .bind(subjectId, token, isoTimestamp()).run();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at) VALUES (?, ?, ?, ?)')
+        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
 
     return response({ token, url: `${origin}/share/${token}` });
 }
 
 async function handleListShareLinks(db, subjectId, origin) {
     if (!subjectId) return errorResponse('subjectId required', 400);
-    const res = await db.prepare('SELECT token, created_at, is_active FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC')
+    const res = await db.prepare('SELECT token, created_at, is_active, duration_seconds, started_at FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC')
         .bind(subjectId).all();
     const links = res.results.map((row) => ({ ...row, url: `${origin}/share/${row.token}` }));
     return response({ links });
@@ -302,8 +307,32 @@ async function handleRevokeShareLink(req, db) {
 }
 
 async function handleGetSharedSubject(db, token) {
-    const link = await db.prepare('SELECT subject_id FROM subject_shares WHERE token = ? AND is_active = 1').bind(token).first();
-    if (!link) return errorResponse('Share link invalid or disabled', 404);
+    const link = await db.prepare('SELECT subject_id, is_active, duration_seconds, started_at FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link || !link.is_active) return errorResponse('Share link invalid or disabled', 404);
+
+    let shareMeta = null;
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+        const startedMs = new Date(startedAt).getTime();
+        const elapsed = Math.floor((now - startedMs) / 1000);
+        const remaining = Math.max(link.duration_seconds - elapsed, 0);
+
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE token = ?').bind(startedAt, token).run();
+        }
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+            return errorResponse('Share link expired', 410);
+        }
+
+        shareMeta = {
+            duration_seconds: link.duration_seconds,
+            started_at: startedAt,
+            remaining_seconds: remaining
+        };
+    }
 
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND is_archived = 0').bind(link.subject_id).first();
     if (!subject) return errorResponse('Subject not found', 404);
@@ -315,7 +344,14 @@ async function handleGetSharedSubject(db, token) {
     const { admin_id, is_archived, dataPoints, ...safeSubject } = payload;
 
     // Hide internal intel entries from public view
-    return response({ ...safeSubject, dataPoints: [] });
+    return response({ ...safeSubject, dataPoints: [], share: shareMeta });
+}
+
+async function handleExpireShareLink(req, db) {
+    const { token } = await req.json();
+    if (!token) return errorResponse('token required', 400);
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
 }
 
 // --- Frontend Application ---
@@ -1282,14 +1318,25 @@ function serveHtml() {
                      <!-- Shareable Link Manager -->
                      <div v-if="modal.active === 'share-link'" class="space-y-4">
                         <p class="text-sm text-slate-400 leading-relaxed">Generate a view-only dossier link. Anyone with the link can see this subject, but cannot edit. Disable a link anytime to cut access.</p>
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Viewing window (minutes)</label>
+                            <input v-model.number="forms.share.durationMinutes" type="number" min="0.5" step="0.5" class="glass-input w-full p-3 rounded-lg" placeholder="5">
+                            <p class="text-[11px] text-slate-500">A countdown starts when someone opens the link. Once the timer hits zero, the link is disabled automatically.</p>
+                        </div>
                         <button @click="createShareLink" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-link"></i> Create New Link
+                            <i class="fa-solid fa-link"></i> Create Timed Link
                         </button>
                         <div v-if="shareLinks.length" class="space-y-3">
                             <div v-for="link in shareLinks" :key="link.token" class="glass-panel border border-slate-800 p-3 rounded-xl">
                                 <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
                                     <span>Created {{ new Date(link.created_at).toLocaleString() }}</span>
                                     <span class="font-bold" :class="link.is_active ? 'text-emerald-400' : 'text-amber-400'">{{ link.is_active ? 'Active' : 'Disabled' }}</span>
+                                </div>
+                                <div class="flex items-center gap-2 text-[11px] text-slate-500 mb-2">
+                                    <i class="fa-regular fa-hourglass-half text-indigo-300"></i>
+                                    <span v-if="link.duration_seconds">{{ Math.round(link.duration_seconds / 60) }} min window</span>
+                                    <span v-else>No timer set</span>
+                                    <span v-if="link.started_at">• Started {{ new Date(link.started_at).toLocaleString() }}</span>
                                 </div>
                                 <div class="bg-slate-900/60 p-2 rounded font-mono text-xs text-indigo-300 break-all">{{ link.url }}</div>
                                 <div class="flex gap-2 mt-3">
@@ -1358,7 +1405,8 @@ function serveHtml() {
             rel: { subjectB: '', type: '' },
             routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
             mediaLink: { url: '', description: '' },
-            avatarLink: { url: '' }
+            avatarLink: { url: '' },
+            share: { durationMinutes: 5 }
         });
 
         const navItems = [
@@ -1806,7 +1854,8 @@ function serveHtml() {
 
         const createShareLink = async () => {
             if (!selectedSubject.value) return;
-            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selectedSubject.value.id }) });
+            const payload = { subjectId: selectedSubject.value.id, durationMinutes: forms.share.durationMinutes };
+            const res = await api('/share-links', { method: 'POST', body: JSON.stringify(payload) });
             await loadShareLinks(selectedSubject.value.id);
             notify('Share link created');
             if (navigator?.clipboard?.writeText) {
@@ -1913,6 +1962,10 @@ function serveSharedHtml(token) {
   </style>
 </head>
 <body class="min-h-screen">
+  <div id="timerShell" class="hidden fixed top-4 right-4 z-50 bg-emerald-600/20 text-emerald-200 border border-emerald-500/50 rounded-full px-4 py-2 shadow-lg text-sm font-semibold backdrop-blur flex items-center gap-2">
+    <i class="fa-regular fa-clock"></i>
+    <span id="countdown">--:--</span>
+  </div>
   <div class="content-shell">
     <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
       <div>
@@ -2003,6 +2056,9 @@ function serveSharedHtml(token) {
     const token = '${token}';
     const statusEl = document.getElementById('status');
     const content = document.getElementById('content');
+    const timerShell = document.getElementById('timerShell');
+    const countdownEl = document.getElementById('countdown');
+    let countdownInterval = null;
 
     const setAvatar = (src) => {
       const img = document.getElementById('avatar');
@@ -2020,6 +2076,35 @@ function serveSharedHtml(token) {
       }
       el.innerHTML = '';
       items.forEach((item) => el.appendChild(renderer(item)));
+    };
+
+    const startCountdown = (seconds) => {
+      if (!seconds || seconds <= 0) return;
+      let remaining = Math.floor(seconds);
+
+      const render = () => {
+        const mins = Math.floor(remaining / 60);
+        const secs = String(remaining % 60).padStart(2, '0');
+        countdownEl.textContent = mins + ':' + secs;
+      };
+
+      render();
+      timerShell.classList.remove('hidden');
+      clearInterval(countdownInterval);
+      countdownInterval = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(countdownInterval);
+          countdownEl.textContent = 'Expired';
+          statusEl.textContent = 'This share link has expired.';
+          statusEl.className = 'glass-panel bg-red-900/40 border border-red-700 rounded-2xl p-4 text-sm text-red-200';
+          statusEl.classList.remove('hidden');
+          content.classList.add('hidden');
+          fetch('/api/share-links/expire', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) }).catch(() => {});
+          return;
+        }
+        render();
+      }, 1000);
     };
 
     (async () => {
@@ -2079,6 +2164,10 @@ function serveSharedHtml(token) {
           wrap.appendChild(text);
           return wrap;
         });
+
+        if (data.share?.remaining_seconds) {
+          startCountdown(data.share.remaining_seconds);
+        }
 
       } catch (err) {
         statusEl.textContent = err.message;
@@ -2170,6 +2259,7 @@ export default {
             return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), url.origin);
         }
         if (path === '/api/share-links/revoke') return handleRevokeShareLink(req, env.DB);
+        if (path === '/api/share-links/expire') return handleExpireShareLink(req, env.DB);
 
         // Subject Operations
         if (path === '/api/subjects') {
