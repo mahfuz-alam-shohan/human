@@ -239,21 +239,44 @@ async function handleGetSubjectFull(db, id) {
     });
 }
 
+async function handleGetMapData(db, adminId) {
+    // Fetch all locations for all active subjects belonging to admin
+    const query = `
+        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
+        FROM subject_locations l
+        JOIN subjects s ON l.subject_id = s.id
+        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
+    `;
+    const res = await db.prepare(query).bind(adminId).all();
+    return response(res.results);
+}
+
 // --- Share Logic ---
 
 async function handleCreateShareLink(req, db, origin) {
     const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
-    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 5) * 60)); // Default 5m
+    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 15) * 60)); 
     const token = generateToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at) VALUES (?, ?, ?, ?)')
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active) VALUES (?, ?, ?, ?, 1)')
         .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
     return response({ url: `${origin}/share/${token}` });
 }
 
+async function handleListShareLinks(db, subjectId) {
+    const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
+    return response(res.results);
+}
+
+async function handleRevokeShareLink(db, token) {
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
+}
+
 async function handleGetSharedSubject(db, token) {
     const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
-    if (!link || !link.is_active) return errorResponse('LINK EXPIRED OR INVALID', 404);
+    if (!link) return errorResponse('LINK INVALID', 404);
+    if (!link.is_active) return errorResponse('LINK REVOKED', 410);
 
     // Timer Logic
     if (link.duration_seconds) {
@@ -274,13 +297,15 @@ async function handleGetSharedSubject(db, token) {
         }
         
         // Fetch limited data
-        const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status FROM subjects WHERE id = ?').bind(link.subject_id).first();
-        const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ?').bind(link.subject_id).all();
+        const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status, created_at FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 10').bind(link.subject_id).all();
+        const locations = await db.prepare('SELECT name, type, address FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
         const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
 
         return response({
             ...subject,
             interactions: interactions.results,
+            locations: locations.results,
             media: media.results,
             meta: { remaining_seconds: Math.floor(remaining) }
         });
@@ -309,9 +334,9 @@ function serveHtml() {
     body { font-family: 'Inter', sans-serif; background-color: var(--dark-bg); color: #e5e5e5; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
     
-    .glass { background: rgba(23, 23, 23, 0.8); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
-    .glass-input { background: rgba(0,0,0,0.3); border: 1px solid #333; color: white; transition: all 0.2s; }
-    .glass-input:focus { border-color: var(--neon-red); outline: none; background: rgba(0,0,0,0.5); }
+    .glass { background: rgba(23, 23, 23, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.08); }
+    .glass-input { background: rgba(0,0,0,0.4); border: 1px solid #333; color: white; transition: all 0.2s; }
+    .glass-input:focus { border-color: var(--neon-red); outline: none; background: rgba(0,0,0,0.6); }
     
     .threat-low { border-left: 3px solid #10b981; }
     .threat-medium { border-left: 3px solid #f59e0b; }
@@ -320,8 +345,21 @@ function serveHtml() {
     
     @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
     
-    .map-container { height: 100%; width: 100%; z-index: 1; }
-    .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%); }
+    .marker-pin {
+        width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #c30b82; position: absolute; transform: rotate(-45deg);
+        left: 50%; top: 50%; margin: -15px 0 0 -15px;
+        box-shadow: 0px 0px 10px rgba(0,0,0,0.5);
+    }
+    .marker-pin::after {
+        content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%;
+    }
+    .custom-div-icon { background: transparent; border: none; }
+    .custom-div-icon img {
+        width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover;
+    }
+
+    .leaflet-container { background: #000; }
+    .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(110%); }
     
     .touch-target { min-height: 48px; }
     
@@ -631,7 +669,7 @@ function serveHtml() {
                 <div id="warRoomMap" class="w-full h-full bg-neutral-900"></div>
                 <div class="absolute top-4 left-4 z-[400] glass p-4 max-w-xs">
                     <h3 class="text-xs font-bold text-red-500 uppercase tracking-widest mb-2">Global Tracking</h3>
-                    <p class="text-[10px] text-gray-400">Monitoring {{subjects.length}} active targets.</p>
+                    <p class="text-[10px] text-gray-400">Monitoring all active targets.</p>
                 </div>
             </div>
 
@@ -688,11 +726,11 @@ function serveHtml() {
 
             <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                 <div class="relative">
-                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH ADDRESS/PLACE (Press Enter)" class="glass-input w-full p-3 text-xs border-blue-500/50">
+                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH ADDRESS (Press Enter)" class="glass-input w-full p-3 text-xs border-blue-500/50">
                     <button type="button" @click="searchLocations" class="absolute right-2 top-2 text-blue-400"><i class="fa-solid fa-search"></i></button>
                     <!-- Search Results Dropdown -->
                     <div v-if="locationSearchResults.length" class="absolute z-50 w-full bg-black border border-gray-700 max-h-40 overflow-y-auto mt-1">
-                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-2 hover:bg-blue-900/30 cursor-pointer text-[10px] border-b border-gray-800 last:border-0">
+                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-2 hover:bg-blue-900/30 cursor-pointer text-[10px] border-b border-gray-800 last:border-0 text-white">
                             {{ res.display_name }}
                         </div>
                     </div>
@@ -703,7 +741,7 @@ function serveHtml() {
                     <input v-model="forms.location.lat" placeholder="LATITUDE" type="number" step="any" class="glass-input p-3 text-xs">
                     <input v-model="forms.location.lng" placeholder="LONGITUDE" type="number" step="any" class="glass-input p-3 text-xs">
                 </div>
-                <p class="text-[9px] text-gray-500">Tip: Click on map or search above to auto-fill.</p>
+                <p class="text-[9px] text-gray-500">Tip: Click anywhere on the map to set coordinates.</p>
                 <select v-model="forms.location.type" class="glass-input w-full p-3 text-xs bg-black">
                     <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Safehouse</option><option>Dead Drop</option><option>Unknown</option>
                 </select>
@@ -714,9 +752,9 @@ function serveHtml() {
 
             <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
                 <div class="p-4 bg-red-900/20 border border-red-900/50">
-                    <h4 class="text-red-500 font-bold uppercase text-xs mb-2">Danger Zone</h4>
-                    <p class="text-gray-400 text-[10px] mb-4">The Burn Protocol will permanently destroy all records, logs, and evidence links. This action is irreversible.</p>
-                    <button @click="burnProtocol" class="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-6 text-xs uppercase tracking-widest w-full">INITIATE BURN PROTOCOL</button>
+                    <h4 class="text-red-500 font-bold uppercase text-xs mb-2">Nuclear Option</h4>
+                    <p class="text-gray-400 text-[10px] mb-4">Hard Reset wipes ALL data including Admin credentials. System will reboot to setup mode.</p>
+                    <button @click="burnProtocol" class="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-6 text-xs uppercase tracking-widest w-full">HARD RESET SYSTEM</button>
                 </div>
                 <button @click="logout" class="text-gray-500 text-xs hover:text-white uppercase">Disconnect Session</button>
             </form>
@@ -736,13 +774,33 @@ function serveHtml() {
                 <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">LINK SUBJECTS</button>
              </form>
 
-             <div v-if="modal.active === 'share-secure'" class="text-center space-y-4">
-                <i class="fa-solid fa-lock text-4xl text-blue-500"></i>
-                <p class="text-sm text-gray-400">Generate a one-time secure link to share this dossier. The link will self-destruct after the timer expires.</p>
-                <input v-model.number="forms.share.minutes" type="number" class="glass-input p-3 w-32 text-center text-white" placeholder="MINUTES" min="1">
-                <button @click="createShareLink" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 text-xs uppercase">GENERATE SECURE LINK</button>
-                <div v-if="forms.share.result" class="mt-4 p-3 bg-white/10 break-all text-xs font-mono text-blue-300">
-                    {{ forms.share.result }}
+             <div v-if="modal.active === 'share-secure'" class="space-y-4">
+                <div class="text-center">
+                    <i class="fa-solid fa-lock text-4xl text-blue-500 mb-2"></i>
+                    <p class="text-sm text-gray-400">Manage Secure Links</p>
+                </div>
+                
+                <!-- Create New -->
+                <div class="bg-white/5 p-3 rounded">
+                    <div class="flex gap-2">
+                        <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2 w-20 text-center text-white text-xs" placeholder="MIN" min="1">
+                        <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 text-xs uppercase">GENERATE NEW LINK</button>
+                    </div>
+                    <div v-if="forms.share.result" class="mt-2 p-2 bg-black border border-blue-500/30 text-[10px] font-mono text-blue-300 break-all select-all cursor-pointer" @click="copyToClipboard(forms.share.result)">
+                        {{ forms.share.result }}
+                    </div>
+                </div>
+
+                <!-- Existing Links -->
+                <div class="max-h-40 overflow-y-auto space-y-2">
+                    <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-2 bg-black/40 border border-white/5 text-[10px]">
+                        <div>
+                            <div class="text-gray-300">Created: {{ new Date(link.created_at).toLocaleDateString() }}</div>
+                            <div class="text-gray-500 font-mono">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Timer' : 'No Timer' }}</div>
+                        </div>
+                        <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 font-bold uppercase">REVOKE</button>
+                    </div>
+                    <div v-if="activeShareLinks.length === 0" class="text-center text-[10px] text-gray-600">No active links found.</div>
                 </div>
              </div>
 
@@ -773,6 +831,7 @@ function serveHtml() {
         const feed = ref([]);
         const subjects = ref([]);
         const selected = ref(null);
+        const activeShareLinks = ref([]);
         const search = ref('');
         const modal = reactive({ active: null });
         
@@ -786,7 +845,7 @@ function serveHtml() {
             location: {},
             intel: {},
             rel: {},
-            share: { minutes: 15, result: '' }
+            share: { minutes: 30, result: '' }
         });
 
         // API Wrapper
@@ -824,11 +883,17 @@ function serveHtml() {
             subTab.value = 'profile';
         };
 
+        const fetchShareLinks = async () => {
+            if(!selected.value) return;
+            const res = await api('/share-links?subjectId=' + selected.value.id);
+            activeShareLinks.value = res.filter(l => l.is_active);
+        };
+
         // --- Maps ---
         let mapInstance = null;
         let mapMarkers = [];
 
-        const initMap = (elementId, locations, onClick) => {
+        const initMap = (elementId, locations, onClick, isGlobal = false) => {
             if(mapInstance) { mapInstance.remove(); mapInstance = null; }
             const container = document.getElementById(elementId);
             if(!container) return;
@@ -840,8 +905,29 @@ function serveHtml() {
 
             locations.forEach(loc => {
                 if(loc.lat && loc.lng) {
-                    const m = L.marker([loc.lat, loc.lng]).addTo(mapInstance)
-                        .bindPopup(\`<b>\${loc.name}</b><br>\${loc.type}\`);
+                    let icon;
+                    
+                    if (isGlobal && loc.avatar_path) {
+                        // Avatar Pin for Global Map
+                        const imgUrl = resolveImg(loc.avatar_path);
+                        icon = L.divIcon({
+                            className: 'custom-div-icon',
+                            html: \`<div class="marker-pin" style="background: #ef4444;"></div><img src="\${imgUrl}" style="border: 2px solid #ef4444;">\`,
+                            iconSize: [30, 42],
+                            iconAnchor: [15, 42]
+                        });
+                    } else {
+                        // Standard Pin
+                        icon = L.divIcon({
+                            className: 'custom-div-icon',
+                            html: \`<div class="marker-pin"></div><i class="fa-solid fa-location-dot" style="position:absolute;top:2px;left:8px;font-size:14px;color:#c30b82"></i>\`,
+                            iconSize: [30, 42],
+                            iconAnchor: [15, 42]
+                        });
+                    }
+
+                    const m = L.marker([loc.lat, loc.lng], { icon }).addTo(mapInstance)
+                        .bindPopup(\`<b>\${loc.name || loc.full_name}</b><br>\${loc.type || loc.alias || ''}\`);
                     mapMarkers.push(m);
                 }
             });
@@ -867,12 +953,9 @@ function serveHtml() {
 
         watch(() => currentTab.value, (val) => {
             if(val === 'map') {
-                // Collect all locations
                 nextTick(async () => {
-                    // Fetch all locations via a special call or iterate subjects if loaded
-                    // For simplicity, we assume subjects are loaded or we fetch specific map data
-                    const allLocs = []; // Populate this in real app
-                    initMap('warRoomMap', allLocs, null); 
+                    const allLocs = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
+                    initMap('warRoomMap', allLocs, null, true); 
                 });
             }
         });
@@ -912,7 +995,10 @@ function serveHtml() {
             }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id };
-            if(type === 'share-secure') forms.share = { minutes: 30, result: '' };
+            if(type === 'share-secure') {
+                forms.share = { minutes: 30, result: '' };
+                fetchShareLinks();
+            }
         };
         const closeModal = () => modal.active = null;
 
@@ -965,6 +1051,16 @@ function serveHtml() {
         const createShareLink = async () => {
             const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
             forms.share.result = res.url;
+            fetchShareLinks();
+        };
+
+        const revokeLink = async (token) => {
+            await api('/share-links?token=' + token, { method: 'DELETE' });
+            fetchShareLinks();
+        };
+
+        const copyToClipboard = (text) => {
+            if(navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("COPIED"));
         };
 
         const deleteItem = async (table, id) => {
@@ -982,8 +1078,9 @@ function serveHtml() {
         };
 
         const burnProtocol = async () => {
-            if(prompt("TYPE 'BURN' TO CONFIRM DESTRUCTION") === 'BURN') {
+            if(prompt("TYPE 'BURN' TO CONFIRM NUCLEAR RESET") === 'BURN') {
                 await api('/nuke', { method: 'POST' });
+                localStorage.clear();
                 location.reload();
             }
         };
@@ -1028,8 +1125,9 @@ function serveHtml() {
 
         return { 
             view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            locationSearchQuery, locationSearchResults, searchLocations, selectLocation,
-            handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, createShareLink,
+            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation,
+            handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
+            createShareLink, revokeLink, fetchShareLinks, copyToClipboard,
             triggerUpload, handleFile, deleteItem, archiveSubject, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
         };
       }
@@ -1086,6 +1184,10 @@ export default {
             return response(res.results);
         }
 
+        if (path === '/api/map-data') {
+            return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+        }
+
         const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
         if (idMatch) {
             const id = idMatch[1];
@@ -1131,7 +1233,11 @@ export default {
         }
 
         // Sharing Routes
-        if (path === '/api/share-links') return handleCreateShareLink(req, env.DB, url.origin);
+        if (path === '/api/share-links') {
+            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
+            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
+        }
         
         const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
