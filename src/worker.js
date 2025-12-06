@@ -2,7 +2,7 @@ const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
 const ALLOWED_ORIGINS = ['*']; 
-const APP_TITLE = "SHADOW OPERATIVE";
+const APP_TITLE = "PEOPLE OS";
 
 // --- Helper Functions ---
 
@@ -47,7 +47,10 @@ let schemaInitialized = false;
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
+      // Enable Foreign Keys
       await db.prepare("PRAGMA foreign_keys = ON;").run();
+
+      // Consolidated Schema - No ALTER statements needed for fresh install
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY, 
@@ -164,21 +167,27 @@ async function ensureSchema(db) {
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
+      // If error is table exists but schema wrong, we might need a manual burn
   }
 }
 
 async function nukeDatabase(db) {
+    // The "Burn Protocol" - Drops all tables explicitly
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
         'subject_relationships', 'subject_media', 'subject_intel', 
         'subjects', 'admins'
     ];
+    
+    // Disable FK constraints temporarily to allow dropping
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
+    
     for(const t of tables) {
-        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) {}
+        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
+    
     await db.prepare("PRAGMA foreign_keys = ON;").run();
-    schemaInitialized = false; 
+    schemaInitialized = false; // Force ensureSchema on next run
     return true;
 }
 
@@ -186,7 +195,7 @@ async function nukeDatabase(db) {
 
 async function handleGetDashboard(db, adminId) {
     const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Target Identified' as desc, created_at as date FROM subjects WHERE admin_id = ?
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'Contact Added' as desc, created_at as date FROM subjects WHERE admin_id = ?
         UNION ALL
         SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
         UNION ALL
@@ -321,40 +330,37 @@ async function handleGetSharedSubject(db, token) {
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-black">
+<html lang="en" class="h-full bg-gray-50">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Shadow Operative OS</title>
+  <title>People OS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   
   <style>
-    :root { --neon-red: #ef4444; --neon-amber: #f59e0b; --dark-bg: #0a0a0a; --panel: #171717; }
-    body { font-family: 'Inter', sans-serif; background-color: var(--dark-bg); color: #e5e5e5; }
-    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    :root { --primary: #2563eb; --accent: #0ea5e9; --danger: #ef4444; }
+    body { font-family: 'Inter', sans-serif; color: #1f2937; }
     
-    .glass { background: rgba(23, 23, 23, 0.95); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
-    .glass-input { background: rgba(0,0,0,0.4); border: 1px solid #333; color: white; transition: all 0.2s; }
-    .glass-input:focus { border-color: var(--neon-red); outline: none; background: rgba(0,0,0,0.6); }
-    .glass-input.error { border-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+    .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(229, 231, 235, 0.5); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); border-radius: 1rem; }
+    .glass-input { background: #ffffff; border: 1px solid #d1d5db; color: #111827; transition: all 0.2s; border-radius: 0.5rem; }
+    .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(37, 99, 235, 0.1); }
+    .glass-input.error { border-color: var(--danger); background: #fef2f2; }
     
-    .threat-low { border-left: 3px solid #10b981; }
-    .threat-medium { border-left: 3px solid #f59e0b; }
-    .threat-high { border-left: 3px solid #ef4444; }
-    .threat-critical { border-left: 3px solid #7f1d1d; animation: pulse-red 2s infinite; }
-    
-    @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+    .threat-low { border-left: 4px solid #10b981; }
+    .threat-medium { border-left: 4px solid #f59e0b; }
+    .threat-high { border-left: 4px solid #f97316; }
+    .threat-critical { border-left: 4px solid #ef4444; }
     
     .marker-pin {
-        width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #c30b82; position: absolute; transform: rotate(-45deg);
+        width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg);
         left: 50%; top: 50%; margin: -15px 0 0 -15px;
-        box-shadow: 0px 0px 10px rgba(0,0,0,0.5);
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.3);
     }
     .marker-pin::after {
         content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%;
@@ -364,38 +370,44 @@ function serveHtml() {
         width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover;
     }
 
-    .leaflet-container { background: #000; }
-    .leaflet-tile { filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(110%); }
-    .leaflet-popup-content-wrapper { background: #171717; color: white; border: 1px solid #333; border-radius: 0; }
-    .leaflet-popup-tip { background: #171717; }
+    .leaflet-popup-content-wrapper { background: white; color: #111827; border-radius: 0.5rem; font-family: 'Inter', sans-serif; font-size: 12px; }
+    .leaflet-popup-tip { background: white; }
     
     .touch-target { min-height: 48px; }
     
     /* Scrollbar */
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
     .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
     @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
   </style>
 </head>
-<body class="h-full overflow-hidden selection:bg-red-900 selection:text-white">
+<body class="h-full overflow-hidden selection:bg-blue-100 selection:text-blue-900">
   <div id="app" class="h-full flex flex-col">
 
     <!-- Auth Screen -->
-    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-[url('https://www.transparenttextures.com/patterns/black-scales.png')]">
-        <div class="w-full max-w-sm glass p-8 rounded-none border-l-4 border-red-600 shadow-2xl">
+    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-gray-50">
+        <div class="w-full max-w-sm glass p-8 shadow-xl">
             <div class="text-center mb-8">
-                <i class="fa-solid fa-user-secret text-4xl text-red-500 mb-4"></i>
-                <h1 class="text-2xl font-black tracking-widest text-white uppercase">Shadow<span class="text-red-600">Operative</span></h1>
-                <p class="text-gray-500 text-xs font-mono mt-2">CLASSIFIED ACCESS ONLY</p>
+                <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-3xl shadow-lg shadow-blue-500/30">
+                    <i class="fa-solid fa-users-viewfinder"></i>
+                </div>
+                <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">People<span class="text-blue-600">OS</span></h1>
+                <p class="text-gray-500 text-sm mt-1">Professional Network Intelligence</p>
             </div>
             <form @submit.prevent="handleAuth" class="space-y-4">
-                <input v-model="auth.email" type="email" placeholder="AGENT ID" class="glass-input w-full p-4 text-xs font-mono tracking-wider" required>
-                <input v-model="auth.password" type="password" placeholder="ACCESS CODE" class="glass-input w-full p-4 text-xs font-mono tracking-wider" required>
-                <button type="submit" :disabled="loading" class="w-full bg-red-700 hover:bg-red-600 text-white font-bold py-4 text-xs tracking-[0.2em] uppercase transition-colors">
-                    {{ loading ? 'AUTHENTICATING...' : 'ESTABLISH LINK' }}
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase ml-1">Email / ID</label>
+                    <input v-model="auth.email" type="email" placeholder="user@domain.com" class="glass-input w-full p-3 text-sm mt-1" required>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase ml-1">Password</label>
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 text-sm mt-1" required>
+                </div>
+                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg shadow-blue-500/20">
+                    {{ loading ? 'Accessing...' : 'Secure Login' }}
                 </button>
             </form>
         </div>
@@ -405,59 +417,59 @@ function serveHtml() {
     <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
         
         <!-- Sidebar -->
-        <nav class="hidden md:flex flex-col w-20 bg-neutral-900 border-r border-neutral-800 items-center py-6 z-20">
-            <div class="mb-8 text-red-600 text-2xl"><i class="fa-solid fa-eye"></i></div>
-            <div class="flex-1 space-y-6 w-full px-2">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-red-500 bg-white/5' : 'text-gray-500 hover:text-gray-300'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
-                    <i :class="t.icon" class="text-lg"></i>
-                    <span class="text-[9px] font-mono uppercase">{{t.label}}</span>
+        <nav class="hidden md:flex flex-col w-20 bg-white border-r border-gray-200 items-center py-6 z-20 shadow-sm">
+            <div class="mb-8 text-blue-600 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
+            <div class="flex-1 space-y-4 w-full px-3">
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 text-blue-600 shadow-sm ring-1 ring-blue-100' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
+                    <i :class="t.icon" class="text-xl"></i>
+                    <span class="text-[10px] font-bold">{{t.label}}</span>
                 </button>
             </div>
-            <button @click="openSettings" class="text-gray-600 hover:text-red-500 p-4"><i class="fa-solid fa-gear"></i></button>
+            <button @click="openSettings" class="text-gray-400 hover:text-gray-600 p-4"><i class="fa-solid fa-gear"></i></button>
         </nav>
 
         <!-- Mobile Header -->
-        <header class="md:hidden h-14 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 z-20 shrink-0">
-            <span class="font-black text-white tracking-widest text-sm">SHADOW<span class="text-red-600">OP</span></span>
-            <button @click="openSettings"><i class="fa-solid fa-gear text-gray-400"></i></button>
+        <header class="md:hidden h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-20 shrink-0 shadow-sm">
+            <span class="font-extrabold text-gray-900 tracking-tight text-lg">People<span class="text-blue-600">OS</span></span>
+            <button @click="openSettings"><i class="fa-solid fa-gear text-gray-500"></i></button>
         </header>
 
         <!-- Content Area -->
-        <main class="flex-1 relative overflow-hidden bg-black flex flex-col">
+        <main class="flex-1 relative overflow-hidden bg-gray-50 flex flex-col">
             
             <!-- Dashboard -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div class="glass p-4 border-t-2 border-red-600">
-                            <div class="text-[10px] text-gray-500 font-mono uppercase">Targets</div>
-                            <div class="text-2xl font-bold text-white">{{ stats.targets || 0 }}</div>
+                        <div class="glass p-5 border-t-4 border-blue-500">
+                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Contacts</div>
+                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.targets || 0 }}</div>
                         </div>
-                        <div class="glass p-4 border-t-2 border-amber-500">
-                            <div class="text-[10px] text-gray-500 font-mono uppercase">Encounters</div>
-                            <div class="text-2xl font-bold text-white">{{ stats.encounters || 0 }}</div>
+                        <div class="glass p-5 border-t-4 border-amber-500">
+                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Meetings</div>
+                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.encounters || 0 }}</div>
                         </div>
-                        <div class="glass p-4 border-t-2 border-blue-500">
-                            <div class="text-[10px] text-gray-500 font-mono uppercase">Evidence</div>
-                            <div class="text-2xl font-bold text-white">{{ stats.evidence || 0 }}</div>
+                        <div class="glass p-5 border-t-4 border-emerald-500">
+                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Documents</div>
+                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.evidence || 0 }}</div>
                         </div>
-                        <button @click="openModal('add-subject')" class="bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 p-4 flex flex-col items-center justify-center group transition-all cursor-pointer">
-                            <i class="fa-solid fa-plus text-red-500 mb-1 group-hover:scale-110 transition-transform"></i>
-                            <span class="text-[10px] font-bold text-red-400 uppercase">New Target</span>
+                        <button @click="openModal('add-subject')" class="bg-white border-2 border-dashed border-gray-300 p-4 flex flex-col items-center justify-center group transition-all cursor-pointer hover:border-blue-500 hover:bg-blue-50 rounded-2xl">
+                            <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"><i class="fa-solid fa-plus"></i></div>
+                            <span class="text-xs font-bold text-gray-600 uppercase">Add Contact</span>
                         </button>
                     </div>
 
                     <div class="glass p-0 overflow-hidden">
-                        <div class="bg-neutral-900/50 p-3 border-b border-white/5 flex justify-between items-center">
-                            <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider"><i class="fa-solid fa-satellite-dish mr-2 text-red-500"></i>Surveillance Feed</h3>
-                            <button @click="fetchData" class="text-gray-500 hover:text-white"><i class="fa-solid fa-rotate-right text-xs"></i></button>
+                        <div class="bg-gray-50/50 p-4 border-b border-gray-200 flex justify-between items-center">
+                            <h3 class="text-sm font-bold text-gray-800"><i class="fa-solid fa-rss mr-2 text-blue-500"></i>Activity Feed</h3>
+                            <button @click="fetchData" class="text-gray-400 hover:text-blue-600"><i class="fa-solid fa-rotate-right text-sm"></i></button>
                         </div>
-                        <div class="divide-y divide-white/5 max-h-[60vh] overflow-y-auto">
-                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-white/5 cursor-pointer flex gap-4 items-start">
-                                <div class="mt-1 w-2 h-2 rounded-full" :class="item.type === 'interaction' ? 'bg-amber-500' : 'bg-red-500'"></div>
+                        <div class="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-gray-50 cursor-pointer flex gap-4 items-start transition-colors">
+                                <div class="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0" :class="item.type === 'interaction' ? 'bg-amber-500' : 'bg-blue-500'"></div>
                                 <div>
-                                    <div class="text-sm font-bold text-gray-200">{{ item.title }} <span class="text-gray-600 mx-2">//</span> <span class="text-xs text-gray-400 font-mono">{{ item.desc }}</span></div>
-                                    <div class="text-[10px] text-gray-600 font-mono mt-1">{{ new Date(item.date).toLocaleString() }}</div>
+                                    <div class="text-sm font-semibold text-gray-900">{{ item.title }} <span class="text-gray-400 font-normal mx-1">&bull;</span> <span class="text-gray-500">{{ item.desc }}</span></div>
+                                    <div class="text-xs text-gray-400 mt-1">{{ new Date(item.date).toLocaleString() }}</div>
                                 </div>
                             </div>
                         </div>
@@ -465,156 +477,158 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- Targets List -->
+            <!-- Contacts List -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col">
-                <div class="p-4 border-b border-white/10 flex gap-2">
-                    <input v-model="search" placeholder="SEARCH DATABASE..." class="glass-input flex-1 p-3 text-xs font-mono uppercase rounded">
-                    <button @click="openModal('add-subject')" class="bg-red-700 text-white px-4 rounded font-bold"><i class="fa-solid fa-plus"></i></button>
+                <div class="p-4 border-b border-gray-200 bg-white flex gap-3 shadow-sm z-10">
+                    <div class="relative flex-1">
+                        <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400"></i>
+                        <input v-model="search" placeholder="Search contacts..." class="w-full bg-gray-100 border-none rounded-lg py-3 pl-10 text-sm focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button @click="openModal('add-subject')" class="bg-blue-600 hover:bg-blue-700 text-white px-5 rounded-lg font-bold text-sm shadow-lg shadow-blue-500/20 transition-all"><i class="fa-solid fa-user-plus mr-2"></i>New</button>
                 </div>
-                <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:bg-white/5 group relative overflow-hidden" :class="'threat-' + s.threat_level.toLowerCase()">
+                <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
+                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 transition-all group relative overflow-hidden" :class="'threat-' + s.threat_level.toLowerCase()">
                         <div class="flex items-start justify-between">
                             <div class="flex gap-3">
-                                <div class="w-12 h-12 bg-neutral-800 rounded overflow-hidden">
-                                    <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-600"><i class="fa-solid fa-user"></i></div>
+                                <div class="w-12 h-12 bg-gray-200 rounded-full overflow-hidden border-2 border-white shadow-sm">
+                                    <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-400 bg-gray-100"><i class="fa-solid fa-user"></i></div>
                                 </div>
                                 <div>
-                                    <div class="font-bold text-white text-sm uppercase">{{ s.alias || s.full_name }}</div>
-                                    <div class="text-[10px] text-gray-500 font-mono">{{ s.occupation || 'UNKNOWN' }}</div>
-                                    <div class="text-[10px] mt-1" :class="getThreatColor(s.threat_level)">THREAT: {{ s.threat_level }}</div>
+                                    <div class="font-bold text-gray-900 text-sm">{{ s.full_name }}</div>
+                                    <div class="text-xs text-gray-500">{{ s.occupation || 'No Title' }}</div>
+                                    <div class="text-[10px] mt-1 inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium" :class="getThreatColor(s.threat_level, true)">{{ s.threat_level }} Priority</div>
                                 </div>
                             </div>
-                            <div class="text-[10px] font-mono text-gray-600">{{ s.status }}</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- Subject Detail -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full">
+            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-gray-50">
                 <!-- Top Bar -->
-                <div class="h-16 border-b border-white/10 flex items-center px-4 justify-between bg-neutral-900/80 backdrop-blur shrink-0">
+                <div class="h-16 border-b border-gray-200 flex items-center px-4 justify-between bg-white shadow-sm shrink-0 z-10">
                     <div class="flex items-center gap-3">
-                        <button @click="changeTab('targets')" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-gray-400"><i class="fa-solid fa-arrow-left"></i></button>
+                        <button @click="changeTab('targets')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
                         <div>
-                            <div class="font-black text-white text-sm uppercase tracking-wider">{{ selected.alias || selected.full_name }}</div>
-                            <div class="text-[10px] text-gray-500 font-mono">ID: {{ String(selected.id).padStart(6, '0') }}</div>
+                            <div class="font-bold text-gray-900 text-sm">{{ selected.full_name }}</div>
+                            <div class="text-xs text-gray-500" v-if="selected.alias">aka {{ selected.alias }}</div>
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('add-interaction')" class="bg-amber-700/20 text-amber-500 hover:bg-amber-700/40 px-3 py-1.5 rounded text-[10px] font-bold border border-amber-700/50 uppercase"><i class="fa-solid fa-microphone mr-1"></i> Log Contact</button>
-                        <button @click="openModal('share-secure')" class="text-blue-400 hover:text-white px-3 border-l border-white/10" title="Secure Share"><i class="fa-solid fa-share-nodes"></i></button>
-                        <button @click="exportData" class="text-gray-400 hover:text-white px-3"><i class="fa-solid fa-download"></i></button>
+                        <button @click="openModal('add-interaction')" class="bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-200 transition-colors"><i class="fa-solid fa-comment-dots mr-1.5"></i>Log Meeting</button>
+                        <button @click="openModal('share-secure')" class="text-gray-400 hover:text-blue-600 px-3 transition-colors" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
+                        <button @click="exportData" class="text-gray-400 hover:text-gray-700 px-3 transition-colors"><i class="fa-solid fa-download"></i></button>
                     </div>
                 </div>
 
                 <!-- Sub Tabs -->
-                <div class="flex border-b border-white/10 overflow-x-auto bg-black/50 shrink-0">
-                    <button v-for="t in ['profile','surveillance','interrogations','geoint','network','evidence']" 
+                <div class="flex border-b border-gray-200 overflow-x-auto bg-white shrink-0">
+                    <button v-for="t in ['profile','routine','meetings','locations','network','files']" 
                         @click="changeSubTab(t)" 
-                        :class="subTab === t ? 'text-red-500 border-b-2 border-red-500 bg-white/5' : 'text-gray-500'"
-                        class="px-4 py-3 text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-colors">
+                        :class="subTab === t ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'"
+                        class="px-5 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap transition-colors">
                         {{ t }}
                     </button>
                 </div>
 
                 <!-- Detail Body -->
-                <div class="flex-1 overflow-y-auto p-4 md:p-6 bg-neutral-950/50">
+                <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     
                     <!-- Profile Tab -->
-                    <div v-if="subTab === 'profile'" class="space-y-6 max-w-4xl mx-auto">
+                    <div v-if="subTab === 'profile'" class="space-y-6 max-w-5xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
-                                <div class="aspect-[3/4] bg-neutral-900 rounded border border-neutral-800 overflow-hidden relative group">
-                                    <img :src="resolveImg(selected.avatar_path) || 'https://www.transparenttextures.com/patterns/black-linen.png'" class="w-full h-full object-cover">
-                                    <button @click="triggerUpload('avatar')" class="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold uppercase tracking-wider text-white border-2 border-white w-32 h-10 m-auto hover:bg-white hover:text-black">Update Photo</button>
+                                <div class="aspect-square bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden relative group">
+                                    <img :src="resolveImg(selected.avatar_path) || 'https://www.transparenttextures.com/patterns/cubes.png'" class="w-full h-full object-cover">
+                                    <button @click="triggerUpload('avatar')" class="absolute inset-0 bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-sm font-bold text-gray-800 cursor-pointer">Change Photo</button>
                                 </div>
                                 <div class="glass p-4 space-y-2">
-                                    <div class="text-[10px] text-gray-500 uppercase font-bold">Threat Level</div>
-                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-black border border-gray-700 text-xs p-2 text-white uppercase font-bold">
+                                    <div class="text-xs text-gray-500 uppercase font-bold">Priority Status</div>
+                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
                                         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                                     </select>
                                 </div>
                             </div>
                             <div class="md:col-span-2 space-y-4">
-                                <div class="glass p-5 relative">
-                                    <button @click="openModal('edit-profile')" class="absolute top-4 right-4 text-gray-500 hover:text-white"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <h3 class="text-xs text-red-500 font-bold uppercase mb-4 tracking-widest"> Dossier Overview</h3>
-                                    <div class="grid grid-cols-2 gap-x-4 gap-y-4 text-xs">
-                                        <div><span class="text-gray-500 block mb-1">REAL NAME</span> <span class="font-mono text-white">{{selected.full_name}}</span></div>
-                                        <div><span class="text-gray-500 block mb-1">NATIONALITY</span> <span class="font-mono text-white">{{selected.nationality || 'UNKNOWN'}}</span></div>
-                                        <div><span class="text-gray-500 block mb-1">OCCUPATION</span> <span class="font-mono text-white">{{selected.occupation || 'COVER UNKNOWN'}}</span></div>
-                                        <div><span class="text-gray-500 block mb-1">IDEOLOGY</span> <span class="font-mono text-white">{{selected.ideology || 'NONE'}}</span></div>
-                                        <div class="col-span-2 border-t border-white/10 pt-2 mt-2">
-                                            <span class="text-gray-500 block mb-1">MODUS OPERANDI</span>
-                                            <p class="text-gray-300 leading-relaxed font-mono">{{selected.modus_operandi || 'No patterns established.'}}</p>
+                                <div class="glass p-6 relative">
+                                    <button @click="openModal('edit-profile')" class="absolute top-6 right-6 text-blue-500 hover:text-blue-700"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <h3 class="text-sm text-gray-900 font-bold uppercase mb-6 flex items-center"><i class="fa-solid fa-id-card mr-2 text-blue-500"></i>Core Information</h3>
+                                    <div class="grid grid-cols-2 gap-x-8 gap-y-6 text-sm">
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Full Name</span> <span class="font-medium text-gray-900">{{selected.full_name}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Nationality</span> <span class="font-medium text-gray-900">{{selected.nationality || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Job Title</span> <span class="font-medium text-gray-900">{{selected.occupation || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Affiliations</span> <span class="font-medium text-gray-900">{{selected.ideology || '—'}}</span></div>
+                                        <div class="col-span-2 border-t border-gray-100 pt-4">
+                                            <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Routine & Habits</span>
+                                            <p class="text-gray-600 leading-relaxed">{{selected.modus_operandi || 'No routine information logged.'}}</p>
                                         </div>
                                         <div class="col-span-2">
-                                            <span class="text-gray-500 block mb-1">KNOWN WEAKNESSES</span>
-                                            <p class="text-red-400 leading-relaxed font-mono">{{selected.weakness || 'None identified.'}}</p>
+                                            <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Pain Points / Challenges</span>
+                                            <p class="text-red-500 leading-relaxed">{{selected.weakness || 'None identified.'}}</p>
                                         </div>
                                     </div>
                                 </div>
-                                <div class="glass p-5">
-                                    <h3 class="text-xs text-red-500 font-bold uppercase mb-4 tracking-widest">Physical Profile</h3>
-                                    <div class="grid grid-cols-3 gap-2 text-center text-xs">
-                                        <div class="bg-white/5 p-2 rounded"><div class="text-gray-500 text-[9px]">HEIGHT</div>{{selected.height || '--'}}</div>
-                                        <div class="bg-white/5 p-2 rounded"><div class="text-gray-500 text-[9px]">WEIGHT</div>{{selected.weight || '--'}}</div>
-                                        <div class="bg-white/5 p-2 rounded"><div class="text-gray-500 text-[9px]">AGE</div>{{selected.age || '--'}}</div>
+                                <div class="glass p-6">
+                                    <h3 class="text-sm text-gray-900 font-bold uppercase mb-4">Physical Attributes</h3>
+                                    <div class="grid grid-cols-3 gap-4 text-center text-sm mb-4">
+                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div>{{selected.height || '--'}}</div>
+                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div>{{selected.weight || '--'}}</div>
+                                        <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div>{{selected.age || '--'}}</div>
                                     </div>
-                                    <div class="mt-4">
-                                        <div class="text-[9px] text-gray-500 uppercase">Identifying Marks</div>
-                                        <div class="text-xs text-white font-mono mt-1">{{selected.identifying_marks || 'None listed'}}</div>
+                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                                        <div class="text-gray-400 text-xs font-bold mb-1 uppercase">Distinguishing Features</div>
+                                        <div class="text-gray-700 text-sm">{{selected.identifying_marks || 'None listed'}}</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Interrogations Tab -->
-                    <div v-if="subTab === 'interrogations'" class="space-y-4 max-w-3xl mx-auto">
+                    <!-- Meetings Tab -->
+                    <div v-if="subTab === 'meetings'" class="space-y-4 max-w-3xl mx-auto">
                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-xs font-bold text-white uppercase tracking-widest">Interaction Logs</h3>
-                            <button @click="openModal('add-interaction')" class="bg-red-700 text-white px-4 py-2 text-xs font-bold uppercase">Log Contact</button>
+                            <h3 class="text-sm font-bold text-gray-900 uppercase">Interaction History</h3>
+                            <button @click="openModal('add-interaction')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md transition-all">Log New Meeting</button>
                         </div>
-                        <div v-if="!selected.interactions?.length" class="text-center py-10 text-gray-600 font-mono text-xs">NO CONTACT RECORDED</div>
-                        <div v-for="ix in selected.interactions" :key="ix.id" class="glass border-l-2 border-amber-500 p-4 space-y-3 relative group">
+                        <div v-if="!selected.interactions?.length" class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300">No interaction history found.</div>
+                        <div v-for="ix in selected.interactions" :key="ix.id" class="glass border-l-4 border-amber-400 p-5 space-y-3 relative group transition-all hover:shadow-md">
                             <div class="flex justify-between items-start">
                                 <div>
-                                    <span class="bg-amber-900/30 text-amber-500 px-2 py-0.5 text-[9px] font-bold uppercase rounded border border-amber-900/50">{{ix.type}}</span>
-                                    <span class="text-gray-500 text-[10px] ml-2 font-mono">{{ new Date(ix.date).toLocaleString() }}</span>
+                                    <span class="bg-amber-100 text-amber-700 px-2 py-1 text-[10px] font-bold uppercase rounded-md border border-amber-200">{{ix.type}}</span>
+                                    <span class="text-gray-400 text-xs ml-2 font-medium">{{ new Date(ix.date).toLocaleString() }}</span>
                                 </div>
-                                <button @click="deleteItem('subject_interactions', ix.id)" class="text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                                <button @click="deleteItem('subject_interactions', ix.id)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
                             </div>
-                            <div class="font-mono text-xs text-gray-300 whitespace-pre-wrap pl-3 border-l border-white/10">{{ix.transcript}}</div>
-                            <div class="bg-black/40 p-3 text-xs border border-white/5">
-                                <span class="text-red-400 font-bold uppercase text-[9px] block mb-1">Analyst Conclusion</span>
+                            <div class="text-sm text-gray-800 whitespace-pre-wrap pl-4 border-l-2 border-gray-100">{{ix.transcript}}</div>
+                            <div class="bg-gray-50 p-3 rounded-lg text-xs border border-gray-100 text-gray-600">
+                                <span class="text-blue-600 font-bold uppercase text-[10px] block mb-1">Summary / Next Steps</span>
                                 {{ix.conclusion}}
                             </div>
-                            <a v-if="ix.evidence_url" :href="ix.evidence_url" target="_blank" class="inline-flex items-center gap-2 text-[10px] text-blue-400 hover:text-blue-300 uppercase font-bold"><i class="fa-solid fa-paperclip"></i> Attached Evidence</a>
+                            <a v-if="ix.evidence_url" :href="ix.evidence_url" target="_blank" class="inline-flex items-center gap-2 text-xs text-blue-600 hover:underline font-medium"><i class="fa-solid fa-paperclip"></i> View Attachment</a>
                         </div>
                     </div>
 
-                    <!-- GeoIntel Tab (Map) -->
-                    <div v-show="subTab === 'geoint'" class="h-full flex flex-col">
+                    <!-- Locations Tab (Map) -->
+                    <div v-show="subTab === 'locations'" class="h-full flex flex-col">
                         <div class="flex justify-between items-center mb-4 shrink-0">
-                            <h3 class="text-xs font-bold text-white uppercase tracking-widest">Known Locations</h3>
-                            <button @click="openModal('add-location')" class="bg-blue-900/50 text-blue-400 border border-blue-800 px-4 py-2 text-xs font-bold uppercase hover:bg-blue-900">Pin Location</button>
+                            <h3 class="text-sm font-bold text-gray-900 uppercase">Geographic Data</h3>
+                            <button @click="openModal('add-location')" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-50 shadow-sm">Pin New Location</button>
                         </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 min-h-[400px]">
-                            <div class="md:col-span-2 glass p-1 rounded overflow-hidden h-full min-h-[300px]">
-                                <div id="subjectMap" class="w-full h-full bg-neutral-900"></div>
+                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 min-h-[400px]">
+                            <div class="md:col-span-2 bg-white rounded-xl border border-gray-200 overflow-hidden h-full min-h-[400px] shadow-sm relative">
+                                <div id="subjectMap" class="w-full h-full z-0"></div>
                             </div>
-                            <div class="space-y-2 overflow-y-auto max-h-[500px]">
-                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-3 flex flex-col gap-1 cursor-pointer hover:border-blue-500 transition-colors" @click="flyTo(loc)">
-                                    <div class="flex justify-between">
-                                        <div class="text-xs font-bold text-white uppercase">{{loc.name}}</div>
-                                        <div class="text-[9px] text-gray-500 font-mono">{{loc.type}}</div>
+                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
+                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 flex flex-col gap-2 cursor-pointer hover:border-blue-400 transition-all border-l-4 border-transparent hover:border-l-blue-500" @click="flyTo(loc)">
+                                    <div class="flex justify-between items-center">
+                                        <div class="text-sm font-bold text-gray-900">{{loc.name}}</div>
+                                        <span class="text-[10px] uppercase bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{loc.type}}</span>
                                     </div>
-                                    <div class="text-[10px] text-gray-400 font-mono truncate">{{loc.address}}</div>
-                                    <div v-if="loc.notes" class="text-[10px] text-blue-400 mt-1">"{{loc.notes}}"</div>
-                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-[9px] text-red-500 text-right mt-1 hover:underline">REMOVE</button>
+                                    <div class="text-xs text-gray-500 flex items-start"><i class="fa-solid fa-location-dot mt-0.5 mr-2 text-gray-400"></i>{{loc.address}}</div>
+                                    <div v-if="loc.notes" class="text-xs text-blue-600 bg-blue-50 p-2 rounded mt-1">{{loc.notes}}</div>
+                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-[10px] text-red-400 text-right hover:text-red-600 font-bold mt-1">REMOVE PIN</button>
                                 </div>
                             </div>
                         </div>
@@ -622,50 +636,53 @@ function serveHtml() {
 
                     <!-- Network/Graph -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
-                         <div class="flex justify-between items-center mb-2 shrink-0">
-                            <h3 class="text-xs font-bold text-white uppercase tracking-widest">Relationship Matrix</h3>
-                            <button @click="openModal('add-rel')" class="text-xs bg-white/10 px-3 py-1 hover:bg-white/20">Add Connection</button>
+                         <div class="flex justify-between items-center mb-4 shrink-0">
+                            <h3 class="text-sm font-bold text-gray-900 uppercase">Relationship Matrix</h3>
+                            <button @click="openModal('add-rel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">Add Connection</button>
                         </div>
-                        <div class="flex-1 glass relative">
+                        <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
 
-                    <!-- Surveillance Logs (Old Data Points) -->
-                    <div v-if="subTab === 'surveillance'" class="space-y-4 max-w-4xl mx-auto">
+                    <!-- Routine / Logs (Old Intel) -->
+                    <div v-if="subTab === 'routine'" class="space-y-4 max-w-4xl mx-auto">
                         <div class="flex justify-between items-center">
-                            <h3 class="text-xs font-bold text-white uppercase tracking-widest">Surveillance Logs</h3>
-                            <button @click="openModal('add-intel')" class="text-xs bg-white/10 px-3 py-1 hover:bg-white/20">New Log Entry</button>
+                            <h3 class="text-sm font-bold text-gray-900 uppercase">Detailed Observations</h3>
+                            <button @click="openModal('add-intel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">New Entry</button>
                         </div>
-                        <div class="grid gap-2">
-                            <div v-for="log in selected.intel" :key="log.id" class="glass p-3 flex items-start gap-4">
-                                <div class="text-[9px] font-mono text-gray-500 w-20 shrink-0 text-right">{{new Date(log.created_at).toLocaleDateString()}}</div>
+                        <div class="grid gap-3">
+                            <div v-for="log in selected.intel" :key="log.id" class="glass p-4 flex items-start gap-4">
+                                <div class="text-[10px] font-medium text-gray-400 w-24 shrink-0 text-right pt-1">{{new Date(log.created_at).toLocaleDateString()}}</div>
                                 <div class="flex-1">
-                                    <div class="text-xs font-bold text-red-400 uppercase mb-1">{{log.label}} <span class="text-gray-600 text-[9px] ml-2 border border-gray-800 px-1">{{log.category}}</span></div>
-                                    <p class="text-sm text-gray-300">{{log.value}}</p>
-                                    <div v-if="log.analysis" class="mt-2 text-xs text-amber-500 font-mono border-l-2 border-amber-900 pl-2">ANALYSIS: {{log.analysis}}</div>
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-xs font-bold text-gray-900 uppercase">{{log.label}}</span>
+                                        <span class="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded border border-gray-200">{{log.category}}</span>
+                                    </div>
+                                    <p class="text-sm text-gray-600">{{log.value}}</p>
+                                    <div v-if="log.analysis" class="mt-2 text-xs text-blue-600 font-medium bg-blue-50 p-2 rounded">NOTE: {{log.analysis}}</div>
                                 </div>
-                                <button @click="deleteItem('subject_intel', log.id)" class="text-gray-600 hover:text-red-500"><i class="fa-solid fa-xmark"></i></button>
+                                <button @click="deleteItem('subject_intel', log.id)" class="text-gray-400 hover:text-red-500"><i class="fa-solid fa-trash-can"></i></button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Evidence -->
-                    <div v-if="subTab === 'evidence'" class="space-y-4">
-                        <div class="flex gap-4">
-                            <div @click="triggerUpload('media')" class="h-32 w-32 border-2 border-dashed border-gray-700 flex flex-col items-center justify-center cursor-pointer hover:border-red-500 hover:text-red-500 text-gray-600 transition-colors">
+                    <!-- Files -->
+                    <div v-if="subTab === 'files'" class="space-y-6">
+                        <div class="flex flex-col md:flex-row gap-6">
+                            <div @click="triggerUpload('media')" class="h-32 w-full md:w-48 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-all bg-white">
                                 <i class="fa-solid fa-cloud-arrow-up text-2xl mb-2"></i>
-                                <span class="text-[9px] uppercase font-bold">Upload File</span>
+                                <span class="text-xs uppercase font-bold">Upload Document</span>
                             </div>
                             <!-- Evidence Grid -->
-                            <div class="flex-1 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square">
-                                    <img v-if="m.content_type.startsWith('image')" :src="'/api/media/' + m.object_key" class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-500"><i class="fa-solid fa-file-lines text-3xl"></i></div>
-                                    <div class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2 text-center">
-                                        <p class="text-[9px] text-white mb-2">{{m.description || 'No Desc'}}</p>
-                                        <a :href="'/api/media/' + m.object_key" download class="text-xs text-blue-400 font-bold uppercase mb-2">Download</a>
-                                        <button @click="deleteItem('subject_media', m.id)" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
+                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-lg transition-all">
+                                    <img v-if="m.content_type.startsWith('image')" :src="'/api/media/' + m.object_key" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50"><i class="fa-solid fa-file-lines text-4xl"></i></div>
+                                    <div class="absolute inset-0 bg-gray-900/80 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-4 text-center">
+                                        <p class="text-[10px] text-white font-medium mb-3 line-clamp-2">{{m.description || 'Attachment'}}</p>
+                                        <a :href="'/api/media/' + m.object_key" download class="bg-white text-gray-900 px-3 py-1.5 rounded text-xs font-bold mb-2 hover:bg-blue-50">Download</a>
+                                        <button @click="deleteItem('subject_media', m.id)" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                 </div>
                             </div>
@@ -675,34 +692,39 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- War Room Map Tab (Global) -->
-            <div v-if="currentTab === 'map'" class="flex-1 relative">
-                <div id="warRoomMap" class="w-full h-full bg-neutral-900"></div>
-                <div class="absolute top-4 left-4 z-[400] glass p-4 max-w-xs pointer-events-none">
-                    <h3 class="text-xs font-bold text-red-500 uppercase tracking-widest mb-2">Global Tracking</h3>
-                    <p class="text-[10px] text-gray-400">Monitoring all active targets.</p>
+            <!-- Global Map Tab -->
+            <div v-if="currentTab === 'map'" class="flex-1 relative bg-gray-100">
+                <div id="warRoomMap" class="w-full h-full z-0"></div>
+                
+                <!-- Floating Header -->
+                <div class="absolute top-4 left-4 z-[400] glass px-4 py-3 shadow-lg pointer-events-none">
+                    <h3 class="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Global Presence</h3>
+                    <p class="text-[10px] text-gray-500 font-medium">{{subjects.length}} Contacts Tracked</p>
                 </div>
                 
                 <!-- Map Search -->
-                <div class="absolute top-4 right-4 z-[400] w-64 glass p-1">
-                    <input v-model="warMapSearch" placeholder="LOCATE SUBJECT..." class="bg-transparent w-full text-xs p-2 text-white outline-none font-bold placeholder-gray-600">
+                <div class="absolute top-4 right-4 z-[400] w-72 glass shadow-lg p-1">
+                    <div class="relative">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-gray-400 text-xs"></i>
+                        <input v-model="warMapSearch" placeholder="Find contact on map..." class="bg-transparent w-full text-sm p-2 pl-8 text-gray-800 outline-none font-medium placeholder-gray-400">
+                    </div>
                 </div>
 
-                <!-- Mini Bar -->
+                <!-- Selected Person Bar -->
                 <transition name="slide-up">
-                    <div v-if="warMapSelected" class="absolute bottom-6 left-6 right-6 z-[400] glass p-4 animate-slide-up flex items-center gap-4 border-l-4 border-red-500">
-                        <div class="w-12 h-12 bg-neutral-800 rounded-full overflow-hidden border border-white/10 shrink-0">
+                    <div v-if="warMapSelected" class="absolute bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-lg z-[400] glass p-4 animate-slide-up flex items-center gap-4 shadow-2xl border-l-4 border-blue-500">
+                        <div class="w-14 h-14 bg-gray-200 rounded-full overflow-hidden border-2 border-white shadow-sm shrink-0">
                             <img :src="resolveImg(warMapSelected.avatar_path)" class="w-full h-full object-cover">
                         </div>
                         <div class="flex-1 min-w-0">
-                            <div class="flex items-baseline justify-between">
-                                <h3 class="font-bold text-white text-sm truncate">{{ warMapSelected.full_name }}</h3>
-                                <span class="text-[9px] font-mono text-red-400">{{ warMapSelected.threat_level }}</span>
+                            <div class="flex items-baseline justify-between mb-1">
+                                <h3 class="font-bold text-gray-900 text-base truncate">{{ warMapSelected.full_name }}</h3>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{{ warMapSelected.threat_level }} Priority</span>
                             </div>
-                            <p class="text-[10px] text-gray-400 truncate">{{ warMapSelected.name }} ({{ warMapSelected.type }})</p>
+                            <p class="text-xs text-gray-500 truncate"><i class="fa-solid fa-map-pin mr-1 text-blue-500"></i> {{ warMapSelected.name }} ({{ warMapSelected.type }})</p>
                         </div>
-                        <button @click="viewSubject(warMapSelected.subject_id)" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-4 py-2 uppercase rounded">OPEN DOSSIER</button>
-                        <button @click="warMapSelected = null" class="text-gray-500 hover:text-white px-2"><i class="fa-solid fa-xmark"></i></button>
+                        <button @click="viewSubject(warMapSelected.subject_id)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg shadow-md transition-colors">VIEW</button>
+                        <button @click="warMapSelected = null" class="text-gray-400 hover:text-gray-600 px-1"><i class="fa-solid fa-xmark text-lg"></i></button>
                     </div>
                 </transition>
             </div>
@@ -710,153 +732,169 @@ function serveHtml() {
         </main>
 
         <!-- Mobile Nav -->
-        <nav class="md:hidden h-16 bg-neutral-900 border-t border-neutral-800 flex justify-around items-center shrink-0 z-20">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-red-500' : 'text-gray-600'" class="flex flex-col items-center gap-1">
-                <i :class="t.icon"></i>
+        <nav class="md:hidden h-16 bg-white border-t border-gray-200 flex justify-around items-center shrink-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-600' : 'text-gray-400'" class="flex flex-col items-center gap-1">
+                <i :class="t.icon" class="text-lg"></i>
             </button>
         </nav>
 
     </div>
 
     <!-- Modals -->
-    <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg glass bg-neutral-900 p-6 shadow-2xl border border-white/10 animate-fade-in" :class="{'shake': modal.shake}">
-            <h3 class="text-sm font-bold text-white uppercase tracking-widest mb-6 border-b border-white/10 pb-2">{{ modalTitle }}</h3>
+    <div v-if="modal.active" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
+        <div class="w-full max-w-lg glass bg-white p-6 shadow-2xl border border-white/50 animate-fade-in transform transition-all" :class="{'shake': modal.shake}">
+            <div class="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                <h3 class="text-sm font-extrabold text-gray-900 uppercase tracking-wide">{{ modalTitle }}</h3>
+                <button @click="closeModal" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
             
             <!-- Add Subject / Edit -->
             <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
                 <div class="space-y-1">
-                    <input v-model="forms.subject.full_name" placeholder="REAL NAME *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.full_name}">
+                    <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
                 </div>
-                <input v-model="forms.subject.alias" placeholder="CODENAME / ALIAS" class="glass-input w-full p-3 text-xs">
+                <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
                 
                 <div class="grid grid-cols-2 gap-4">
-                    <select v-model="forms.subject.threat_level" class="glass-input p-3 text-xs bg-black">
+                    <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
                         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                     </select>
-                    <input v-model="forms.subject.occupation" list="list-occupations" placeholder="COVER/OCCUPATION" class="glass-input p-3 text-xs">
+                    <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Job Title" class="glass-input p-3 text-sm">
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
                     <div class="space-y-1">
-                        <label class="text-[9px] text-gray-500 uppercase">Date of Birth</label>
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-xs bg-black w-full text-white">
+                        <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Date of Birth</label>
+                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
                     </div>
                     <div class="space-y-1">
-                        <label class="text-[9px] text-gray-500 uppercase">Age (Auto)</label>
-                        <input v-model="forms.subject.age" type="number" class="glass-input p-2.5 text-xs w-full">
+                        <label class="text-[10px] text-gray-500 font-bold uppercase ml-1">Age (Auto)</label>
+                        <input v-model="forms.subject.age" type="number" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
                     </div>
                 </div>
 
-                <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="NATIONALITY" class="glass-input w-full p-3 text-xs">
-                <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="IDEOLOGY / AFFILIATION" class="glass-input w-full p-3 text-xs">
+                <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
+                <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliations / Groups" class="glass-input w-full p-3 text-sm">
                 
-                <textarea v-model="forms.subject.modus_operandi" placeholder="MODUS OPERANDI / HABITS" rows="3" class="glass-input w-full p-3 text-xs"></textarea>
-                <textarea v-model="forms.subject.weakness" placeholder="KNOWN WEAKNESSES" rows="2" class="glass-input w-full p-3 text-xs border-red-900/50"></textarea>
+                <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
                 
-                <button type="submit" class="w-full bg-red-700 hover:bg-red-600 text-white font-bold py-3 text-xs uppercase tracking-widest">SAVE DOSSIER</button>
-                <button v-if="modal.active === 'edit-profile'" type="button" @click="archiveSubject" class="w-full text-red-500 text-[10px] mt-2 hover:underline uppercase">ARCHIVE SUBJECT (DELETE)</button>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
+                <button v-if="modal.active === 'edit-profile'" type="button" @click="archiveSubject" class="w-full text-red-500 text-xs mt-2 hover:text-red-700 font-bold uppercase">Delete Contact</button>
             </form>
 
             <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
                 <div class="grid grid-cols-2 gap-4">
-                    <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-xs bg-black text-white" required>
-                    <select v-model="forms.interaction.type" class="glass-input p-3 text-xs bg-black">
-                        <option>Direct Contact</option>
-                        <option>Surveillance</option>
-                        <option>Intercept</option>
-                        <option>Interrogation</option>
-                        <option>Informant Report</option>
+                    <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm bg-white text-gray-900" required>
+                    <select v-model="forms.interaction.type" class="glass-input p-3 text-sm bg-white">
+                        <option>Meeting</option>
+                        <option>Call</option>
+                        <option>Email</option>
+                        <option>Observation</option>
+                        <option>Other</option>
                     </select>
                 </div>
-                <textarea v-model="forms.interaction.transcript" placeholder="TRANSCRIPT / DIALOGUE LOG *" rows="6" class="glass-input w-full p-3 text-xs font-mono" :class="{'error': errors.transcript}"></textarea>
-                <textarea v-model="forms.interaction.conclusion" placeholder="ANALYST CONCLUSION / DEBRIEF" rows="3" class="glass-input w-full p-3 text-xs"></textarea>
-                <input v-model="forms.interaction.evidence_url" placeholder="EXTERNAL EVIDENCE LINK (OPTIONAL)" class="glass-input w-full p-3 text-xs">
-                <button type="submit" class="w-full bg-amber-700 hover:bg-amber-600 text-white font-bold py-3 text-xs uppercase tracking-widest">LOG INTERACTION</button>
+                <textarea v-model="forms.interaction.transcript" placeholder="Notes / Discussion *" rows="6" class="glass-input w-full p-3 text-sm font-mono" :class="{'error': errors.transcript}"></textarea>
+                <textarea v-model="forms.interaction.conclusion" placeholder="Summary / Next Steps" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                <input v-model="forms.interaction.evidence_url" placeholder="External Link (Optional)" class="glass-input w-full p-3 text-sm">
+                <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-amber-500/20">Save Log</button>
             </form>
 
             <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                 <!-- Search moved above map -->
                 <div class="relative z-10">
-                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH ADDRESS (Press Enter)" class="glass-input w-full p-3 text-xs border-blue-500/50">
-                    <button type="button" @click="searchLocations" class="absolute right-2 top-2 text-blue-400"><i class="fa-solid fa-search"></i></button>
+                    <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
                     <!-- Search Results -->
-                    <div v-if="locationSearchResults.length" class="absolute w-full bg-black border border-gray-700 max-h-40 overflow-y-auto mt-1 shadow-xl">
-                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-2 hover:bg-blue-900/30 cursor-pointer text-[10px] border-b border-gray-800 last:border-0 text-white">
+                    <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg">
+                        <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
                             {{ res.display_name }}
                         </div>
                     </div>
                 </div>
 
                 <!-- Mini Map for selection -->
-                <div class="h-40 w-full bg-neutral-800 rounded border border-white/10 relative">
-                    <div id="locationPickerMap" class="absolute inset-0"></div>
-                    <div class="absolute bottom-2 right-2 bg-black/80 text-[9px] text-white p-1 px-2 pointer-events-none z-[500]">DOUBLE-CLICK TO PIN</div>
+                <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden">
+                    <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
+                    <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Double-Click to Pin</div>
                 </div>
 
-                <input v-model="forms.location.name" placeholder="LOCATION NAME (e.g. Safehouse Alpha) *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.loc_name}">
+                <input v-model="forms.location.name" placeholder="Location Name (e.g. Office) *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.loc_name}">
                 <div class="grid grid-cols-2 gap-4">
-                    <input v-model="forms.location.lat" placeholder="LAT" type="number" step="any" class="glass-input p-3 text-xs" readonly>
-                    <input v-model="forms.location.lng" placeholder="LNG" type="number" step="any" class="glass-input p-3 text-xs" readonly>
+                    <input v-model="forms.location.lat" placeholder="Lat" type="number" step="any" class="glass-input p-3 text-sm bg-gray-50" readonly>
+                    <input v-model="forms.location.lng" placeholder="Lng" type="number" step="any" class="glass-input p-3 text-sm bg-gray-50" readonly>
                 </div>
                 
-                <select v-model="forms.location.type" class="glass-input w-full p-3 text-xs bg-black">
-                    <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Safehouse</option><option>Dead Drop</option><option>Unknown</option>
+                <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm bg-white">
+                    <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Unknown</option>
                 </select>
-                <input v-model="forms.location.address" placeholder="ADDRESS (OPTIONAL)" class="glass-input w-full p-3 text-xs">
-                <textarea v-model="forms.location.notes" placeholder="NOTES / ACCESS INFO" rows="2" class="glass-input w-full p-3 text-xs"></textarea>
-                <button type="submit" class="w-full bg-blue-800 hover:bg-blue-700 text-white font-bold py-3 text-xs uppercase tracking-widest">PIN LOCATION</button>
+                <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-sm">
+                <textarea v-model="forms.location.notes" placeholder="Access Notes / Details" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Pin Location</button>
             </form>
 
             <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
-                <div class="p-4 bg-red-900/20 border border-red-900/50">
-                    <h4 class="text-red-500 font-bold uppercase text-xs mb-2">Nuclear Option</h4>
-                    <p class="text-gray-400 text-[10px] mb-4">Hard Reset wipes ALL data including Admin credentials. System will reboot to setup mode.</p>
-                    <button @click="burnProtocol" class="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-6 text-xs uppercase tracking-widest w-full">HARD RESET SYSTEM</button>
+                <div class="p-6 bg-red-50 border border-red-100 rounded-xl">
+                    <h4 class="text-red-600 font-bold uppercase text-xs mb-2">Danger Zone</h4>
+                    <p class="text-gray-500 text-xs mb-4">Factory Reset wipes ALL data including Admin credentials. System will reboot to setup mode. This cannot be undone.</p>
+                    <button @click="burnProtocol" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg text-xs uppercase tracking-widest w-full shadow-lg shadow-red-500/20">Factory Reset System</button>
                 </div>
-                <button @click="logout" class="text-gray-500 text-xs hover:text-white uppercase">Disconnect Session</button>
+                <button @click="logout" class="text-gray-400 text-xs hover:text-gray-800 font-bold uppercase tracking-wider">Log Out</button>
             </form>
 
              <!-- Basic Intel/Rel Forms -->
              <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                <input v-model="forms.intel.label" placeholder="TOPIC *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.intel_label}">
-                <textarea v-model="forms.intel.value" placeholder="OBSERVATION *" rows="3" class="glass-input w-full p-3 text-xs" :class="{'error': errors.intel_val}"></textarea>
-                <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">ADD LOG</button>
+                <input v-model="forms.intel.label" placeholder="Topic *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_label}">
+                <textarea v-model="forms.intel.value" placeholder="Observation *" rows="4" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_val}"></textarea>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Save Entry</button>
              </form>
 
              <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-xs bg-black">
+                <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm bg-white">
                     <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
                 </select>
-                <input v-model="forms.rel.type" placeholder="RELATIONSHIP TYPE *" class="glass-input w-full p-3 text-xs" :class="{'error': errors.rel_type}">
-                <button type="submit" class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 text-xs uppercase">LINK SUBJECTS</button>
+                <input v-model="forms.rel.type" placeholder="Relationship Type *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.rel_type}">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
              </form>
 
-             <div v-if="modal.active === 'share-secure'" class="space-y-4">
+             <div v-if="modal.active === 'share-secure'" class="space-y-6">
                 <div class="text-center">
-                    <i class="fa-solid fa-lock text-4xl text-blue-500 mb-2"></i>
-                    <p class="text-sm text-gray-400">Manage Secure Links</p>
+                    <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 text-xl">
+                        <i class="fa-solid fa-link"></i>
+                    </div>
+                    <h4 class="font-bold text-gray-900">Share Read-Only Access</h4>
+                    <p class="text-xs text-gray-500 mt-1">Generate a temporary link. It will expire automatically.</p>
                 </div>
                 
-                <div class="bg-white/5 p-3 rounded">
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
                     <div class="flex gap-2">
-                        <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2 w-20 text-center text-white text-xs" placeholder="MIN" min="1">
-                        <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 text-xs uppercase">GENERATE NEW LINK</button>
+                        <div class="relative w-24">
+                            <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2.5 w-full text-center text-sm font-bold pl-2 pr-8" placeholder="15" min="1">
+                            <span class="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">MIN</span>
+                        </div>
+                        <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md">Create Link</button>
                     </div>
-                    <div v-if="forms.share.result" class="mt-2 p-2 bg-black border border-blue-500/30 text-[10px] font-mono text-blue-300 break-all select-all cursor-pointer" @click="copyToClipboard(forms.share.result)">
-                        {{ forms.share.result }}
+                    <div v-if="forms.share.result" class="mt-3 relative">
+                        <input readonly :value="forms.share.result" class="w-full bg-white border border-blue-200 text-blue-600 text-xs p-3 rounded-lg pr-10 font-mono" @click="copyToClipboard(forms.share.result)">
+                        <button @click="copyToClipboard(forms.share.result)" class="absolute right-2 top-2 text-blue-400 hover:text-blue-600 p-1"><i class="fa-regular fa-copy"></i></button>
                     </div>
                 </div>
 
-                <div class="max-h-40 overflow-y-auto space-y-2">
-                    <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-2 bg-black/40 border border-white/5 text-[10px]">
-                        <div>
-                            <div class="text-gray-300">Created: {{ new Date(link.created_at).toLocaleDateString() }} <span class="text-blue-400 ml-2">({{ link.views }} views)</span></div>
-                            <div class="text-gray-500 font-mono">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Timer' : 'No Timer' }}</div>
+                <div>
+                    <h5 class="text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Active Links</h5>
+                    <div class="max-h-40 overflow-y-auto space-y-2">
+                        <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
+                            <div>
+                                <div class="text-gray-900 text-xs font-bold">Created {{ new Date(link.created_at).toLocaleDateString() }}</div>
+                                <div class="text-gray-500 text-[10px] mt-0.5 flex items-center gap-2">
+                                    <span class="bg-gray-100 px-1.5 rounded">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Limit' : 'No Limit' }}</span>
+                                    <span v-if="link.views > 0" class="text-blue-600 font-bold"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
+                                </div>
+                            </div>
+                            <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 text-[10px] font-bold bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">KILL</button>
                         </div>
-                        <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 font-bold uppercase">REVOKE</button>
+                        <div v-if="activeShareLinks.length === 0" class="text-center text-xs text-gray-400 py-4 italic">No active share links.</div>
                     </div>
-                    <div v-if="activeShareLinks.length === 0" class="text-center text-[10px] text-gray-600">No active links found.</div>
                 </div>
              </div>
 
@@ -882,9 +920,9 @@ function serveHtml() {
         const loading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [
-            { id: 'dashboard', label: 'Command', icon: 'fa-solid fa-terminal' },
-            { id: 'targets', label: 'Targets', icon: 'fa-solid fa-crosshairs' },
-            { id: 'map', label: 'War Room', icon: 'fa-solid fa-map' },
+            { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-house' },
+            { id: 'targets', label: 'Contacts', icon: 'fa-solid fa-address-book' },
+            { id: 'map', label: 'Global Map', icon: 'fa-solid fa-earth-americas' },
         ];
         
         // URL State Parsing
@@ -993,7 +1031,7 @@ function serveHtml() {
             let valid = true;
             Object.keys(errors).forEach(k => delete errors[k]); // Clear prev
             fields.forEach(f => {
-                if(!f.val || f.val.trim() === '') {
+                if(!f.val || f.val.toString().trim() === '') {
                     errors[f.key] = true;
                     valid = false;
                 }
@@ -1046,7 +1084,7 @@ function serveHtml() {
         const fetchShareLinks = async () => {
             if(!selected.value) return;
             const res = await api('/share-links?subjectId=' + selected.value.id);
-            activeShareLinks.value = res; // Show all to see revoked too? or just active. Let's show all but revoked status
+            activeShareLinks.value = res;
         };
 
         const createShareLink = async () => {
@@ -1073,7 +1111,8 @@ function serveHtml() {
             if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
 
             const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+            // Light Map Tiles
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
 
             if(isPicker) {
                 pickerMapInstance = map;
@@ -1081,6 +1120,8 @@ function serveHtml() {
                 map.on('dblclick', e => {
                     forms.location.lat = e.latlng.lat;
                     forms.location.lng = e.latlng.lng;
+                    // Clear existing markers
+                    map.eachLayer((layer) => { if(layer instanceof L.Marker) map.removeLayer(layer); });
                     L.marker(e.latlng).addTo(map);
                 });
             } else {
@@ -1091,15 +1132,17 @@ function serveHtml() {
                         let icon;
                         if (isGlobal && loc.avatar_path) {
                             const imgUrl = resolveImg(loc.avatar_path);
+                            // Border color based on threat
+                            const color = loc.threat_level === 'Critical' ? '#ef4444' : loc.threat_level === 'High' ? '#f97316' : '#2563eb';
                             icon = L.divIcon({
                                 className: 'custom-div-icon',
-                                html: \`<div class="marker-pin" style="background: \${loc.threat_level === 'Critical' ? '#7f1d1d' : '#ef4444'};"></div><img src="\${imgUrl}" style="border: 2px solid #ef4444;">\`,
+                                html: \`<div class="marker-pin" style="background: \${color};"></div><img src="\${imgUrl}" style="border: 2px solid \${color};">\`,
                                 iconSize: [30, 42], iconAnchor: [15, 42]
                             });
                         } else {
                             icon = L.divIcon({
                                 className: 'custom-div-icon',
-                                html: \`<div class="marker-pin"></div><i class="fa-solid fa-location-dot" style="position:absolute;top:2px;left:8px;font-size:14px;color:#c30b82"></i>\`,
+                                html: \`<div class="marker-pin"></div><i class="fa-solid fa-location-dot" style="position:absolute;top:2px;left:8px;font-size:14px;color:white"></i>\`,
                                 iconSize: [30, 42], iconAnchor: [15, 42]
                             });
                         }
@@ -1117,7 +1160,7 @@ function serveHtml() {
 
         // Watchers
         watch(() => subTab.value, (val) => {
-            if(val === 'geoint' && selected.value) {
+            if(val === 'locations' && selected.value) {
                 nextTick(() => initMap('subjectMap', selected.value.locations || [], null));
             }
             if(val === 'network' && selected.value) {
@@ -1155,7 +1198,9 @@ function serveHtml() {
             locationSearchResults.value = [];
             // Center picker map
             if(pickerMapInstance) {
-                pickerMapInstance.setView([res.lat, res.lon], 13);
+                pickerMapInstance.setView([res.lat, res.lon], 15);
+                // Clear and add
+                pickerMapInstance.eachLayer((layer) => { if(layer instanceof L.Marker) pickerMapInstance.removeLayer(layer); });
                 L.marker([res.lat, res.lon]).addTo(pickerMapInstance);
             }
         };
@@ -1189,25 +1234,35 @@ function serveHtml() {
         const initNetwork = () => {
             const container = document.getElementById('relNetwork');
             if(!container || !selected.value) return;
-            const nodes = [{id: selected.value.id, label: selected.value.alias, color: '#ef4444', size: 30}];
+            const nodes = [{id: selected.value.id, label: selected.value.alias || selected.value.full_name, color: '#2563eb', size: 30}];
             const edges = [];
             selected.value.relationships.forEach(r => {
                 const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
-                nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#444' });
+                nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#9ca3af' });
                 edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type });
             });
             new vis.Network(container, { nodes, edges }, {
-                nodes: { shape: 'dot', font: { color: '#fff' } },
-                edges: { color: '#666' }
+                nodes: { shape: 'dot', font: { color: '#374151' } },
+                edges: { color: '#cbd5e1' }
             });
         };
 
         const copyToClipboard = (text) => {
-            if(navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("COPIED"));
+            if(navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard"));
         };
 
         const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
-        const getThreatColor = (l) => ({'Low':'text-green-500','Medium':'text-amber-500','High':'text-red-500','Critical':'text-red-700 animate-pulse'}[l] || 'text-gray-500');
+        
+        const getThreatColor = (l, isBg = false) => {
+            const colors = {
+                'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600',
+                'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600',
+                'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600',
+                'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600'
+            };
+            return colors[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500');
+        };
+
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const openSettings = () => openModal('settings');
         const logout = () => { localStorage.clear(); location.reload(); };
@@ -1216,7 +1271,7 @@ function serveHtml() {
             const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'});
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = (selected.value.alias || 'subject') + '.json';
+            link.download = (selected.value.alias || 'contact') + '.json';
             link.click();
         };
         
@@ -1239,24 +1294,38 @@ function serveHtml() {
             };
         };
         const deleteItem = async (table, id) => {
-            if(confirm('Confirm deletion?')) {
+            if(confirm('Are you sure you want to delete this item?')) {
                 await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
                 viewSubject(selected.value.id);
             }
         };
         const archiveSubject = async () => {
-            if(confirm('ARCHIVE TARGET? This hides them from active lists.')) {
+            if(confirm('Delete this contact? This will archive them.')) {
                 await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) });
                 closeModal(); changeTab('targets'); fetchData();
             }
         };
         const burnProtocol = async () => {
-            if(prompt("TYPE 'BURN' TO CONFIRM NUCLEAR RESET") === 'BURN') {
+            if(prompt("Type 'BURN' to confirm factory reset. All data will be lost.") === 'BURN') {
                 await api('/nuke', { method: 'POST' });
                 localStorage.clear();
                 location.reload();
             }
         };
+
+        const modalTitle = computed(() => {
+            const map = {
+                'add-subject': 'Add Contact',
+                'edit-profile': 'Edit Contact',
+                'add-interaction': 'Log Meeting',
+                'add-location': 'Pin Location',
+                'add-intel': 'Add Observation',
+                'add-rel': 'Add Connection',
+                'share-secure': 'Share Access',
+                'settings': 'Settings'
+            };
+            return map[modal.active] || 'System Dialog';
+        });
 
         onMounted(() => {
             if(localStorage.getItem('admin_id')) { 
@@ -1271,7 +1340,7 @@ function serveHtml() {
 
         return { 
             view, auth, loading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSelected, warMapSearch,
+            activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSelected, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, revokeLink, fetchShareLinks, copyToClipboard, changeTab, changeSubTab, errors, suggestions, archiveSubject,
             triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
