@@ -111,6 +111,46 @@ export function evaluateShareStatus(link, now = new Date()) {
   return { expired: remainingSeconds <= 0, remainingSeconds, expiresAt };
 }
 
+// --- JWT HELPERS ---
+function base64UrlEncode(str) {
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  return atob(str);
+}
+
+export async function signJwt(payload, secret) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedBody = base64UrlEncode(JSON.stringify(payload));
+  const data = encoder.encode(`${encodedHeader}.${encodedBody}`);
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, data);
+  const encodedSignature = base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
+  return `${encodedHeader}.${encodedBody}.${encodedSignature}`;
+}
+
+export async function verifyJwt(token, secret) {
+  try {
+    const [h, b, s] = token.split('.');
+    if (!h || !b || !s) return null;
+    const data = encoder.encode(`${h}.${b}`);
+    const key = await crypto.subtle.importKey(
+      'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+    );
+    const signature = Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const valid = await crypto.subtle.verify('HMAC', key, signature, data);
+    return valid ? JSON.parse(base64UrlDecode(b)) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export class BadRequestError extends Error {
   constructor(message) {
     super(message);
