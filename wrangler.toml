@@ -2,6 +2,9 @@ name = "human"
 main = "src/worker.js"
 compatibility_date = "2024-07-20"
 
+[vars]
+JWT_SECRET = "d9j093udni2bfb392fh82fb3n2fb2n8h239hf293hn23unf9328"
+
 [placement]
 mode = "smart"
 
