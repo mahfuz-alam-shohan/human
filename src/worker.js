@@ -381,13 +381,14 @@ async function handleGetSharedSubject(db, token) {
         
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
+        // FETCH ALL INFOS
         const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
-        const interactions = await db.prepare('SELECT date, type, conclusion, transcript FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
-        const locations = await db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
-        const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
-        const intel = await db.prepare('SELECT category, label, value FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+        const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
+        const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+        const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+        const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
         const relationships = await db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, s.occupation as target_role
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
             FROM subject_relationships r
             LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
@@ -414,133 +415,234 @@ function serveSharedHtml(token) {
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Profile Dossier</title>
+    <title>CONFIDENTIAL // Profile Dossier</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #334155; }
-        .paper { background: white; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); border: 1px solid #e2e8f0; }
-        @media (prefers-color-scheme: dark) {
-            body { background: #0f172a; color: #e2e8f0; }
-            .paper { background: #1e293b; border-color: #334155; box-shadow: none; }
-        }
+        :root { --primary: #3b82f6; --bg-dark: #0f172a; }
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; color: #334155; }
+        .glass { background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .dark-mode body { background: #0f172a; color: #e2e8f0; }
+        .dark-mode .glass { background: #1e293b; border-color: #334155; box-shadow: none; }
+        
+        .tab-btn { padding: 0.75rem 1.25rem; font-weight: 500; font-size: 0.875rem; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+        .tab-btn.active { color: var(--primary); border-color: var(--primary); }
+        .tab-btn:hover:not(.active) { color: #64748b; }
+        .dark-mode .tab-btn:hover:not(.active) { color: #94a3b8; }
     </style>
 </head>
-<body class="min-h-screen p-4 md:p-8">
-    <div id="app" class="max-w-5xl mx-auto">
-        <div v-if="loading" class="text-center py-20">
+<body class="min-h-screen transition-colors duration-300">
+    <div id="app" class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+        
+        <!-- LOADING STATE -->
+        <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh]">
             <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i>
-            <p class="mt-4 text-sm font-medium text-slate-500">Retrieving Secure Profile...</p>
+            <p class="mt-4 text-sm font-bold text-slate-400 uppercase tracking-widest">Decrypting Dossier...</p>
         </div>
-        <div v-else-if="error" class="text-center py-20 paper rounded-xl p-8 border-red-500 bg-red-50 dark:bg-red-900/20">
-            <i class="fa-solid fa-lock text-5xl text-red-500 mb-4"></i>
-            <h1 class="text-2xl font-bold text-red-600 dark:text-red-400 mb-2">Access Denied</h1>
-            <p class="text-slate-600 dark:text-slate-400">{{error}}</p>
+
+        <!-- ERROR STATE -->
+        <div v-else-if="error" class="flex items-center justify-center min-h-[50vh]">
+            <div class="glass p-8 max-w-md w-full text-center border-l-4 border-red-500">
+                <i class="fa-solid fa-shield-halved text-5xl text-red-500 mb-4"></i>
+                <h1 class="text-2xl font-bold text-red-600 mb-2">Access Restricted</h1>
+                <p class="text-slate-600 dark:text-slate-400 text-sm">{{error}}</p>
+            </div>
         </div>
-        <div v-else class="space-y-6">
-            <!-- Header -->
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-slate-700 pb-6">
-                <div>
-                    <h1 class="text-3xl font-bold text-slate-900 dark:text-white">{{data.full_name}}</h1>
-                    <div class="flex items-center gap-3 mt-1 text-sm text-slate-500">
-                        <span v-if="data.alias" class="bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded font-medium">{{data.alias}}</span>
-                        <span>{{data.occupation}}</span>
-                        <span v-if="data.nationality">&bull; {{data.nationality}}</span>
-                    </div>
+
+        <!-- CONTENT -->
+        <div v-else class="space-y-6 animate-fade-in">
+            
+            <!-- HEADER / IDENTITY -->
+            <div class="glass p-6 md:p-8 relative overflow-hidden">
+                <div class="absolute top-0 right-0 p-4 opacity-10">
+                    <i class="fa-solid fa-fingerprint text-9xl"></i>
                 </div>
-                <div class="text-right">
-                    <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Link Expires In</div>
-                    <div class="text-xl font-mono font-medium" :class="timer < 60 ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'">{{ formatTime(timer) }}</div>
+                
+                <div class="flex flex-col md:flex-row gap-6 relative z-10">
+                    <div class="shrink-0 mx-auto md:mx-0">
+                        <div class="w-32 h-32 md:w-40 md:h-40 rounded-xl overflow-hidden ring-4 ring-white dark:ring-slate-700 shadow-xl bg-slate-200">
+                            <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
+                        </div>
+                    </div>
+                    <div class="flex-1 text-center md:text-left space-y-2">
+                        <div class="flex flex-col md:flex-row justify-between items-start">
+                            <div>
+                                <h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white tracking-tight">{{data.full_name}}</h1>
+                                <div class="text-lg text-slate-500 font-medium">{{data.occupation}}</div>
+                            </div>
+                            <div class="mt-4 md:mt-0 flex flex-col items-end gap-1">
+                                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                    {{data.status || 'Active'}}
+                                </span>
+                                <div class="text-xs font-mono text-slate-400">EXP: {{ formatTime(timer) }}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
+                            <div v-if="data.alias" class="px-3 py-1.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-mask mr-2"></i>{{data.alias}}
+                            </div>
+                            <div v-if="data.nationality" class="px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-flag mr-2"></i>{{data.nationality}}
+                            </div>
+                            <div v-if="data.threat_level" :class="getThreatColor(data.threat_level, true)" class="px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-triangle-exclamation mr-2"></i>{{data.threat_level}} Priority
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Sidebar -->
-                <div class="space-y-6">
-                    <div class="paper rounded-xl overflow-hidden aspect-square relative">
-                        <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
-                         <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-                            <span class="inline-block px-2 py-1 rounded text-xs font-bold uppercase text-white bg-blue-600">{{data.status}}</span>
-                        </div>
-                    </div>
-                    
-                    <div class="paper rounded-xl p-5 space-y-4">
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Physical Profile</h3>
-                        <div class="grid grid-cols-2 gap-4 text-sm">
-                            <div><div class="text-slate-500 text-xs">Height</div><div class="font-medium">{{data.height || '--'}}</div></div>
-                            <div><div class="text-slate-500 text-xs">Weight</div><div class="font-medium">{{data.weight || '--'}}</div></div>
-                            <div><div class="text-slate-500 text-xs">Age</div><div class="font-medium">{{data.age || '--'}}</div></div>
-                            <div><div class="text-slate-500 text-xs">Blood</div><div class="font-medium">{{data.blood_type || '--'}}</div></div>
-                        </div>
-                    </div>
+            <!-- NAVIGATION TABS -->
+            <div class="glass flex overflow-x-auto no-scrollbar border-b-0 sticky top-2 z-20 shadow-md">
+                <button v-for="t in tabs" @click="activeTab = t.id" :class="['tab-btn', activeTab === t.id ? 'active' : '']">
+                    <i :class="t.icon" class="mr-2"></i>{{t.label}}
+                </button>
+            </div>
 
-                    <div class="paper rounded-xl p-5 space-y-4">
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Affiliations</h3>
-                        <p class="text-sm font-medium">{{data.ideology || 'None listed'}}</p>
+            <!-- TAB CONTENT -->
+            
+            <!-- 1. PROFILE TAB -->
+            <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Physical Stats -->
+                <div class="glass p-6 md:col-span-1">
+                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Physical Profile</h3>
+                    <div class="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
+                        <div><div class="text-slate-500 text-xs">Height</div><div class="font-bold">{{data.height || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Weight</div><div class="font-bold">{{data.weight || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Age</div><div class="font-bold">{{data.age || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Blood Type</div><div class="font-bold">{{data.blood_type || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Eye Color</div><div class="font-bold">{{data.eye_color || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Hair Color</div><div class="font-bold">{{data.hair_color || '--'}}</div></div>
+                    </div>
+                    <div v-if="data.identifying_marks" class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                        <div class="text-slate-500 text-xs mb-1">Identifying Marks</div>
+                        <div class="text-sm font-medium">{{data.identifying_marks}}</div>
                     </div>
                 </div>
 
-                <!-- Main Content -->
-                <div class="md:col-span-2 space-y-8">
-                    
-                    <!-- Bio & Routine -->
-                    <div class="paper rounded-xl p-6 md:p-8 space-y-6">
-                        <div v-if="data.modus_operandi">
-                            <h3 class="text-sm font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2 mb-3">Routine & Habits</h3>
-                            <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{{data.modus_operandi}}</p>
+                <!-- Personal Info -->
+                <div class="glass p-6 md:col-span-2">
+                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Background Info</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div class="space-y-4">
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Date of Birth</div><div class="font-medium">{{data.dob || 'Unknown'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Hometown</div><div class="font-medium">{{data.hometown || 'Unknown'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Current Location</div><div class="font-medium">{{data.location || 'Unknown'}}</div></div>
                         </div>
-                        <div v-if="data.weakness">
-                            <h3 class="text-sm font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-2 mb-3">Sensitivities & Preferences</h3>
-                            <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{{data.weakness}}</p>
-                        </div>
-                    </div>
-
-                    <!-- Attributes Grid -->
-                    <div v-if="data.intel && data.intel.length" class="space-y-3">
-                        <h3 class="text-sm font-bold text-slate-500 uppercase tracking-wider">Attributes & Facts</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div v-for="item in data.intel" class="paper rounded-lg p-3 flex justify-between items-start">
-                                <div>
-                                    <div class="text-xs text-slate-500 uppercase font-bold">{{item.label}}</div>
-                                    <div class="text-sm font-medium mt-1">{{item.value}}</div>
-                                </div>
-                                <span class="text-[10px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500">{{item.category}}</span>
-                            </div>
+                        <div class="space-y-4">
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Contact Info</div><div class="font-medium break-all">{{data.contact || 'None'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Social Links</div><div class="font-medium break-all text-blue-500">{{data.social_links || 'None'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Digital ID</div><div class="font-medium break-all font-mono text-xs">{{data.digital_identifiers || 'None'}}</div></div>
                         </div>
                     </div>
-
-                    <!-- Connections -->
-                    <div v-if="data.relationships && data.relationships.length" class="space-y-3">
-                        <h3 class="text-sm font-bold text-slate-500 uppercase tracking-wider">Connections</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div v-for="rel in data.relationships" class="paper rounded-lg p-3 flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-xs text-slate-500">
-                                    {{rel.target_name.charAt(0)}}
-                                </div>
-                                <div>
-                                    <div class="text-sm font-bold">{{rel.target_name}}</div>
-                                    <div class="text-xs text-blue-500">{{rel.relationship_type}}</div>
-                                </div>
-                            </div>
-                        </div>
+                    <div v-if="data.previous_locations" class="mt-6">
+                        <div class="text-xs text-slate-500 uppercase font-bold mb-1">Previous Locations</div>
+                        <p class="text-sm text-slate-700 dark:text-slate-300">{{data.previous_locations}}</p>
                     </div>
-
-                    <!-- Interactions -->
-                    <div v-if="data.interactions && data.interactions.length" class="space-y-3">
-                        <h3 class="text-sm font-bold text-slate-500 uppercase tracking-wider">History</h3>
-                        <div class="relative pl-4 border-l-2 border-slate-200 dark:border-slate-700 space-y-6">
-                            <div v-for="ix in data.interactions" class="relative">
-                                <div class="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-blue-500 ring-4 ring-white dark:ring-slate-900"></div>
-                                <div class="text-xs font-mono text-slate-400 mb-1">{{new Date(ix.date).toLocaleDateString()}} &bull; {{ix.type}}</div>
-                                <p class="text-sm text-slate-700 dark:text-slate-300">{{ix.conclusion || ix.transcript}}</p>
-                            </div>
-                        </div>
-                    </div>
-
                 </div>
             </div>
+
+            <!-- 2. INTEL TAB -->
+            <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Core Intel -->
+                <div class="glass p-6 md:col-span-2 space-y-6">
+                    <div>
+                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
+                            <i class="fa-solid fa-clipboard-list text-blue-500"></i> Routine & Modus Operandi
+                        </h3>
+                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.modus_operandi || 'No routine data recorded.'}}</div>
+                    </div>
+                    <div>
+                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
+                            <i class="fa-solid fa-lock-open text-red-500"></i> Vulnerabilities & Notes
+                        </h3>
+                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.weakness || 'No vulnerabilities recorded.'}}</div>
+                    </div>
+                </div>
+
+                <!-- Attributes List -->
+                <div class="glass p-6 md:col-span-1 space-y-4">
+                    <h3 class="text-xs font-bold uppercase text-slate-400">Collected Attributes</h3>
+                    <div v-if="!data.intel.length" class="text-sm text-slate-400 italic">No additional attributes.</div>
+                    <div v-for="item in data.intel" class="p-3 border border-slate-100 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        <div class="flex justify-between items-start mb-1">
+                            <span class="text-[10px] font-bold uppercase text-blue-500 tracking-wider">{{item.category}}</span>
+                            <span class="text-[10px] text-slate-400">{{new Date(item.created_at).toLocaleDateString()}}</span>
+                        </div>
+                        <div class="text-xs text-slate-500 font-bold uppercase mb-0.5">{{item.label}}</div>
+                        <div class="text-sm font-medium text-slate-900 dark:text-white break-words">{{item.value}}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. TIMELINE TAB -->
+            <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
+                <div class="glass p-6 md:p-8">
+                    <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
+                    <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-700 space-y-8">
+                        <div v-for="ix in data.interactions" class="relative group">
+                            <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                                <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
+                                <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
+                            </div>
+                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
+                        </div>
+                        <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. NETWORK TAB -->
+            <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
+                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0">
+                        <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                        <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="font-bold text-sm truncate">{{rel.target_name}}</div>
+                        <div class="text-xs text-blue-500 font-bold uppercase tracking-wide">{{rel.relationship_type}}</div>
+                        <div class="text-xs text-slate-500 truncate">{{rel.target_role}}</div>
+                    </div>
+                </div>
+                <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
+            </div>
+
+            <!-- 5. FILES TAB -->
+            <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
+                    <img v-if="m.content_type.startsWith('image')" :src="'/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+                    <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
+                        <i class="fa-solid fa-file text-4xl mb-2"></i>
+                        <span class="text-xs uppercase font-bold">{{m.content_type.split('/')[1]}}</span>
+                    </div>
+                    <a :href="'/api/media/'+m.object_key" download class="absolute inset-0 z-10"></a>
+                    <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                        {{m.description || 'File'}}
+                    </div>
+                </div>
+                <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
+            </div>
+
+             <!-- 6. LOCATIONS TAB -->
+             <div v-if="activeTab === 'locations'" class="space-y-4">
+                <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
+                    <div>
+                        <div class="font-bold text-sm">{{loc.name}} <span class="ml-2 text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 uppercase">{{loc.type}}</span></div>
+                        <div class="text-xs text-slate-500 mt-1">{{loc.address}}</div>
+                        <div v-if="loc.notes" class="text-xs text-slate-400 mt-2 italic">"{{loc.notes}}"</div>
+                    </div>
+                    <a v-if="loc.lat" :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 hover:bg-blue-100 transition-colors">
+                        <i class="fa-solid fa-location-arrow"></i>
+                    </a>
+                </div>
+                <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
+             </div>
+
         </div>
     </div>
     <script>
@@ -551,15 +653,37 @@ function serveSharedHtml(token) {
                 const error = ref(null);
                 const data = ref(null);
                 const timer = ref(0);
+                const activeTab = ref('profile');
                 const token = window.location.pathname.split('/').pop();
                 
+                const tabs = [
+                    {id: 'profile', label: 'Profile', icon: 'fa-solid fa-id-card'},
+                    {id: 'intel', label: 'Intel', icon: 'fa-solid fa-brain'},
+                    {id: 'timeline', label: 'History', icon: 'fa-solid fa-clock-rotate-left'},
+                    {id: 'network', label: 'Network', icon: 'fa-solid fa-diagram-project'},
+                    {id: 'locations', label: 'Locations', icon: 'fa-solid fa-map-location-dot'},
+                    {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
+                ];
+
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
+                
                 const formatTime = (s) => {
+                    if(s <= 0) return "EXPIRED";
                     const h = Math.floor(s / 3600);
                     const m = Math.floor((s % 3600) / 60);
                     const sec = Math.floor(s % 60);
-                    return \`\${h}:\${m.toString().padStart(2, '0')}:\${sec.toString().padStart(2, '0')}\`;
+                    return \`\${h}h \${m}m \${sec}s\`;
                 };
+
+                const getThreatColor = (l, isBg = false) => {
+                     const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
+                     return isBg ? \`bg-\${c}-100 dark:bg-\${c}-900/30 text-\${c}-700 dark:text-\${c}-300\` : \`text-\${c}-600\`;
+                };
+
+                // Check Dark Mode
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.body.classList.add('dark-mode');
+                }
 
                 onMounted(async () => {
                     try {
@@ -569,16 +693,22 @@ function serveSharedHtml(token) {
                         data.value = json;
                         timer.value = json.meta?.remaining_seconds || 0;
                         loading.value = false;
-                        setInterval(() => {
+                        
+                        const interval = setInterval(() => {
                             if(timer.value > 0) timer.value--;
-                            else if(!error.value && timer.value <= 0) window.location.reload();
+                            else {
+                                if(!error.value && timer.value <= 0) {
+                                    clearInterval(interval);
+                                    window.location.reload();
+                                }
+                            }
                         }, 1000);
                     } catch(e) {
                         error.value = e.message;
                         loading.value = false;
                     }
                 });
-                return { loading, error, data, timer, resolveImg, formatTime };
+                return { loading, error, data, timer, activeTab, tabs, resolveImg, formatTime, getThreatColor };
             }
         }).mount('#app');
     </script>
