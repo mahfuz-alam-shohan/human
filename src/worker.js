@@ -1,7 +1,6 @@
 const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
-const ALLOWED_ORIGINS = ['*']; 
 const APP_TITLE = "PEOPLE OS // CLASSIFIED";
 
 // --- Helper Functions ---
@@ -39,7 +38,7 @@ function safeVal(v) {
     return v === undefined || v === '' ? null : v;
 }
 
-// --- Database Layer (Schema Preserved) ---
+// --- Database Layer ---
 
 let schemaInitialized = false;
 
@@ -158,6 +157,15 @@ async function ensureSchema(db) {
           views INTEGER DEFAULT 0,
           started_at TEXT, 
           created_at TEXT
+        )`),
+
+        // NEW: Dead Drop Table
+        db.prepare(`CREATE TABLE IF NOT EXISTS dead_drops (
+            id INTEGER PRIMARY KEY,
+            token TEXT UNIQUE,
+            message TEXT,
+            created_at TEXT,
+            expires_at TEXT
         )`)
       ]);
 
@@ -171,7 +179,7 @@ async function nukeDatabase(db) {
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
         'subject_relationships', 'subject_media', 'subject_intel', 
-        'subjects', 'admins'
+        'subjects', 'admins', 'dead_drops'
     ];
     
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
@@ -183,7 +191,7 @@ async function nukeDatabase(db) {
     return true;
 }
 
-// --- Analysis Engine (Heuristic Spy Logic) ---
+// --- Analysis Engine ---
 
 function analyzeProfile(subject, interactions, intel) {
     const textBank = [
@@ -197,21 +205,20 @@ function analyzeProfile(subject, interactions, intel) {
     const tags = [];
     let riskScore = 0; // 0 - 100
 
-    // Heuristics
     const keywords = {
         financial: ['money', 'debt', 'gambling', 'loan', 'bank', 'crypto', 'payoff'],
         violent: ['weapon', 'gun', 'fight', 'aggressive', 'assault', 'threat', 'kill'],
         deceptive: ['lie', 'secret', 'hidden', 'coverup', 'fake', 'alias', 'clandestine'],
         compromised: ['blackmail', 'affair', 'addiction', 'leverage', 'pressure'],
-        loyal: ['family', 'patriotic', 'devout', 'committed', 'honor']
+        tech: ['hack', 'cyber', 'code', 'server', 'encryption', 'network', 'exploit']
     };
 
     if (keywords.financial.some(w => textBank.includes(w))) { tags.push('Financial Motive'); riskScore += 15; }
     if (keywords.violent.some(w => textBank.includes(w))) { tags.push('Violence Potential'); riskScore += 30; }
-    if (keywords.deceptive.some(w => textBank.includes(w))) { tags.push('Deceptive Tradecraft'); riskScore += 20; }
-    if (keywords.compromised.some(w => textBank.includes(w))) { tags.push('Compromised / Leverage'); riskScore += 25; }
+    if (keywords.deceptive.some(w => textBank.includes(w))) { tags.push('Tradecraft'); riskScore += 20; }
+    if (keywords.compromised.some(w => textBank.includes(w))) { tags.push('Compromised'); riskScore += 25; }
+    if (keywords.tech.some(w => textBank.includes(w))) { tags.push('Technical Capability'); riskScore += 10; }
     
-    // Base threat check
     if (subject.threat_level === 'High') riskScore += 20;
     if (subject.threat_level === 'Critical') riskScore += 40;
 
@@ -358,15 +365,47 @@ async function handleGetSharedSubject(db, token) {
     return errorResponse('INVALID CONFIG', 500);
 }
 
-// --- Frontend: Shared Link View (Public) ---
-function serveSharedHtml(token) {
-    // Kept identical to preserve existing functionality, just enhanced styling slightly
+// --- Dead Drop Logic ---
+
+async function handleCreateDeadDrop(req, db, origin) {
+    const { message, ttlMinutes } = await req.json();
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + (ttlMinutes || 1440) * 60000).toISOString();
+    
+    await db.prepare('INSERT INTO dead_drops (token, message, created_at, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(token, message, isoTimestamp(), expiresAt).run();
+        
+    return response({ url: `${origin}/drop/${token}`, expiresAt });
+}
+
+async function handleGetDeadDrop(db, token) {
+    // Transactional: read then delete immediately
+    const drop = await db.prepare('SELECT * FROM dead_drops WHERE token = ?').bind(token).first();
+    
+    if (!drop) return errorResponse('Drop not found or already destroyed', 404);
+    
+    // Delete immediately
+    await db.prepare('DELETE FROM dead_drops WHERE id = ?').bind(drop.id).run();
+    
+    if (new Date(drop.expires_at) < new Date()) {
+        return errorResponse('Drop expired', 410);
+    }
+
+    return response({ message: drop.message, created_at: drop.created_at });
+}
+
+
+// --- Frontend: Shared Link View ---
+function serveSharedHtml(token, isDeadDrop = false) {
+    const title = isDeadDrop ? "Secure Drop" : "Secure Dossier";
+    const apiEndpoint = isDeadDrop ? `/api/drop/${token}` : `/api/share/${token}`;
+    
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Secure Dossier View</title>
+    <title>${title}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -381,74 +420,94 @@ function serveSharedHtml(token) {
     <div id="app" class="w-full max-w-4xl mx-auto my-8">
         <div v-if="loading" class="text-center py-20">
             <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i>
-            <p class="mt-4 text-sm uppercase tracking-widest text-slate-400">Authenticating Token...</p>
+            <p class="mt-4 text-sm uppercase tracking-widest text-slate-400">Authenticating Secure Token...</p>
         </div>
         <div v-else-if="error" class="text-center py-20 glass rounded-xl p-8 border-red-900/50 bg-red-900/10">
-            <i class="fa-solid fa-triangle-exclamation text-5xl text-red-500 mb-4"></i>
-            <h1 class="text-2xl font-bold text-red-400 mb-2">ACCESS DENIED</h1>
+            <i class="fa-solid fa-fire text-5xl text-red-500 mb-4"></i>
+            <h1 class="text-2xl font-bold text-red-400 mb-2">DATA INCINERATED</h1>
             <p class="text-slate-400">{{error}}</p>
+            <p class="text-xs text-slate-600 mt-4">The requested data has been deleted or expired.</p>
         </div>
         <div v-else class="space-y-6">
-            <div class="glass rounded-xl p-6 flex items-center justify-between">
-                <div>
-                    <h1 class="text-xl font-bold tracking-tight text-white">PEOPLE OS <span class="text-blue-500 text-xs align-top">INTEL</span></h1>
-                    <div class="flex items-center gap-2 mt-1">
-                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                        <span class="text-xs font-mono text-green-400">SECURE CONNECTION ESTABLISHED</span>
-                    </div>
+            
+            <!-- DEAD DROP VIEW -->
+            <div v-if="${isDeadDrop}" class="glass rounded-xl p-8 border-l-4 border-amber-500">
+                <div class="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
+                     <i class="fa-solid fa-eye-slash text-amber-500 text-xl"></i>
+                     <div>
+                        <h1 class="text-xl font-bold text-white">BURN ON READ</h1>
+                        <p class="text-xs text-amber-500 font-mono">MESSAGE DESTROYED ON SERVER. DO NOT REFRESH.</p>
+                     </div>
                 </div>
-                <div v-if="meta" class="text-right">
-                    <div class="text-[10px] text-slate-400 uppercase font-bold">Auto-Destruct In</div>
-                    <div class="font-mono text-xl text-red-400 font-bold">{{ formatTime(timer) }}</div>
+                <div class="bg-black/50 p-6 rounded font-mono text-sm whitespace-pre-wrap text-emerald-400 border border-slate-700 shadow-inner select-all">{{data.message}}</div>
+                <div class="mt-4 text-center">
+                    <button @click="copyDrop" class="text-slate-400 hover:text-white text-xs uppercase font-bold tracking-widest"><i class="fa-regular fa-copy mr-2"></i>Copy to Clipboard</button>
                 </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="space-y-6">
-                    <div class="glass rounded-xl p-2 relative overflow-hidden group">
-                        <img :src="resolveImg(data.avatar_path)" class="w-full aspect-square object-cover rounded-lg bg-slate-800">
-                        <div class="absolute top-4 left-4 z-10">
-                            <span :class="'bg-'+threatColor+'-500/20 text-'+threatColor+'-400 border-'+threatColor+'-500/50'" class="backdrop-blur-md border px-3 py-1 rounded text-xs font-bold uppercase">
-                                {{data.threat_level}} Priority
-                            </span>
+
+            <!-- DOSSIER VIEW -->
+            <div v-else class="space-y-6">
+                <div class="glass rounded-xl p-6 flex items-center justify-between">
+                    <div>
+                        <h1 class="text-xl font-bold tracking-tight text-white">PEOPLE OS <span class="text-blue-500 text-xs align-top">INTEL</span></h1>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                            <span class="text-xs font-mono text-green-400">SECURE CONNECTION ESTABLISHED</span>
                         </div>
                     </div>
-                    <div class="glass rounded-xl p-6 space-y-4">
-                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2">Physical Stats</h3>
-                        <div class="grid grid-cols-2 gap-4 text-sm">
-                            <div><div class="text-slate-500 text-[10px] uppercase">Height</div>{{data.height || 'N/A'}}</div>
-                            <div><div class="text-slate-500 text-[10px] uppercase">Weight</div>{{data.weight || 'N/A'}}</div>
-                            <div><div class="text-slate-500 text-[10px] uppercase">Age</div>{{data.age || 'N/A'}}</div>
-                            <div><div class="text-slate-500 text-[10px] uppercase">Gender</div>{{data.gender || 'N/A'}}</div>
-                        </div>
-                        <div v-if="data.identifying_marks" class="pt-2">
-                            <div class="text-slate-500 text-[10px] uppercase">Marks</div>
-                            <div class="text-sm text-slate-300">{{data.identifying_marks}}</div>
-                        </div>
+                    <div v-if="meta" class="text-right">
+                        <div class="text-[10px] text-slate-400 uppercase font-bold">Auto-Destruct In</div>
+                        <div class="font-mono text-xl text-red-400 font-bold">{{ formatTime(timer) }}</div>
                     </div>
                 </div>
-                <div class="md:col-span-2 space-y-6">
-                    <div class="glass rounded-xl p-8 relative overflow-hidden">
-                        <div class="absolute top-4 right-8 secure-stamp border-slate-500 text-slate-500 opacity-20 transform rotate-12">CONFIDENTIAL</div>
-                        <h2 class="text-3xl font-bold text-white mb-1">{{data.full_name}}</h2>
-                        <div class="text-blue-400 text-sm font-mono mb-6" v-if="data.alias">AKA: {{data.alias}}</div>
-                        <div class="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
-                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Occupation</span>{{data.occupation || 'Unknown'}}</div>
-                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Nationality</span>{{data.nationality || 'Unknown'}}</div>
-                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Affiliation</span>{{data.ideology || 'Unknown'}}</div>
-                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Status</span>{{data.status || 'Active'}}</div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="space-y-6">
+                        <div class="glass rounded-xl p-2 relative overflow-hidden group">
+                            <img :src="resolveImg(data.avatar_path)" class="w-full aspect-square object-cover rounded-lg bg-slate-800">
+                            <div class="absolute top-4 left-4 z-10">
+                                <span :class="'bg-'+threatColor+'-500/20 text-'+threatColor+'-400 border-'+threatColor+'-500/50'" class="backdrop-blur-md border px-3 py-1 rounded text-xs font-bold uppercase">
+                                    {{data.threat_level}} Priority
+                                </span>
+                            </div>
+                        </div>
+                        <div class="glass rounded-xl p-6 space-y-4">
+                            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2">Physical Stats</h3>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div><div class="text-slate-500 text-[10px] uppercase">Height</div>{{data.height || 'N/A'}}</div>
+                                <div><div class="text-slate-500 text-[10px] uppercase">Weight</div>{{data.weight || 'N/A'}}</div>
+                                <div><div class="text-slate-500 text-[10px] uppercase">Age</div>{{data.age || 'N/A'}}</div>
+                                <div><div class="text-slate-500 text-[10px] uppercase">Gender</div>{{data.gender || 'N/A'}}</div>
+                            </div>
+                            <div v-if="data.identifying_marks" class="pt-2">
+                                <div class="text-slate-500 text-[10px] uppercase">Marks</div>
+                                <div class="text-sm text-slate-300">{{data.identifying_marks}}</div>
+                            </div>
                         </div>
                     </div>
-                    <div class="glass rounded-xl p-6">
-                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">Recent Activity</h3>
-                        <div class="space-y-4">
-                            <div v-for="ix in data.interactions" class="flex gap-4 items-start">
-                                <div class="w-16 text-[10px] font-mono text-slate-500 pt-1">{{new Date(ix.date).toLocaleDateString()}}</div>
-                                <div class="flex-1">
-                                    <span class="text-xs font-bold text-blue-400 uppercase">{{ix.type}}</span>
-                                    <p class="text-sm text-slate-300 mt-1">{{ix.conclusion || 'No details logged.'}}</p>
-                                </div>
+                    <div class="md:col-span-2 space-y-6">
+                        <div class="glass rounded-xl p-8 relative overflow-hidden">
+                            <div class="absolute top-4 right-8 secure-stamp border-slate-500 text-slate-500 opacity-20 transform rotate-12">CONFIDENTIAL</div>
+                            <h2 class="text-3xl font-bold text-white mb-1">{{data.full_name}}</h2>
+                            <div class="text-blue-400 text-sm font-mono mb-6" v-if="data.alias">AKA: {{data.alias}}</div>
+                            <div class="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
+                                <div><span class="text-slate-500 block text-xs uppercase mb-1">Occupation</span>{{data.occupation || 'Unknown'}}</div>
+                                <div><span class="text-slate-500 block text-xs uppercase mb-1">Nationality</span>{{data.nationality || 'Unknown'}}</div>
+                                <div><span class="text-slate-500 block text-xs uppercase mb-1">Affiliation</span>{{data.ideology || 'Unknown'}}</div>
+                                <div><span class="text-slate-500 block text-xs uppercase mb-1">Status</span>{{data.status || 'Active'}}</div>
                             </div>
-                            <div v-if="!data.interactions?.length" class="text-center text-slate-600 italic text-sm py-4">No recent interactions available.</div>
+                        </div>
+                        <div class="glass rounded-xl p-6">
+                            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">Recent Activity</h3>
+                            <div class="space-y-4">
+                                <div v-for="ix in data.interactions" class="flex gap-4 items-start">
+                                    <div class="w-16 text-[10px] font-mono text-slate-500 pt-1">{{new Date(ix.date).toLocaleDateString()}}</div>
+                                    <div class="flex-1">
+                                        <span class="text-xs font-bold text-blue-400 uppercase">{{ix.type}}</span>
+                                        <p class="text-sm text-slate-300 mt-1">{{ix.conclusion || 'No details logged.'}}</p>
+                                    </div>
+                                </div>
+                                <div v-if="!data.interactions?.length" class="text-center text-slate-600 italic text-sm py-4">No recent interactions available.</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -465,6 +524,7 @@ function serveSharedHtml(token) {
                 const meta = ref(null);
                 const timer = ref(0);
                 const token = window.location.pathname.split('/').pop();
+                
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/cubes.png';
                 const formatTime = (s) => {
                     const m = Math.floor(s / 60);
@@ -476,25 +536,32 @@ function serveSharedHtml(token) {
                     if(level === 'High') return 'orange';
                     return 'blue';
                 }
+                const copyDrop = () => {
+                    navigator.clipboard.writeText(data.value.message);
+                    alert("Copied to clipboard");
+                }
+                
                 onMounted(async () => {
                     try {
-                        const res = await fetch('/api/share/' + token);
+                        const res = await fetch('${apiEndpoint}');
                         const json = await res.json();
                         if(json.error) throw new Error(json.error);
                         data.value = json;
                         meta.value = json.meta;
-                        timer.value = json.meta?.remaining_seconds || 0;
+                        if(json.meta?.remaining_seconds) {
+                            timer.value = json.meta.remaining_seconds;
+                            setInterval(() => {
+                                if(timer.value > 0) timer.value--;
+                                else if(!error.value && timer.value <= 0) window.location.reload();
+                            }, 1000);
+                        }
                         loading.value = false;
-                        setInterval(() => {
-                            if(timer.value > 0) timer.value--;
-                            else if(!error.value && timer.value <= 0) window.location.reload();
-                        }, 1000);
                     } catch(e) {
                         error.value = e.message;
                         loading.value = false;
                     }
                 });
-                return { loading, error, data, meta, timer, resolveImg, formatTime, threatColor };
+                return { loading, error, data, meta, timer, resolveImg, formatTime, threatColor, copyDrop };
             }
         }).mount('#app');
     </script>
@@ -503,7 +570,7 @@ function serveSharedHtml(token) {
 }
 
 
-// --- Frontend: Main Admin App (MASSIVE UPGRADE + FULL FEATURE PARITY) ---
+// --- Frontend: Main Admin App (v2.0) ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -520,6 +587,7 @@ function serveHtml() {
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link href="https://unpkg.com/vis-timeline/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
   
   <style>
@@ -527,61 +595,35 @@ function serveHtml() {
     body { font-family: 'Inter', sans-serif; color: #cbd5e1; background: var(--bg-dark); }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
     
-    /* Hardcore Spy Aesthetics */
     .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); border-radius: 0.75rem; }
     .glass-input { background: #0f172a; border: 1px solid #334155; color: white; transition: all 0.2s; border-radius: 0.5rem; }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 1px solid var(--primary); }
-    .glass-input.error { border-color: var(--danger); background: #450a0a; }
-
-    /* Custom Scrollbar */
+    
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
     ::-webkit-scrollbar-track { background: #1e293b; }
 
-    /* Utilities */
-    .scan-line { width: 100%; height: 2px; background: linear-gradient(to right, transparent, var(--primary), transparent); animation: scan 3s linear infinite; position: absolute; opacity: 0.5; pointer-events: none; }
+    .scan-line { width: 100%; height: 2px; background: linear-gradient(to right, transparent, var(--primary), transparent); animation: scan 3s linear infinite; position: absolute; opacity: 0.5; pointer-events: none; z-index: 50; }
     @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
-    .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
-    @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
 
-    /* Map & Timeline overrides */
-    .vis-timeline { border: none; font-family: 'JetBrains Mono'; font-size: 11px; }
-    .vis-item { border-color: #3b82f6; background-color: rgba(59, 130, 246, 0.2); color: white; border-radius: 4px; }
-    .vis-item.vis-selected { border-color: white; background-color: #3b82f6; }
-    .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #1e293b; color: white; font-family: 'Inter'; border: 1px solid #475569; }
-    
-    .marker-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg); left: 50%; top: 50%; margin: -15px 0 0 -15px; box-shadow: 0px 2px 5px rgba(0,0,0,0.3); }
-    .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%; }
-    .custom-div-icon { background: transparent; border: none; }
-    .custom-div-icon img { width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover; }
+    /* Terminal Styling */
+    .terminal-window { background: #0c0c0c; border: 1px solid #333; font-family: 'JetBrains Mono', monospace; overflow: hidden; display: flex; flex-direction: column; }
+    .terminal-body { flex: 1; padding: 1rem; overflow-y: auto; color: #ccc; font-size: 14px; }
+    .cmd-line { display: flex; gap: 0.5rem; }
+    .prompt { color: #10b981; font-weight: bold; }
+    .cmd-input { background: transparent; border: none; color: white; outline: none; flex: 1; caret-color: #10b981; }
 
-
-    /* Panic Mode */
-    .panic-mode { position: fixed; inset: 0; z-index: 9999; background: white; color: #333; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-
-    /* Printing - Dossier Style */
     @media print {
         body { background: white; color: black; }
         .no-print { display: none !important; }
-        .glass { background: none; border: 2px solid #000; box-shadow: none; backdrop-filter: none; color: black; border-radius: 0; margin-bottom: 20px; page-break-inside: avoid; }
-        .glass-input { border: 1px solid #ccc; background: white; color: black; }
-        h1, h2, h3, h4 { color: black !important; text-transform: uppercase; font-family: 'Courier New', monospace; letter-spacing: 2px; }
+        .glass { background: none; border: 1px solid #000; box-shadow: none; color: black; }
         .print-only { display: block !important; }
-        .timeline-container, .map-container { border: 1px solid #ccc; }
     }
     .print-only { display: none; }
   </style>
 </head>
 <body class="h-full overflow-hidden selection:bg-blue-900 selection:text-white">
   <div id="app" class="h-full flex flex-col">
-
-    <!-- PANIC OVERLAY -->
-    <div v-if="panicMode" class="panic-mode">
-        <i class="fa-solid fa-cloud-sun text-6xl text-yellow-500 mb-4"></i>
-        <h1 class="text-3xl font-light">Weather Update</h1>
-        <p class="text-gray-500 mt-2">Current Temperature: 72°F</p>
-        <p class="text-gray-400 text-sm mt-8">Press ESC x 3 to Restore Session</p>
-    </div>
 
     <!-- COMMAND PALETTE MODAL -->
     <div v-if="showCmd" class="fixed inset-0 z-[6000] bg-black/80 backdrop-blur-sm flex items-start justify-center pt-24" @click.self="showCmd = false">
@@ -600,15 +642,6 @@ function serveHtml() {
                     </div>
                     <span class="text-xs text-gray-600 group-hover:text-blue-400 font-mono">{{res.type}}</span>
                  </div>
-                 <div v-if="cmdResults.length === 0" class="p-4 text-center text-gray-500 text-xs font-mono">
-                    System Ready. Waiting for input...
-                 </div>
-            </div>
-            <div class="bg-slate-900/50 p-2 text-[10px] text-gray-500 font-mono flex gap-4 border-t border-gray-700">
-                <span><b class="text-gray-300">GO</b> [Name]</span>
-                <span><b class="text-gray-300">NEW</b> Subject</span>
-                <span><b class="text-gray-300">LOG</b> Meeting</span>
-                <span><b class="text-gray-300">PANIC</b> Mode</span>
             </div>
         </div>
     </div>
@@ -622,7 +655,7 @@ function serveHtml() {
                     <i class="fa-solid fa-fingerprint"></i>
                 </div>
                 <h1 class="text-2xl font-black text-white tracking-tighter">PEOPLE<span class="text-blue-500">OS</span></h1>
-                <p class="text-blue-400/60 text-xs mt-1 font-mono uppercase tracking-widest">Authorized Personnel Only</p>
+                <p class="text-blue-400/60 text-xs mt-1 font-mono uppercase tracking-widest">System v2.0</p>
             </div>
             <form @submit.prevent="handleAuth" class="space-y-4">
                 <input v-model="auth.email" type="email" placeholder="AGENT ID" class="glass-input w-full p-3 text-sm text-center font-mono tracking-wider" required>
@@ -641,19 +674,12 @@ function serveHtml() {
         <nav class="hidden md:flex flex-col w-20 bg-slate-900 border-r border-slate-800 items-center py-6 z-20 shadow-xl no-print">
             <div class="mb-8 text-blue-500 text-2xl drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]"><i class="fa-solid fa-shield-halved"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all" :title="t.label">
                     <i :class="t.icon" class="text-xl"></i>
                 </button>
             </div>
-            <button @click="showCmd = true" class="text-slate-500 hover:text-white p-4" title="Cmd+K"><i class="fa-solid fa-terminal"></i></button>
             <button @click="openSettings" class="text-slate-500 hover:text-white p-4"><i class="fa-solid fa-gear"></i></button>
         </nav>
-
-        <!-- HEADER (Mobile) -->
-        <header class="md:hidden h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 shadow-lg no-print">
-            <span class="font-black text-white tracking-tight text-lg">P<span class="text-blue-500">OS</span></span>
-            <button @click="showCmd = true"><i class="fa-solid fa-terminal text-slate-400"></i></button>
-        </header>
 
         <!-- CONTENT -->
         <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col">
@@ -662,7 +688,6 @@ function serveHtml() {
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div class="max-w-6xl mx-auto space-y-6">
-                    <!-- Stats Grid -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div class="glass p-5 border-l-2 border-blue-500">
                             <div class="text-[10px] text-blue-400 font-bold uppercase tracking-widest font-mono">Targets</div>
@@ -681,11 +706,9 @@ function serveHtml() {
                             <span class="text-[10px] font-bold uppercase tracking-widest">New Target</span>
                         </button>
                     </div>
-
-                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden border-t-2 border-slate-700">
                         <div class="bg-slate-900/50 p-3 border-b border-slate-800 flex justify-between items-center">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase font-mono tracking-widest"><i class="fa-solid fa-satellite-dish mr-2 text-blue-500"></i>Intercept Feed</h3>
+                            <h3 class="text-xs font-bold text-slate-400 uppercase font-mono tracking-widest">Intercept Feed</h3>
                             <button @click="fetchData" class="text-slate-500 hover:text-blue-400"><i class="fa-solid fa-arrows-rotate text-xs"></i></button>
                         </div>
                         <div class="divide-y divide-slate-800 max-h-[60vh] overflow-y-auto font-mono">
@@ -700,6 +723,83 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- TERMINAL TAB (NEW) -->
+            <div v-show="currentTab === 'terminal'" class="flex-1 flex flex-col bg-black p-4">
+                <div class="terminal-window h-full rounded shadow-2xl glass">
+                    <div class="bg-slate-800 px-4 py-2 text-xs font-mono flex gap-2 border-b border-slate-700">
+                        <span class="text-red-500">●</span><span class="text-yellow-500">●</span><span class="text-green-500">●</span>
+                        <span class="ml-4 text-slate-400">root@people-os:~</span>
+                    </div>
+                    <div class="terminal-body" ref="termBody" @click="focusTerm">
+                         <div v-for="(l, i) in termHistory" :key="i" class="mb-1 whitespace-pre-wrap">{{l}}</div>
+                         <div class="cmd-line">
+                            <span class="prompt">root@os:~$</span>
+                            <input ref="termInput" v-model="termCmd" @keyup.enter="runTermCmd" class="cmd-input" type="text" autocomplete="off" spellcheck="false">
+                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOOLS TAB (NEW: Steganography + Dead Drop) -->
+            <div v-if="currentTab === 'tools'" class="flex-1 overflow-y-auto p-8">
+                <div class="max-w-4xl mx-auto space-y-8">
+                    
+                    <!-- Dead Drop -->
+                    <div class="glass p-6 border-l-4 border-amber-500">
+                        <div class="flex items-center gap-4 mb-4">
+                            <div class="bg-amber-500/20 p-3 rounded-lg text-amber-500"><i class="fa-solid fa-fire"></i></div>
+                            <div>
+                                <h2 class="text-lg font-bold text-white">Dead Drop Generator</h2>
+                                <p class="text-xs text-slate-400 font-mono">Burn-on-read secure messaging. Data is permanently erased after one view.</p>
+                            </div>
+                        </div>
+                        <div class="space-y-4">
+                            <textarea v-model="tools.dropMessage" class="glass-input w-full p-4 font-mono text-sm h-32" placeholder="Enter sensitive intelligence..."></textarea>
+                            <div class="flex gap-4">
+                                <select v-model="tools.dropTTL" class="glass-input p-2 text-xs font-mono w-40">
+                                    <option value="60">1 Hour TTL</option>
+                                    <option value="1440">24 Hours TTL</option>
+                                </select>
+                                <button @click="createDeadDrop" class="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-6 rounded text-xs uppercase tracking-widest font-mono">Create Drop</button>
+                            </div>
+                            <div v-if="tools.dropUrl" class="mt-4 p-4 bg-black/50 border border-amber-500/30 rounded flex justify-between items-center">
+                                <code class="text-amber-400 text-sm select-all">{{tools.dropUrl}}</code>
+                                <button @click="copyToClipboard(tools.dropUrl)" class="text-slate-400 hover:text-white"><i class="fa-regular fa-copy"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Steganography -->
+                    <div class="glass p-6 border-l-4 border-purple-500">
+                         <div class="flex items-center gap-4 mb-4">
+                            <div class="bg-purple-500/20 p-3 rounded-lg text-purple-500"><i class="fa-solid fa-layer-group"></i></div>
+                            <div>
+                                <h2 class="text-lg font-bold text-white">Steganography Tool</h2>
+                                <p class="text-xs text-slate-400 font-mono">Hide/Reveal text within image pixels (Client-side only).</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div class="space-y-4">
+                                <h3 class="text-xs font-bold text-white uppercase">Encode</h3>
+                                <input type="file" @change="handleStegoFile($event, 'encode')" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-700"/>
+                                <input v-model="tools.stegoSecret" placeholder="Secret Message" class="glass-input w-full p-2 text-xs font-mono">
+                                <button @click="stegoEncode" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-2 rounded text-xs uppercase font-bold">Download Encoded Image</button>
+                            </div>
+                            <div class="space-y-4">
+                                <h3 class="text-xs font-bold text-white uppercase">Decode</h3>
+                                <input type="file" @change="handleStegoFile($event, 'decode')" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-700"/>
+                                <div v-if="tools.stegoResult" class="p-3 bg-black/50 border border-purple-500/30 rounded text-purple-300 font-mono text-xs break-all">
+                                    {{tools.stegoResult}}
+                                </div>
+                                <button @click="stegoDecode" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-2 rounded text-xs uppercase font-bold">Reveal Hidden Data</button>
+                            </div>
+                        </div>
+                        <canvas id="stegoCanvas" class="hidden"></canvas>
+                    </div>
+
                 </div>
             </div>
 
@@ -728,15 +828,8 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- SUBJECT DETAIL (The Spy Dossier) -->
+            <!-- SUBJECT DETAIL -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-950">
-                <!-- PRINT HEADER ONLY -->
-                <div class="print-only text-center mb-8 border-b-2 border-black pb-4">
-                    <h1>CONFIDENTIAL SUBJECT DOSSIER</h1>
-                    <p>EYES ONLY // DO NOT DISTRIBUTE</p>
-                </div>
-
-                <!-- TOP BAR -->
                 <div class="h-16 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/50 shrink-0 z-10 no-print">
                     <div class="flex items-center gap-4">
                         <button @click="changeTab('targets')" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
@@ -746,12 +839,14 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
+                        <button @click="downloadJson" class="text-slate-500 hover:text-white px-2 text-xs font-mono" title="Export JSON">JSON</button>
+                        <button @click="downloadMd" class="text-slate-500 hover:text-white px-2 text-xs font-mono" title="Export MD">MD</button>
+                        <div class="w-px bg-slate-700 mx-2"></div>
                         <button @click="openModal('share-secure')" class="text-slate-400 hover:text-emerald-400 px-3 transition-colors" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
                         <button @click="printDossier" class="text-slate-400 hover:text-white px-3 transition-colors" title="Print Dossier"><i class="fa-solid fa-print"></i></button>
                     </div>
                 </div>
 
-                <!-- SUB TABS -->
                 <div class="flex border-b border-slate-800 overflow-x-auto bg-slate-900/30 shrink-0 no-print">
                     <button v-for="t in ['profile', 'intel', 'meetings', 'locations', 'timeline', 'network', 'files']" 
                         @click="changeSubTab(t)" 
@@ -761,21 +856,13 @@ function serveHtml() {
                     </button>
                 </div>
 
-                <!-- CONTENT AREA -->
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
-                    
                     <!-- PROFILE TAB -->
                     <div v-if="subTab === 'profile'" class="space-y-6 max-w-6xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <!-- Left Col -->
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded border border-slate-700 relative overflow-hidden group">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500">
-                                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
-                                    <div class="absolute bottom-4 left-4">
-                                        <div class="text-[10px] text-slate-400 uppercase font-mono mb-1">Status</div>
-                                        <div class="text-xl font-bold text-white uppercase tracking-widest">{{selected.status}}</div>
-                                    </div>
                                     <button @click="triggerUpload('avatar')" class="absolute top-2 right-2 text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity no-print"><i class="fa-solid fa-camera"></i></button>
                                 </div>
                                 <div class="glass p-4 border-l-4" :class="getThreatColor(selected.threat_level, false, true)">
@@ -790,14 +877,8 @@ function serveHtml() {
                                 </button>
                             </div>
 
-                            <!-- Right Col -->
                             <div class="md:col-span-2 space-y-6">
-                                <!-- Analysis Box -->
                                 <div v-if="analysisResult" class="glass p-6 border border-emerald-500/30 bg-emerald-900/10">
-                                    <div class="flex justify-between items-start mb-2">
-                                        <h3 class="text-xs text-emerald-400 font-bold uppercase font-mono tracking-widest"><i class="fa-solid fa-microchip mr-2"></i>System Analysis</h3>
-                                        <span class="text-[10px] text-emerald-600 font-mono">{{ new Date().toLocaleTimeString() }}</span>
-                                    </div>
                                     <p class="text-sm text-emerald-100 leading-relaxed font-mono">{{ analysisResult.summary }}</p>
                                     <div class="flex gap-2 mt-3">
                                         <span v-for="tag in analysisResult.tags" class="text-[10px] px-2 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded uppercase font-bold">{{tag}}</span>
@@ -805,7 +886,6 @@ function serveHtml() {
                                 </div>
 
                                 <div class="glass p-8 relative">
-                                    <div class="absolute top-4 right-4 text-slate-700 text-4xl opacity-20"><i class="fa-brands fa-usps"></i></div>
                                     <div class="grid grid-cols-2 gap-y-6 gap-x-12">
                                         <div><label class="text-[10px] text-blue-500 font-bold uppercase tracking-widest block mb-1">Full Name</label><div class="text-white font-mono border-b border-slate-700 pb-1">{{selected.full_name}}</div></div>
                                         <div><label class="text-[10px] text-blue-500 font-bold uppercase tracking-widest block mb-1">Nationality</label><div class="text-white font-mono border-b border-slate-700 pb-1">{{selected.nationality || 'UNK'}}</div></div>
@@ -813,7 +893,7 @@ function serveHtml() {
                                         <div><label class="text-[10px] text-blue-500 font-bold uppercase tracking-widest block mb-1">Affiliation</label><div class="text-white font-mono border-b border-slate-700 pb-1">{{selected.ideology || 'UNK'}}</div></div>
                                     </div>
                                     <div class="mt-8">
-                                        <label class="text-[10px] text-blue-500 font-bold uppercase tracking-widest block mb-2">Modus Operandi / Routine</label>
+                                        <label class="text-[10px] text-blue-500 font-bold uppercase tracking-widest block mb-2">Modus Operandi</label>
                                         <div class="text-sm text-slate-300 font-mono p-4 bg-slate-900/50 border border-slate-700 rounded">{{selected.modus_operandi || 'No data available.'}}</div>
                                     </div>
                                      <div class="mt-4">
@@ -821,24 +901,28 @@ function serveHtml() {
                                         <div class="text-sm text-red-200 font-mono p-4 bg-red-900/10 border border-red-900/30 rounded">{{selected.weakness || 'None identified.'}}</div>
                                     </div>
                                 </div>
-
-                                <div class="grid grid-cols-4 gap-2 text-center">
-                                    <div class="glass p-3"><div class="text-[9px] text-slate-500 uppercase font-bold mb-1">Height</div><div class="text-white font-mono">{{selected.height || '--'}}</div></div>
-                                    <div class="glass p-3"><div class="text-[9px] text-slate-500 uppercase font-bold mb-1">Weight</div><div class="text-white font-mono">{{selected.weight || '--'}}</div></div>
-                                    <div class="glass p-3"><div class="text-[9px] text-slate-500 uppercase font-bold mb-1">Age</div><div class="text-white font-mono">{{selected.age || '--'}}</div></div>
-                                    <div class="glass p-3"><div class="text-[9px] text-slate-500 uppercase font-bold mb-1">Blood</div><div class="text-white font-mono">{{selected.blood_type || '--'}}</div></div>
+                                
+                                <!-- Digital Footprint Section -->
+                                <div class="glass p-6 border-t border-slate-700">
+                                    <h3 class="text-xs font-bold text-slate-400 uppercase font-mono tracking-widest mb-4"><i class="fa-solid fa-fingerprint mr-2 text-blue-500"></i>Digital Footprint</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4" v-if="selected.digital_identifiers">
+                                        <div v-for="(val, key) in parseDigital(selected.digital_identifiers)" class="bg-slate-900/50 p-3 rounded border border-slate-800">
+                                            <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">{{key}}</div>
+                                            <div class="font-mono text-xs text-emerald-400 break-all">{{val}}</div>
+                                        </div>
+                                    </div>
+                                    <div v-else class="text-sm text-slate-500 italic">No digital identifiers recorded. Edit profile to add.</div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- MEETINGS TAB (Restored Interaction List) -->
+                    <!-- MEETINGS TAB -->
                     <div v-if="subTab === 'meetings'" class="space-y-4 max-w-4xl mx-auto">
                         <div class="flex justify-between items-center mb-4 no-print">
                             <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Engagement Logs</h3>
                             <button @click="openModal('add-interaction')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-[10px] font-bold uppercase font-mono">+ Log Meeting</button>
                         </div>
-                        <div v-if="!selected.interactions?.length" class="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded">No history found.</div>
                         <div v-for="ix in selected.interactions" :key="ix.id" class="glass border-l-4 border-amber-500 p-5 space-y-3 relative group">
                              <div class="flex justify-between items-start">
                                 <div>
@@ -848,14 +932,10 @@ function serveHtml() {
                                 <button @click="deleteItem('subject_interactions', ix.id)" class="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
                             </div>
                             <div class="text-sm text-slate-300 font-mono whitespace-pre-wrap pl-4 border-l border-slate-700">{{ix.transcript}}</div>
-                            <div class="bg-slate-900/50 p-3 rounded text-xs border border-slate-700 text-slate-400 font-mono">
-                                <span class="text-blue-500 font-bold uppercase text-[10px] block mb-1">Conclusion</span>
-                                {{ix.conclusion}}
-                            </div>
                         </div>
                     </div>
 
-                    <!-- LOCATIONS TAB (Restored Subject Map) -->
+                    <!-- LOCATIONS TAB -->
                     <div v-show="subTab === 'locations'" class="h-full flex flex-col">
                         <div class="flex justify-between items-center mb-4 shrink-0 no-print">
                             <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Geospatial Intelligence</h3>
@@ -877,20 +957,18 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-
-                    <!-- TIMELINE TAB (New Feature) -->
+                    
+                    <!-- TIMELINE, INTEL, FILES, NETWORK... (Existing tabs kept) -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="glass p-4 border-l-4 border-blue-500 flex justify-between items-center no-print">
                             <h3 class="text-xs font-bold text-white uppercase font-mono tracking-widest">Temporal Analysis</h3>
-                            <div class="text-[10px] text-slate-400">Visualizing movement & contact patterns</div>
                         </div>
                         <div class="flex-1 glass p-2 relative timeline-container">
                             <div id="visTimeline" class="w-full h-full"></div>
                         </div>
                     </div>
 
-                    <!-- INTEL TAB -->
-                    <div v-if="subTab === 'intel'" class="space-y-4 max-w-4xl mx-auto">
+                     <div v-if="subTab === 'intel'" class="space-y-4 max-w-4xl mx-auto">
                         <div class="flex justify-between items-center mb-4 no-print">
                             <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Raw Observations</h3>
                             <button @click="openModal('add-intel')" class="text-xs border border-slate-600 hover:border-white text-slate-400 hover:text-white px-3 py-1.5 rounded transition-all font-mono">+ ADD ENTRY</button>
@@ -907,9 +985,8 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-                    
-                    <!-- FILES TAB -->
-                    <div v-if="subTab === 'files'" class="space-y-6">
+
+                     <div v-if="subTab === 'files'" class="space-y-6">
                         <div class="flex flex-col md:flex-row gap-6">
                             <div @click="triggerUpload('media')" class="h-32 w-full md:w-48 rounded border border-dashed border-slate-600 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-slate-800 text-slate-500 hover:text-blue-400 transition-all no-print">
                                 <i class="fa-solid fa-file-arrow-up text-2xl mb-2"></i>
@@ -926,8 +1003,7 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-
-                    <!-- NETWORK TAB -->
+                    
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
                          <div class="flex justify-between items-center mb-4 shrink-0 no-print">
                             <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Link Analysis</h3>
@@ -937,11 +1013,10 @@ function serveHtml() {
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
-
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB -->
+            <!-- GLOBAL MAP -->
             <div v-if="currentTab === 'map'" class="flex-1 relative bg-slate-900 map-container">
                 <div id="warRoomMap" class="w-full h-full z-0 opacity-80"></div>
                 <div class="absolute top-4 left-4 z-[400] glass px-4 py-3 pointer-events-none border-l-4 border-blue-500">
@@ -957,12 +1032,11 @@ function serveHtml() {
     <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
         <div class="w-full max-w-lg glass bg-slate-900 border border-slate-700 shadow-2xl flex flex-col max-h-[85vh]" :class="{'shake': modal.shake}">
             <div class="flex justify-between items-center p-4 border-b border-slate-700 shrink-0 bg-slate-800/50">
-                <h3 class="text-xs font-bold text-blue-400 uppercase tracking-widest font-mono"><i class="fa-solid fa-terminal mr-2"></i>{{ modalTitle }}</h3>
+                <h3 class="text-xs font-bold text-blue-400 uppercase tracking-widest font-mono">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="text-slate-500 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
             
             <div class="overflow-y-auto p-6 space-y-4">
-                <!-- FORMS (Generic Input Styling) -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-4">
                     <input v-model="forms.subject.full_name" placeholder="FULL NAME" class="glass-input w-full p-3 text-sm font-mono" required>
                     <input v-model="forms.subject.alias" placeholder="ALIAS / CODENAME" class="glass-input w-full p-3 text-sm font-mono">
@@ -972,10 +1046,7 @@ function serveHtml() {
                         </select>
                         <input v-model="forms.subject.occupation" list="list-occupations" placeholder="ROLE" class="glass-input p-3 text-sm font-mono">
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-3 text-sm font-mono text-slate-400">
-                        <input v-model="forms.subject.age" type="number" placeholder="AGE" class="glass-input p-3 text-sm font-mono" readonly>
-                    </div>
+                    <textarea v-model="forms.subject.digital_identifiers" placeholder="DIGITAL FOOTPRINT (JSON format e.g. {&quot;ip&quot;:&quot;127.0.0.1&quot;})" rows="2" class="glass-input w-full p-3 text-sm font-mono text-emerald-500"></textarea>
                     <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="NATIONALITY" class="glass-input w-full p-3 text-sm font-mono">
                     <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="AFFILIATION" class="glass-input w-full p-3 text-sm font-mono">
                     <textarea v-model="forms.subject.modus_operandi" placeholder="ROUTINE & PATTERNS" rows="3" class="glass-input w-full p-3 text-sm font-mono"></textarea>
@@ -992,11 +1063,10 @@ function serveHtml() {
                         </select>
                     </div>
                     <textarea v-model="forms.interaction.transcript" placeholder="TRANSCRIPT / NOTES" rows="6" class="glass-input w-full p-3 text-sm font-mono"></textarea>
-                    <textarea v-model="forms.interaction.conclusion" placeholder="CONCLUSION" rows="3" class="glass-input w-full p-3 text-sm font-mono"></textarea>
                     <button type="submit" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded text-xs uppercase tracking-widest font-mono">Log Intel</button>
                 </form>
                 
-                <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                 <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative z-[100]">
                          <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH LOCATION..." class="glass-input w-full p-3 pl-10 text-sm font-mono border-blue-500/30">
                          <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-500"></i>
@@ -1039,7 +1109,6 @@ function serveHtml() {
                     </div>
                  </div>
 
-                 <!-- RELATIONSHIP MODAL -->
                  <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
                     <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm font-mono">
                         <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
@@ -1068,9 +1137,11 @@ function serveHtml() {
         const loading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [
-            { id: 'dashboard', icon: 'fa-solid fa-chart-line' },
-            { id: 'targets', icon: 'fa-solid fa-address-book' },
-            { id: 'map', icon: 'fa-solid fa-globe' },
+            { id: 'dashboard', icon: 'fa-solid fa-chart-line', label: 'Dashboard' },
+            { id: 'targets', icon: 'fa-solid fa-address-book', label: 'Targets' },
+            { id: 'map', icon: 'fa-solid fa-globe', label: 'Map' },
+            { id: 'terminal', icon: 'fa-solid fa-terminal', label: 'System CLI' },
+            { id: 'tools', icon: 'fa-solid fa-toolbox', label: 'Tradecraft Tools' }
         ];
         
         // Router Logic
@@ -1078,7 +1149,6 @@ function serveHtml() {
         const currentTab = ref(params.get('tab') || 'dashboard');
         const subTab = ref(params.get('subTab') || 'profile');
         
-        // Data
         const stats = ref({});
         const feed = ref([]);
         const subjects = ref([]);
@@ -1095,18 +1165,26 @@ function serveHtml() {
         let pickerMapInstance = null;
         let mapInstance = null;
         
+        // Tools Logic
+        const tools = reactive({
+            dropMessage: '', dropTTL: 1440, dropUrl: '',
+            stegoSecret: '', stegoResult: '', stegoImgData: null
+        });
+
+        // Terminal Logic
+        const termCmd = ref('');
+        const termHistory = ref(['System initialized...', 'Welcome to PeopleOS v2.0 (Classified Build)']);
+        const termInput = ref(null);
+
         // CMD & Panic
         const showCmd = ref(false);
         const cmdQuery = ref('');
         const cmdInput = ref(null);
-        const panicMode = ref(false);
-        let panicKeys = 0;
 
         const forms = reactive({
             subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30 }
         });
 
-        // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => 
             s.full_name.toLowerCase().includes(search.value.toLowerCase()) || 
             (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))
@@ -1116,39 +1194,21 @@ function serveHtml() {
             const q = cmdQuery.value.toLowerCase();
             if(!q) return [];
             const results = [];
-            // Subjects
             subjects.value.forEach(s => {
                 if(s.full_name.toLowerCase().includes(q) || (s.alias && s.alias.toLowerCase().includes(q))) {
                     results.push({ title: s.full_name, desc: s.alias || 'Target', type: 'TARGET', action: () => viewSubject(s.id) });
                 }
             });
-            // Commands
-            if('dashboard'.includes(q)) results.push({ title: 'Dashboard', desc: 'Go to home', type: 'NAV', action: () => changeTab('dashboard') });
-            if('map'.includes(q)) results.push({ title: 'Global Map', desc: 'View world tracker', type: 'NAV', action: () => changeTab('map') });
-            if('panic'.includes(q)) results.push({ title: 'PANIC MODE', desc: 'Hide Session', type: 'SYS', action: () => { panicMode.value = true; showCmd.value = false; } });
-            
+            if('terminal'.includes(q)) results.push({ title: 'System Terminal', desc: 'CLI Access', type: 'SYS', action: () => changeTab('terminal') });
+            if('dead drop'.includes(q)) results.push({ title: 'Dead Drop', desc: 'Secure Messaging', type: 'TOOL', action: () => changeTab('tools') });
             return results.slice(0, 5);
         });
-
-        const updateUrl = () => {
-            const url = new URL(window.location);
-            url.searchParams.set('tab', currentTab.value);
-            if(currentTab.value === 'detail' && selected.value) {
-                url.searchParams.set('subTab', subTab.value);
-                url.searchParams.set('id', selected.value.id);
-            } else {
-                url.searchParams.delete('subTab');
-                url.searchParams.delete('id');
-            }
-            window.history.replaceState({}, '', url);
-        };
 
         const modalTitle = computed(() => {
              const m = { 'add-subject':'New Target', 'edit-profile':'Update Profile', 'add-interaction':'Log Intel', 'add-location':'Pin Location', 'add-intel':'Add Observation', 'add-rel':'New Connection', 'share-secure':'Secure Share' };
              return m[modal.active] || 'System Dialog';
         });
 
-        // API
         const api = async (ep, opts = {}) => {
             try {
                 const res = await fetch('/api' + ep, opts);
@@ -1158,7 +1218,6 @@ function serveHtml() {
             } catch(e) { alert(e.message); throw e; }
         };
 
-        // Core Actions
         const handleAuth = async () => {
             loading.value = true;
             try {
@@ -1188,122 +1247,152 @@ function serveHtml() {
             subTab.value = 'profile'; 
             analysisResult.value = null; // reset
             showCmd.value = false;
-            updateUrl();
         };
 
-        // Advanced Logic
-        const runAnalysis = () => {
-             const originalText = "Analyzing...";
-             setTimeout(() => {
-                 const textBank = [
-                    selected.value.modus_operandi, selected.value.weakness, selected.value.ideology,
-                    ...selected.value.interactions.map(i => i.transcript + ' ' + i.conclusion),
-                    ...selected.value.intel.map(i => i.value)
-                 ].join(' ').toLowerCase();
-
-                 const keywords = {
-                    financial: ['money', 'debt', 'gambling', 'loan'],
-                    violent: ['weapon', 'gun', 'fight', 'aggressive'],
-                    deceptive: ['lie', 'secret', 'hidden', 'fake'],
-                    compromised: ['blackmail', 'affair', 'addiction']
-                 };
-                 const tags = [];
-                 if (keywords.financial.some(w => textBank.includes(w))) tags.push('Financial Risk');
-                 if (keywords.violent.some(w => textBank.includes(w))) tags.push('Violence');
-                 if (keywords.deceptive.some(w => textBank.includes(w))) tags.push('Deceptive');
-                 if (keywords.compromised.some(w => textBank.includes(w))) tags.push('Compromised');
-                 
-                 analysisResult.value = {
-                    summary: tags.length ? \`Subject shows distinct indicators of \${tags.join(' and ')}. Recommendation: Increased surveillance.\` : "No significant risk indicators found in current dataset.",
-                    tags
-                 };
-             }, 1000);
-        };
-
-        // Timeline Visualization
-        const initTimeline = () => {
-            const container = document.getElementById('visTimeline');
-            if(!container || !selected.value) return;
+        // --- Terminal Functions ---
+        const focusTerm = () => termInput.value?.focus();
+        const runTermCmd = () => {
+            const raw = termCmd.value.trim();
+            termHistory.value.push('root@os:~$ ' + raw);
+            termCmd.value = '';
             
-            const items = new vis.DataSet();
-            // Interactions
-            selected.value.interactions.forEach(i => {
-                items.add({ content: i.type, start: i.date, className: 'vis-interaction' });
-            });
-            // Locations
-            selected.value.locations.forEach(l => {
-                items.add({ content: '📍 ' + l.name, start: l.created_at, className: 'vis-location', style: 'background-color: rgba(16, 185, 129, 0.2); border-color: #10b981;' });
-            });
-
-            new vis.Timeline(container, items, {
-                height: '100%',
-                start: new Date(new Date().getTime() - 1000 * 60 * 60 * 24 * 30), // 30 days ago
-                end: new Date(new Date().getTime() + 1000 * 60 * 60 * 24 * 5)
-            });
-        };
-
-        // Maps
-        const initMap = (id, data, isPicker = false) => {
-            const el = document.getElementById(id);
-            if(!el) return;
+            const [cmd, ...args] = raw.split(' ');
             
-            // Clean up old maps
-            if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
-            if(!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
-
-            const map = L.map(id, { attributionControl: false, zoomControl: !isPicker }).setView([20, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-
-            if(isPicker) {
-                 pickerMapInstance = map;
-                 map.on('dblclick', e => {
-                    forms.location.lat = e.latlng.lat;
-                    forms.location.lng = e.latlng.lng;
-                    map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
-                    L.marker(e.latlng).addTo(map);
-                 });
-                 setTimeout(() => map.invalidateSize(), 100);
-            } else {
-                mapInstance = map;
-                data.forEach(d => {
-                    if(d.lat) {
-                        const color = d.threat_level === 'Critical' ? '#ef4444' : '#3b82f6';
-                        // Use simple circle markers for global map
-                        L.circleMarker([d.lat, d.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.8 }).addTo(map)
-                        .bindPopup(d.full_name || d.name);
-                    }
-                });
+            if(cmd === 'clear') { termHistory.value = []; return; }
+            if(cmd === 'help') {
+                termHistory.value.push('Available commands: ls, cat [id], rm [id], whoami, date, clear, goto [tab]');
+                return;
             }
+            if(cmd === 'ls') {
+                subjects.value.forEach(s => termHistory.value.push(\`[ID: \${s.id}] \${s.full_name} (\${s.alias || 'N/A'})\`));
+                return;
+            }
+            if(cmd === 'cat') {
+                const s = subjects.value.find(x => x.id == args[0]);
+                if(s) {
+                   termHistory.value.push(\`NAME: \${s.full_name}\\nALIAS: \${s.alias}\\nROLE: \${s.occupation}\\nSTATUS: \${s.status}\`);
+                } else termHistory.value.push('Error: Subject ID not found.');
+                return;
+            }
+            if(cmd === 'goto') {
+                if(tabs.some(t => t.id === args[0])) changeTab(args[0]);
+                else termHistory.value.push('Invalid tab.');
+                return;
+            }
+            if(cmd === 'whoami') { termHistory.value.push('root (Administrator)'); return; }
+            if(cmd === 'date') { termHistory.value.push(new Date().toString()); return; }
+            
+            if(raw) termHistory.value.push(\`bash: \${cmd}: command not found\`);
+            
+            nextTick(() => {
+                const b = document.querySelector('.terminal-body');
+                if(b) b.scrollTop = b.scrollHeight;
+            });
         };
 
-        // Location Search
-        const searchLocations = async () => {
-            if(!locationSearchQuery.value) return;
-            try {
-                const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
-                locationSearchResults.value = await res.json();
-            } catch(e) { console.error(e); }
+        // --- Dead Drop ---
+        const createDeadDrop = async () => {
+             const res = await api('/dead-drop', { method: 'POST', body: JSON.stringify({ message: tools.dropMessage, ttlMinutes: tools.dropTTL }) });
+             tools.dropUrl = res.url;
+             tools.dropMessage = '';
         };
 
-        const selectLocation = (res) => {
-            forms.location.lat = parseFloat(res.lat);
-            forms.location.lng = parseFloat(res.lon);
-            forms.location.address = res.display_name;
-            locationSearchResults.value = [];
-            // Center picker map
-            if(pickerMapInstance) {
-                pickerMapInstance.setView([res.lat, res.lon], 15);
-                pickerMapInstance.eachLayer(l => { if(l instanceof L.Marker) pickerMapInstance.removeLayer(l); });
-                L.marker([res.lat, res.lon]).addTo(pickerMapInstance);
-            }
+        // --- Steganography (Client Side) ---
+        const handleStegoFile = (e, mode) => {
+            const f = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.getElementById('stegoCanvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    tools.stegoImgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    if(mode === 'decode') stegoDecode();
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(f);
+        };
+
+        const stegoEncode = () => {
+             if(!tools.stegoSecret || !tools.stegoImgData) return alert("Image and text required");
+             const imgData = tools.stegoImgData;
+             const data = imgData.data;
+             const msg = tools.stegoSecret + String.fromCharCode(0);
+             let msgIdx = 0;
+             let bitIdx = 0;
+             
+             for(let i=0; i < data.length; i += 4) {
+                 for(let j=0; j<3; j++) { // R, G, B
+                     if(msgIdx < msg.length) {
+                         const bit = (msg.charCodeAt(msgIdx) >> bitIdx) & 1;
+                         data[i+j] = (data[i+j] & ~1) | bit;
+                         bitIdx++;
+                         if(bitIdx === 8) { bitIdx = 0; msgIdx++; }
+                     }
+                 }
+             }
+             const canvas = document.getElementById('stegoCanvas');
+             canvas.getContext('2d').putImageData(imgData, 0, 0);
+             const link = document.createElement('a');
+             link.download = 'encoded_intel.png';
+             link.href = canvas.toDataURL();
+             link.click();
+        };
+
+        const stegoDecode = () => {
+             if(!tools.stegoImgData) return;
+             const data = tools.stegoImgData.data;
+             let msg = "";
+             let charCode = 0;
+             let bitIdx = 0;
+             
+             for(let i=0; i < data.length; i += 4) {
+                 for(let j=0; j<3; j++) {
+                     const bit = data[i+j] & 1;
+                     charCode |= (bit << bitIdx);
+                     bitIdx++;
+                     if(bitIdx === 8) {
+                         if(charCode === 0) { tools.stegoResult = msg; return; }
+                         msg += String.fromCharCode(charCode);
+                         charCode = 0;
+                         bitIdx = 0;
+                     }
+                 }
+             }
+        };
+
+        const downloadJson = () => {
+            const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = \`subject_\${selected.value.id}.json\`;
+            a.click();
+        };
+
+        const downloadMd = () => {
+            const s = selected.value;
+            let md = \`# CONFIDENTIAL DOSSIER: \${s.full_name}\\n**Code:** \${s.alias}\\n**Role:** \${s.occupation}\\n\\n## Profile\\n\${s.notes || s.modus_operandi}\\n\\n## Intel Log\\n\`;
+            s.intel.forEach(i => md += \`- [\${new Date(i.created_at).toLocaleDateString()}] **\${i.category}**: \${i.value}\\n\`);
+            const blob = new Blob([md], {type : 'text/markdown'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = \`subject_\${s.id}.md\`;
+            a.click();
+        };
+
+        const parseDigital = (jsonStr) => {
+            try { return JSON.parse(jsonStr); } catch(e) { return {}; }
         };
 
         // Utility
-        const changeTab = (t) => { currentTab.value = t; updateUrl(); };
-        const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
+        const changeTab = (t) => { currentTab.value = t; };
+        const changeSubTab = (t) => { subTab.value = t; };
         const openModal = (t) => {
              modal.active = t;
-             // Reset forms logic...
              if(t === 'add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
@@ -1317,36 +1406,14 @@ function serveHtml() {
              if(t === 'share-secure') { fetchShareLinks(); }
         };
         const closeModal = () => modal.active = null;
-        
-        // Command Palette
-        const executeCmd = () => {
-            const res = cmdResults.value[0];
-            if(res) selectCmd(res);
-        };
-        const selectCmd = (res) => {
-            res.action();
-            showCmd.value = false;
-            cmdQuery.value = '';
-        };
+        const executeCmd = () => { if(cmdResults.value[0]) selectCmd(cmdResults.value[0]); };
+        const selectCmd = (res) => { res.action(); showCmd.value = false; cmdQuery.value = ''; };
 
-        // Keyboard Shortcuts
         window.addEventListener('keydown', (e) => {
-            if(e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                showCmd.value = true;
-                nextTick(() => cmdInput.value?.focus());
-            }
-            if(e.key === 'Escape') {
-                if(showCmd.value) showCmd.value = false;
-                else if(modal.active) closeModal();
-                else if(panicMode.value) {
-                    panicKeys++;
-                    if(panicKeys >= 3) { panicMode.value = false; panicKeys = 0; }
-                }
-            }
+            if(e.key === 'k' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); showCmd.value = true; nextTick(() => cmdInput.value?.focus()); }
+            if(e.key === 'Escape') { showCmd.value = false; closeModal(); }
         });
 
-        // Watchers for UI initialization
         watch(() => subTab.value, (val) => {
             if(val === 'timeline') nextTick(initTimeline);
             if(val === 'locations') nextTick(() => initMap('subjectMap', selected.value.locations || []));
@@ -1368,9 +1435,56 @@ function serveHtml() {
                  const d = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
                  initMap('warRoomMap', d);
              });
+             if(val === 'terminal') nextTick(focusTerm);
         });
 
-        // Basic CRUD Wrappers
+        const initTimeline = () => {
+            const container = document.getElementById('visTimeline');
+            if(!container || !selected.value) return;
+            const items = new vis.DataSet();
+            selected.value.interactions.forEach(i => items.add({ content: i.type, start: i.date, className: 'vis-interaction' }));
+            selected.value.locations.forEach(l => items.add({ content: '📍 ' + l.name, start: l.created_at, className: 'vis-location' }));
+            new vis.Timeline(container, items, { height: '100%', start: new Date(Date.now() - 2592000000), end: new Date(Date.now() + 432000000) });
+        };
+
+        const initMap = (id, data, isPicker = false) => {
+            const el = document.getElementById(id);
+            if(!el) return;
+            if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
+            if(!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
+            const map = L.map(id, { attributionControl: false, zoomControl: !isPicker }).setView([20, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+
+            if(isPicker) {
+                 pickerMapInstance = map;
+                 map.on('dblclick', e => {
+                    forms.location.lat = e.latlng.lat;
+                    forms.location.lng = e.latlng.lng;
+                    map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
+                    L.marker(e.latlng).addTo(map);
+                 });
+                 setTimeout(() => map.invalidateSize(), 100);
+            } else {
+                mapInstance = map;
+                data.forEach(d => {
+                    if(d.lat) {
+                        const color = d.threat_level === 'Critical' ? '#ef4444' : '#3b82f6';
+                        L.circleMarker([d.lat, d.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.8 }).addTo(map).bindPopup(d.full_name || d.name);
+                    }
+                });
+            }
+        };
+
+        const searchLocations = async () => {
+            if(!locationSearchQuery.value) return;
+            try { const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`); locationSearchResults.value = await res.json(); } catch(e) {}
+        };
+        const selectLocation = (res) => {
+            forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name;
+            locationSearchResults.value = [];
+            if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
+        };
+
         const submitSubject = async () => {
             const isEdit = modal.active === 'edit-profile';
             const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
@@ -1380,30 +1494,24 @@ function serveHtml() {
             else fetchData();
             closeModal();
         };
-        const submitInteraction = async () => {
-             await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
-             viewSubject(selected.value.id); closeModal();
-        };
-        const submitLocation = async () => {
-             await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
-             viewSubject(selected.value.id); closeModal();
-        };
-        const submitIntel = async () => {
-             await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
-             viewSubject(selected.value.id); closeModal();
-        };
-        const submitRel = async () => {
-             await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
-             viewSubject(selected.value.id); closeModal();
-        };
-        const deleteItem = async (table, id) => {
-            if(confirm('Delete this item permanently?')) {
-                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
-                viewSubject(selected.value.id);
-            }
+        const submitInteraction = async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); };
+        const submitLocation = async () => { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); };
+        const submitIntel = async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); };
+        const submitRel = async () => { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); };
+        const deleteItem = async (table, id) => { if(confirm('Delete?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
+        
+        const runAnalysis = () => {
+             const originalText = "Analyzing...";
+             setTimeout(() => {
+                 const textBank = [selected.value.modus_operandi, selected.value.weakness, selected.value.ideology, ...selected.value.interactions.map(i => i.transcript), ...selected.value.intel.map(i => i.value)].join(' ').toLowerCase();
+                 const tags = [];
+                 if (textBank.includes('money') || textBank.includes('debt')) tags.push('Financial Risk');
+                 if (textBank.includes('weapon') || textBank.includes('kill')) tags.push('Violence');
+                 if (textBank.includes('secret') || textBank.includes('hide')) tags.push('Deceptive');
+                 analysisResult.value = { summary: tags.length ? \`Indicators: \${tags.join(', ')}\` : "No threats detected.", tags };
+             }, 800);
         };
 
-        // File Logic
         const fileInput = ref(null);
         const uploadType = ref(null);
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
@@ -1420,13 +1528,8 @@ function serveHtml() {
              };
         };
 
-        const fetchShareLinks = async () => {
-            activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id);
-        };
-        const createShareLink = async () => {
-            await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
-            fetchShareLinks();
-        };
+        const fetchShareLinks = async () => activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id);
+        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); fetchShareLinks(); };
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => navigator.clipboard.writeText(t);
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
@@ -1453,11 +1556,13 @@ function serveHtml() {
 
         return {
             view, loading, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
-            analysisResult, showCmd, cmdQuery, cmdResults, cmdInput, panicMode, locationSearchQuery, locationSearchResults, modalTitle,
+            analysisResult, showCmd, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle,
+            tools, termCmd, termHistory, termInput,
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, executeCmd, selectCmd,
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor, runAnalysis,
-            activeShareLinks, suggestions, printDossier, openSettings, flyTo, searchLocations, selectLocation, archiveSubject
+            activeShareLinks, suggestions, printDossier, openSettings, flyTo, searchLocations, selectLocation, archiveSubject,
+            createDeadDrop, handleStegoFile, stegoEncode, stegoDecode, downloadJson, downloadMd, parseDigital, focusTerm, runTermCmd
         };
       }
     }).mount('#app');
@@ -1477,9 +1582,12 @@ export default {
     try {
         if (!schemaInitialized) await ensureSchema(env.DB);
 
-        // Share Page
+        // Public Views
         const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
+        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1], false), { headers: {'Content-Type': 'text/html'} });
+
+        const dropMatch = path.match(/^\/drop\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && dropMatch) return new Response(serveSharedHtml(dropMatch[1], true), { headers: {'Content-Type': 'text/html'} });
 
         // Main App
         if (req.method === 'GET' && path === '/') return serveHtml();
@@ -1506,8 +1614,8 @@ export default {
         if (path === '/api/subjects') {
             if(req.method === 'POST') {
                 const p = await req.json();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), isoTimestamp()).run();
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, digital_identifiers, dob, age, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.digital_identifiers), safeVal(p.dob), safeVal(p.age), isoTimestamp()).run();
                 return response({success:true});
             }
             const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
@@ -1564,6 +1672,11 @@ export default {
         }
         const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        // Dead Drop API
+        if (path === '/api/dead-drop') return handleCreateDeadDrop(req, env.DB, url.origin);
+        const dropApiMatch = path.match(/^\/api\/drop\/([a-zA-Z0-9]+)$/);
+        if (dropApiMatch) return handleGetDeadDrop(env.DB, dropApiMatch[1]);
 
         if (path === '/api/delete') {
             const { table, id } = await req.json();
