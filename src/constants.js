@@ -1,0 +1,41 @@
+export const encoder = new TextEncoder();
+export const APP_TITLE = "PEOPLE OS";
+export const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export const SUBJECT_COLUMNS = [
+  'admin_id',
+  'full_name',
+  'alias',
+  'dob',
+  'age',
+  'gender',
+  'sex',
+  'occupation',
+  'nationality',
+  'ideology',
+  'religion',
+  'location',
+  'contact',
+  'hometown',
+  'previous_locations',
+  'modus_operandi',
+  'notes',
+  'weakness',
+  'avatar_path',
+  'is_archived',
+  'status',
+  'threat_level',
+  'last_sighted',
+  'height',
+  'weight',
+  'eye_color',
+  'hair_color',
+  'blood_type',
+  'identifying_marks',
+  'social_links',
+  'digital_identifiers',
+];
