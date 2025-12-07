@@ -164,11 +164,11 @@ export async function handleShareList(db, subjectId, origin, adminId, corsHeader
 export async function handleShareRevoke(db, token, adminId, corsHeaders) {
   if (!token) return errorResponse('Share token required', 400, null, corsHeaders);
   try {
-    const res = await db.prepare('
+    const res = await db.prepare(`
       UPDATE subject_shares
       SET is_active = 0
       WHERE token = ? AND subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
-    ').bind(token, adminId).run();
+    `).bind(token, adminId).run();
 
     if (!res.meta?.changes) return errorResponse('Share token not found', 404, null, corsHeaders);
     return jsonResponse({ success: true }, 200, corsHeaders);
