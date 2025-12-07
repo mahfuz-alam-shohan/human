@@ -1745,3 +1745,877 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
+const encoder = new TextEncoder();
+
+// --- Configuration & Constants ---
+const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
+
+// Whitelist for Subject Columns to prevent "no such column" errors during updates
+const SUBJECT_COLUMNS = [
+    'full_name', 'alias', 'dob', 'age', 'gender', 'occupation', 'nationality', 
+    'ideology', 'location', 'contact', 'hometown', 'previous_locations', 
+    'modus_operandi', 'notes', 'weakness', 'avatar_path', 'is_archived', 
+    'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
+    'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
+    'digital_identifiers'
+];
+
+// --- Helper Functions ---
+
+function isoTimestamp() { return new Date().toISOString(); }
+
+async function hashPassword(secret) {
+  const data = encoder.encode(secret);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function sanitizeFileName(name) {
+  return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
+}
+
+function generateToken() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
+}
+
+function response(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
+}
+
+function errorResponse(msg, status = 500) {
+    return response({ error: msg }, status);
+}
+
+function safeVal(v) {
+    return v === undefined || v === '' ? null : v;
+}
+
+// --- Database Layer ---
+
+let schemaInitialized = false;
+
+async function ensureSchema(db) {
+  if (schemaInitialized) return;
+  try {
+      await db.prepare("PRAGMA foreign_keys = ON;").run();
+
+      await db.batch([
+        db.prepare(`CREATE TABLE IF NOT EXISTS admins (
+            id INTEGER PRIMARY KEY, 
+            email TEXT UNIQUE, 
+            password_hash TEXT, 
+            created_at TEXT
+        )`),
+        
+        db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
+          id INTEGER PRIMARY KEY, 
+          admin_id INTEGER, 
+          full_name TEXT, 
+          alias TEXT, 
+          dob TEXT, 
+          age INTEGER, 
+          gender TEXT,
+          occupation TEXT, 
+          nationality TEXT, 
+          ideology TEXT, 
+          location TEXT, 
+          contact TEXT, 
+          hometown TEXT, 
+          previous_locations TEXT, 
+          modus_operandi TEXT, 
+          notes TEXT, 
+          weakness TEXT, 
+          avatar_path TEXT, 
+          is_archived INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'Active', 
+          threat_level TEXT DEFAULT 'Low', 
+          last_sighted TEXT, 
+          height TEXT, 
+          weight TEXT, 
+          eye_color TEXT, 
+          hair_color TEXT, 
+          blood_type TEXT, 
+          identifying_marks TEXT, 
+          social_links TEXT, 
+          digital_identifiers TEXT, 
+          created_at TEXT, 
+          updated_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_intel (
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER, 
+          category TEXT, 
+          label TEXT, 
+          value TEXT, 
+          analysis TEXT, 
+          confidence INTEGER DEFAULT 100, 
+          source TEXT, 
+          created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER, 
+          object_key TEXT, 
+          content_type TEXT, 
+          description TEXT, 
+          media_type TEXT DEFAULT 'file', 
+          external_url TEXT, 
+          created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
+          id INTEGER PRIMARY KEY, 
+          subject_a_id INTEGER, 
+          subject_b_id INTEGER, 
+          relationship_type TEXT, 
+          notes TEXT, 
+          custom_name TEXT, 
+          custom_avatar TEXT, 
+          custom_notes TEXT, 
+          created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_interactions (
+            id INTEGER PRIMARY KEY, 
+            subject_id INTEGER, 
+            date TEXT, 
+            type TEXT, 
+            transcript TEXT, 
+            conclusion TEXT, 
+            evidence_url TEXT, 
+            created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_locations (
+            id INTEGER PRIMARY KEY, 
+            subject_id INTEGER, 
+            name TEXT, 
+            address TEXT, 
+            lat REAL, 
+            lng REAL, 
+            type TEXT, 
+            notes TEXT, 
+            created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER REFERENCES subjects(id), 
+          token TEXT UNIQUE, 
+          is_active INTEGER DEFAULT 1,
+          duration_seconds INTEGER, 
+          views INTEGER DEFAULT 0,
+          started_at TEXT, 
+          created_at TEXT
+        )`)
+      ]);
+
+      schemaInitialized = true;
+  } catch (err) { 
+      console.error("Init Error", err); 
+  }
+}
+
+async function nukeDatabase(db) {
+    const tables = [
+        'subject_shares', 'subject_locations', 'subject_interactions', 
+        'subject_relationships', 'subject_media', 'subject_intel', 
+        'subjects', 'admins'
+    ];
+    
+    // Disable FKs to allow dropping tables in any order
+    await db.prepare("PRAGMA foreign_keys = OFF;").run();
+    
+    for(const t of tables) {
+        try { 
+            await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); 
+        } catch(e) { 
+            console.error(`Failed to drop ${t}`, e); 
+        }
+    }
+    
+    // Re-enable FKs
+    await db.prepare("PRAGMA foreign_keys = ON;").run();
+    
+    // Force schema re-init on next request so tables are recreated
+    schemaInitialized = false; 
+    return true;
+}
+
+// --- Analysis Engine ---
+
+function analyzeProfile(subject, interactions, intel) {
+    const dataPoints = intel.length + interactions.length + (subject.modus_operandi ? 1 : 0);
+    const completeness = Math.min(100, Math.floor((dataPoints / 20) * 100));
+    
+    const tags = [];
+    const textBank = [
+        subject.modus_operandi, 
+        subject.occupation,
+        ...interactions.map(i => i.type),
+        ...intel.map(i => i.category)
+    ].join(' ').toLowerCase();
+
+    if (textBank.includes('business') || textBank.includes('meeting') || textBank.includes('work')) tags.push('Professional');
+    if (textBank.includes('family') || textBank.includes('home')) tags.push('Family');
+    if (textBank.includes('finance') || textBank.includes('money')) tags.push('Financial');
+    if (textBank.includes('medical') || textBank.includes('health')) tags.push('Medical');
+    
+    return {
+        score: completeness,
+        tags: tags,
+        summary: `Profile is ${completeness}% complete. Contains ${interactions.length} interactions and ${intel.length} attribute points.`,
+        generated_at: isoTimestamp()
+    };
+}
+
+// --- API Handlers ---
+
+async function handleGetDashboard(db, adminId) {
+    const recent = await db.prepare(`
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects WHERE admin_id = ?
+        UNION ALL
+        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        UNION ALL
+        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        ORDER BY date DESC LIMIT 50
+    `).bind(adminId, adminId, adminId).all();
+
+    const stats = await db.prepare(`
+        SELECT 
+            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
+            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
+            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
+    `).bind(adminId, adminId, adminId).first();
+
+    return response({ feed: recent.results, stats });
+}
+
+async function handleGetSuggestions(db, adminId) {
+    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE admin_id = ?").bind(adminId).all();
+    
+    return response({
+        occupations: occupations.results.map(r => r.occupation).filter(Boolean),
+        nationalities: nationalities.results.map(r => r.nationality).filter(Boolean),
+        ideologies: ideologies.results.map(r => r.ideology).filter(Boolean)
+    });
+}
+
+async function handleGetSubjectFull(db, id) {
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
+    if (!subject) return errorResponse("Subject not found", 404);
+
+    const [media, intel, relationships, interactions, locations] = await Promise.all([
+        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
+        db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
+        db.prepare(`
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+            FROM subject_relationships r
+            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+        `).bind(id, id, id).all(),
+        db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(id).all(),
+        db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
+    ]);
+
+    return response({
+        ...subject,
+        media: media.results,
+        intel: intel.results,
+        relationships: relationships.results,
+        interactions: interactions.results,
+        locations: locations.results
+    });
+}
+
+async function handleGetGlobalNetwork(db, adminId) {
+    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
+    
+    if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
+
+    const subjectIds = subjects.results.map(s => s.id).join(',');
+    
+    const relationships = await db.prepare(`
+        SELECT subject_a_id, subject_b_id, relationship_type 
+        FROM subject_relationships 
+        WHERE subject_a_id IN (${subjectIds}) AND subject_b_id IN (${subjectIds})
+    `).all();
+
+    return response({
+        nodes: subjects.results.map(s => ({
+            id: s.id,
+            label: s.full_name,
+            group: s.threat_level,
+            image: s.avatar_path,
+            shape: 'circularImage'
+        })),
+        edges: relationships.results.map(r => ({
+            from: r.subject_a_id,
+            to: r.subject_b_id,
+            label: r.relationship_type,
+            arrows: 'to',
+            font: { align: 'middle' }
+        }))
+    });
+}
+
+async function handleGetMapData(db, adminId) {
+    const query = `
+        SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
+        FROM subject_locations l
+        JOIN subjects s ON l.subject_id = s.id
+        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
+        ORDER BY l.created_at ASC
+    `;
+    const res = await db.prepare(query).bind(adminId).all();
+    return response(res.results);
+}
+
+// --- Share Logic ---
+
+async function handleCreateShareLink(req, db, origin) {
+    const { subjectId, durationMinutes } = await req.json();
+    if (!subjectId) return errorResponse('subjectId required', 400);
+    
+    const minutes = durationMinutes || 60;
+    const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
+
+    const token = generateToken();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
+        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
+    
+    const url = `${origin}/share/${token}`;
+    return response({ url, token, duration_seconds: durationSeconds });
+}
+
+async function handleListShareLinks(db, subjectId) {
+    const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
+    return response(res.results);
+}
+
+async function handleRevokeShareLink(db, token) {
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
+}
+
+async function handleGetSharedSubject(db, token) {
+    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link) return errorResponse('LINK INVALID', 404);
+    if (!link.is_active) return errorResponse('LINK REVOKED', 410);
+
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+        
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
+        }
+
+        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
+        const remaining = link.duration_seconds - elapsed;
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+            return errorResponse('LINK EXPIRED', 410);
+        }
+        
+        await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
+
+        // FETCH ALL INFOS
+        const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
+        const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+        const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+        const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+        const relationships = await db.prepare(`
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+            FROM subject_relationships r
+            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+        `).bind(link.subject_id, link.subject_id, link.subject_id).all();
+
+
+        return response({
+            ...subject,
+            interactions: interactions.results,
+            locations: locations.results,
+            media: media.results,
+            intel: intel.results,
+            relationships: relationships.results,
+            meta: { remaining_seconds: Math.floor(remaining) }
+        });
+    }
+    return errorResponse('INVALID CONFIG', 500);
+}
+
+// --- Frontend: Shared Link View ---
+function serveSharedHtml(token) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CONFIDENTIAL // Profile Dossier</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        :root { --primary: #3b82f6; --bg-dark: #0f172a; }
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; color: #334155; }
+        .glass { background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .dark-mode body { background: #0f172a; color: #e2e8f0; }
+        .dark-mode .glass { background: #1e293b; border-color: #334155; box-shadow: none; }
+        
+        .tab-btn { padding: 0.75rem 1.25rem; font-weight: 500; font-size: 0.875rem; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+        .tab-btn.active { color: var(--primary); border-color: var(--primary); }
+        .tab-btn:hover:not(.active) { color: #64748b; }
+        .dark-mode .tab-btn:hover:not(.active) { color: #94a3b8; }
+    </style>
+</head>
+<body class="min-h-screen transition-colors duration-300">
+    <div id="app" class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+        
+        <!-- LOADING STATE -->
+        <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh]">
+            <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i>
+            <p class="mt-4 text-sm font-bold text-slate-400 uppercase tracking-widest">Decrypting Dossier...</p>
+        </div>
+
+        <!-- ERROR STATE -->
+        <div v-else-if="error" class="flex items-center justify-center min-h-[50vh]">
+            <div class="glass p-8 max-w-md w-full text-center border-l-4 border-red-500">
+                <i class="fa-solid fa-shield-halved text-5xl text-red-500 mb-4"></i>
+                <h1 class="text-2xl font-bold text-red-600 mb-2">Access Restricted</h1>
+                <p class="text-slate-600 dark:text-slate-400 text-sm">{{error}}</p>
+            </div>
+        </div>
+
+        <!-- CONTENT -->
+        <div v-else class="space-y-6 animate-fade-in">
+            
+            <!-- HEADER / IDENTITY -->
+            <div class="glass p-6 md:p-8 relative overflow-hidden">
+                <div class="absolute top-0 right-0 p-4 opacity-10">
+                    <i class="fa-solid fa-fingerprint text-9xl"></i>
+                </div>
+                
+                <div class="flex flex-col md:flex-row gap-6 relative z-10">
+                    <div class="shrink-0 mx-auto md:mx-0">
+                        <div class="w-32 h-32 md:w-40 md:h-40 rounded-xl overflow-hidden ring-4 ring-white dark:ring-slate-700 shadow-xl bg-slate-200">
+                            <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
+                        </div>
+                    </div>
+                    <div class="flex-1 text-center md:text-left space-y-2">
+                        <div class="flex flex-col md:flex-row justify-between items-start">
+                            <div>
+                                <h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white tracking-tight">{{data.full_name}}</h1>
+                                <div class="text-lg text-slate-500 font-medium">{{data.occupation}}</div>
+                            </div>
+                            <div class="mt-4 md:mt-0 flex flex-col items-end gap-1">
+                                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                    {{data.status || 'Active'}}
+                                </span>
+                                <div class="text-xs font-mono text-slate-400">EXP: {{ formatTime(timer) }}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
+                            <div v-if="data.alias" class="px-3 py-1.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-mask mr-2"></i>{{data.alias}}
+                            </div>
+                            <div v-if="data.nationality" class="px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-flag mr-2"></i>{{data.nationality}}
+                            </div>
+                            <div v-if="data.threat_level" :class="getThreatColor(data.threat_level, true)" class="px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wide">
+                                <i class="fa-solid fa-triangle-exclamation mr-2"></i>{{data.threat_level}} Priority
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NAVIGATION TABS -->
+            <div class="glass flex overflow-x-auto no-scrollbar border-b-0 sticky top-2 z-20 shadow-md">
+                <button v-for="t in tabs" @click="activeTab = t.id" :class="['tab-btn', activeTab === t.id ? 'active' : '']">
+                    <i :class="t.icon" class="mr-2"></i>{{t.label}}
+                </button>
+            </div>
+
+            <!-- TAB CONTENT -->
+            
+            <!-- 1. PROFILE TAB -->
+            <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Physical Stats -->
+                <div class="glass p-6 md:col-span-1">
+                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Physical Profile</h3>
+                    <div class="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
+                        <div><div class="text-slate-500 text-xs">Height</div><div class="font-bold">{{data.height || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Weight</div><div class="font-bold">{{data.weight || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Age</div><div class="font-bold">{{data.age || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Blood Type</div><div class="font-bold">{{data.blood_type || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Eye Color</div><div class="font-bold">{{data.eye_color || '--'}}</div></div>
+                        <div><div class="text-slate-500 text-xs">Hair Color</div><div class="font-bold">{{data.hair_color || '--'}}</div></div>
+                    </div>
+                    <div v-if="data.identifying_marks" class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                        <div class="text-slate-500 text-xs mb-1">Identifying Marks</div>
+                        <div class="text-sm font-medium">{{data.identifying_marks}}</div>
+                    </div>
+                </div>
+
+                <!-- Personal Info -->
+                <div class="glass p-6 md:col-span-2">
+                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Background Info</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div class="space-y-4">
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Date of Birth</div><div class="font-medium">{{data.dob || 'Unknown'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Hometown</div><div class="font-medium">{{data.hometown || 'Unknown'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Current Location</div><div class="font-medium">{{data.location || 'Unknown'}}</div></div>
+                        </div>
+                        <div class="space-y-4">
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Contact Info</div><div class="font-medium break-all">{{data.contact || 'None'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Social Links</div><div class="font-medium break-all text-blue-500">{{data.social_links || 'None'}}</div></div>
+                            <div><div class="text-xs text-slate-500 uppercase font-bold">Digital ID</div><div class="font-medium break-all font-mono text-xs">{{data.digital_identifiers || 'None'}}</div></div>
+                        </div>
+                    </div>
+                    <div v-if="data.previous_locations" class="mt-6">
+                        <div class="text-xs text-slate-500 uppercase font-bold mb-1">Previous Locations</div>
+                        <p class="text-sm text-slate-700 dark:text-slate-300">{{data.previous_locations}}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. INTEL TAB -->
+            <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Core Intel -->
+                <div class="glass p-6 md:col-span-2 space-y-6">
+                    <div>
+                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
+                            <i class="fa-solid fa-clipboard-list text-blue-500"></i> Routine & Modus Operandi
+                        </h3>
+                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.modus_operandi || 'No routine data recorded.'}}</div>
+                    </div>
+                    <div>
+                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
+                            <i class="fa-solid fa-lock-open text-red-500"></i> Vulnerabilities & Notes
+                        </h3>
+                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.weakness || 'No vulnerabilities recorded.'}}</div>
+                    </div>
+                </div>
+
+                <!-- Attributes List -->
+                <div class="glass p-6 md:col-span-1 space-y-4">
+                    <h3 class="text-xs font-bold uppercase text-slate-400">Collected Attributes</h3>
+                    <div v-if="!data.intel.length" class="text-sm text-slate-400 italic">No additional attributes.</div>
+                    <div v-for="item in data.intel" class="p-3 border border-slate-100 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        <div class="flex justify-between items-start mb-1">
+                            <span class="text-[10px] font-bold uppercase text-blue-500 tracking-wider">{{item.category}}</span>
+                            <span class="text-[10px] text-slate-400">{{new Date(item.created_at).toLocaleDateString()}}</span>
+                        </div>
+                        <div class="text-xs text-slate-500 font-bold uppercase mb-0.5">{{item.label}}</div>
+                        <div class="text-sm font-medium text-slate-900 dark:text-white break-words">{{item.value}}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. TIMELINE TAB (UPDATED) -->
+            <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
+                <div class="glass p-6 md:p-8">
+                    <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
+                    <div class="relative pl-8 border-l-2 border-slate-200 dark:border-slate-700 space-y-8 my-4">
+                        <div v-for="ix in data.interactions" class="relative group">
+                            <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                                <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
+                                <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
+                            </div>
+                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 border border-slate-100 dark:border-slate-700 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details.'}}</div>
+                        </div>
+                        <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. NETWORK TAB -->
+            <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
+                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0">
+                        <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                        <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="font-bold text-sm truncate">{{rel.target_name}}</div>
+                        <div class="text-xs text-blue-500 font-bold uppercase tracking-wide">{{rel.relationship_type}}</div>
+                        <div class="text-xs text-slate-500 truncate">{{rel.target_role}}</div>
+                    </div>
+                </div>
+                <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
+            </div>
+
+            <!-- 5. FILES TAB -->
+            <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
+                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                    <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
+                        <i class="fa-solid fa-file text-4xl mb-2"></i>
+                        <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
+                    </div>
+                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
+                    <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                        {{m.description || 'File'}}
+                    </div>
+                </div>
+                <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
+            </div>
+
+             <!-- 6. LOCATIONS TAB -->
+             <div v-if="activeTab === 'locations'" class="space-y-4">
+                <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
+                    <div>
+                        <div class="font-bold text-sm">{{loc.name}} <span class="ml-2 text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 uppercase">{{loc.type}}</span></div>
+                        <div class="text-xs text-slate-500 mt-1">{{loc.address}}</div>
+                        <div v-if="loc.notes" class="text-xs text-slate-400 mt-2 italic">"{{loc.notes}}"</div>
+                    </div>
+                    <a v-if="loc.lat" :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 hover:bg-blue-100 transition-colors">
+                        <i class="fa-solid fa-location-arrow"></i>
+                    </a>
+                </div>
+                <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
+             </div>
+
+        </div>
+    </div>
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        createApp({
+            setup() {
+                const loading = ref(true);
+                const error = ref(null);
+                const data = ref(null);
+                const timer = ref(0);
+                const activeTab = ref('profile');
+                const token = window.location.pathname.split('/').pop();
+                
+                const tabs = [
+                    {id: 'profile', label: 'Profile', icon: 'fa-solid fa-id-card'},
+                    {id: 'intel', label: 'Intel', icon: 'fa-solid fa-brain'},
+                    {id: 'timeline', label: 'History', icon: 'fa-solid fa-clock-rotate-left'},
+                    {id: 'network', label: 'Network', icon: 'fa-solid fa-diagram-project'},
+                    {id: 'locations', label: 'Locations', icon: 'fa-solid fa-map-location-dot'},
+                    {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
+                ];
+
+                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
+                
+                const formatTime = (s) => {
+                    if(s <= 0) return "EXPIRED";
+                    const h = Math.floor(s / 3600);
+                    const m = Math.floor((s % 3600) / 60);
+                    const sec = Math.floor(s % 60);
+                    return \`\${h}h \${m}m \${sec}s\`;
+                };
+
+                const getThreatColor = (l, isBg = false) => {
+                     const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
+                     return isBg ? \`bg-\${c}-100 dark:bg-\${c}-900/30 text-\${c}-700 dark:text-\${c}-300\` : \`text-\${c}-600\`;
+                };
+
+                // Check Dark Mode
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.body.classList.add('dark-mode');
+                }
+
+                onMounted(async () => {
+                    try {
+                        const res = await fetch('/api/share/' + token);
+                        const json = await res.json();
+                        if(json.error) throw new Error(json.error);
+                        data.value = json;
+                        timer.value = json.meta?.remaining_seconds || 0;
+                        loading.value = false;
+                        
+                        const interval = setInterval(() => {
+                            if(timer.value > 0) timer.value--;
+                            else {
+                                if(!error.value && timer.value <= 0) {
+                                    clearInterval(interval);
+                                    window.location.reload();
+                                }
+                            }
+                        }, 1000);
+                    } catch(e) {
+                        error.value = e.message;
+                        loading.value = false;
+                    }
+                });
+                return { loading, error, data, timer, activeTab, tabs, resolveImg, formatTime, getThreatColor };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+}
+
+// --- Route Handling ---
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    try {
+        if (!schemaInitialized) await ensureSchema(env.DB);
+
+        // Share Page
+        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
+
+        // Main App
+        if (req.method === 'GET' && path === '/') return serveHtml();
+
+        // Auth
+        if (path === '/api/login') {
+            const { email, password } = await req.json();
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+            if (!admin) {
+                const hash = await hashPassword(password);
+                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+                return response({ id: res.meta.last_row_id });
+            }
+            const hashed = await hashPassword(password);
+            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
+            return response({ id: admin.id });
+        }
+
+        // Dashboard & Stats
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
+        
+        // Subject CRUD
+        if (path === '/api/subjects') {
+            if(req.method === 'POST') {
+                const p = await req.json();
+                const now = isoTimestamp();
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
+                return response({success:true});
+            }
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
+            return response(res.results);
+        }
+
+        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+
+        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (idMatch) {
+            const id = idMatch[1];
+            if(req.method === 'PATCH') {
+                const p = await req.json();
+                
+                // FIXED: Use whitelist to prevent "no such column" error
+                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
+                
+                if(keys.length > 0) {
+                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
+                    const vals = keys.map(k => safeVal(p[k]));
+                    vals.push(isoTimestamp());
+                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                }
+                
+                return response({success:true});
+            }
+            return handleGetSubjectFull(env.DB, id);
+        }
+
+        // Sub-resources
+        if (path === '/api/interaction') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/location') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/intel') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
+                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/relationship') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
+                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/media-link') {
+            const { subjectId, url, type, description } = await req.json();
+            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
+            return response({success:true});
+        }
+
+        // Sharing
+        if (path === '/api/share-links') {
+            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
+            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
+        }
+        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        if (path === '/api/delete') {
+            const { table, id } = await req.json();
+            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
+            if(safeTables.includes(table)) {
+                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
+                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+                return response({success:true});
+            }
+        }
+
+        // File Ops
+        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
+            const { subjectId, data, filename, contentType } = await req.json();
+            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
+            
+            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
+            return response({success:true});
+        }
+
+        if (path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
+        }
+
+        if (path === '/api/nuke') {
+            await nukeDatabase(env.DB);
+            return response({success:true});
+        }
+
+        return new Response('Not Found', { status: 404 });
+    } catch(e) {
+        return errorResponse(e.message);
+    }
+  }
+};
