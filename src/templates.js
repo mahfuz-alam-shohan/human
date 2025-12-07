@@ -23,10 +23,14 @@ export function serveSharedHtml(token) {
 </head>
 <body class="h-full overflow-hidden text-zinc-300">
   <div id="app" v-cloak class="h-full flex flex-col max-w-4xl mx-auto bg-zinc-900 shadow-2xl relative overflow-hidden border-x border-zinc-800">
+    
+    <!-- Loading State -->
     <div v-if="loading" class="flex-1 flex flex-col items-center justify-center gap-6 bg-zinc-950">
         <div class="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
         <div class="text-xs font-bold uppercase tracking-[0.2em] text-emerald-500 animate-pulse">Establishing Secure Handshake...</div>
     </div>
+
+    <!-- Error State -->
     <div v-else-if="error" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-zinc-950 relative overflow-hidden">
         <div class="scan-line"></div>
         <div class="max-w-md relative z-10">
@@ -36,7 +40,10 @@ export function serveSharedHtml(token) {
             <div class="text-zinc-600 text-xs uppercase tracking-widest">Connection Logged: {{ new Date().toISOString() }}</div>
         </div>
     </div>
+
+    <!-- Success State -->
     <div v-else class="flex-1 flex flex-col h-full overflow-hidden relative bg-zinc-900">
+        <!-- Top Bar -->
         <div class="h-16 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-6 shrink-0 z-20">
             <div class="flex items-center gap-3">
                 <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
@@ -49,7 +56,9 @@ export function serveSharedHtml(token) {
                  </div>
             </div>
         </div>
+
         <div class="flex-1 overflow-y-auto relative scrollbar-hide">
+            <!-- Header Profile -->
             <div class="bg-zinc-900 p-8 pb-12 relative overflow-hidden">
                 <div class="absolute inset-0 bg-gradient-to-b from-emerald-900/10 to-transparent pointer-events-none"></div>
                 <div class="flex flex-col md:flex-row gap-8 items-center md:items-start relative z-10">
@@ -62,6 +71,7 @@ export function serveSharedHtml(token) {
                     <div class="text-center md:text-left flex-1">
                         <h1 class="text-4xl md:text-5xl font-black text-white uppercase tracking-tighter mb-2 flicker">{{ data.full_name }}</h1>
                         <div class="text-emerald-500 font-mono text-sm uppercase mb-6">{{ data.occupation || 'Unknown Designation' }}</div>
+                        
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-zinc-800 pt-6">
                             <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Affiliation</div><div class="text-zinc-300 font-medium text-sm">{{ data.ideology || 'N/A' }}</div></div>
                             <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Nationality</div><div class="text-zinc-300 font-medium text-sm">{{ data.nationality || 'N/A' }}</div></div>
@@ -71,7 +81,9 @@ export function serveSharedHtml(token) {
                     </div>
                 </div>
             </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 border-t border-zinc-800">
+                <!-- Activity Log -->
                 <div class="border-b md:border-b-0 md:border-r border-zinc-800">
                     <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
                         <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest"><i class="fa-solid fa-list-ul mr-2"></i>Recent Intel</h3>
@@ -85,6 +97,8 @@ export function serveSharedHtml(token) {
                         <p class="text-sm text-zinc-400 leading-relaxed">{{ ix.conclusion || 'Log entry redacted.' }}</p>
                     </div>
                 </div>
+
+                <!-- Locations & Assets -->
                 <div>
                     <div class="border-b border-zinc-800">
                         <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
@@ -98,10 +112,11 @@ export function serveSharedHtml(token) {
                                     <div class="text-sm font-bold text-zinc-300">{{ loc.name }}</div>
                                     <div class="text-xs text-zinc-500">{{ loc.address }}</div>
                                 </div>
-                                <a :href="'https://maps.google.com/?q=' + loc.lat + ',' + loc.lng" target="_blank" class="ml-auto text-zinc-600 hover:text-emerald-500"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                                <a :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="ml-auto text-zinc-600 hover:text-emerald-500"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                             </div>
                         </div>
                     </div>
+
                     <div>
                         <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
                             <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest"><i class="fa-solid fa-paperclip mr-2"></i>Attachments</h3>
@@ -133,18 +148,49 @@ export function serveSharedHtml(token) {
             const data = ref(null);
             const timer = ref(0);
             const token = "${token}";
-            const formatTime = (s) => { if(s < 0) return "00:00"; const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return \`\${m.toString().padStart(2, '0')}:\${sec.toString().padStart(2, '0')}\`; };
+
+            const formatTime = (s) => {
+                if(s < 0) return "00:00";
+                const m = Math.floor(s / 60);
+                const sec = Math.floor(s % 60);
+                return \`\${m.toString().padStart(2, '0')}:\${sec.toString().padStart(2, '0')}\`;
+            };
+
             const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
-            const getThreatClass = (l) => { const map = { 'Low': 'bg-emerald-900 text-emerald-300', 'Medium': 'bg-amber-900 text-amber-300', 'High': 'bg-orange-900 text-orange-300', 'Critical': 'bg-red-900 text-red-300 animate-pulse' }; return map[l] || 'bg-zinc-800 text-zinc-400'; };
+            
+            const getThreatClass = (l) => {
+                const map = { 
+                    'Low': 'bg-emerald-900 text-emerald-300', 
+                    'Medium': 'bg-amber-900 text-amber-300', 
+                    'High': 'bg-orange-900 text-orange-300', 
+                    'Critical': 'bg-red-900 text-red-300 animate-pulse' 
+                };
+                return map[l] || 'bg-zinc-800 text-zinc-400';
+            };
+
             onMounted(async () => {
                 try {
                     const res = await fetch('/api/share/' + token);
-                    if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Connection Refused"); }
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || "Connection Refused");
+                    }
                     data.value = await res.json();
                     timer.value = data.value.meta.remaining_seconds;
-                    setInterval(() => { if(timer.value > 0) timer.value--; else if(!error.value) error.value = "Link Expired"; }, 1000);
-                } catch(e) { error.value = e.message || "Access Denied"; } finally { loading.value = false; }
+                    
+                    // Client side countdown
+                    setInterval(() => { 
+                        if(timer.value > 0) timer.value--; 
+                        else if(!error.value) error.value = "Link Expired"; 
+                    }, 1000);
+
+                } catch(e) { 
+                    error.value = e.message || "Access Denied"; 
+                } finally { 
+                    loading.value = false; 
+                }
             });
+
             return { loading, error, data, timer, formatTime, getThreatClass, resolveImg };
         }
     }).mount('#app');
@@ -154,7 +200,7 @@ export function serveSharedHtml(token) {
 }
 
 export function serveHtml() {
-  return new Response(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="en" class="h-full bg-gray-50">
 <head>
   <meta charset="utf-8" />
@@ -179,7 +225,10 @@ export function serveHtml() {
     .threat-medium { border-left: 4px solid #f59e0b; }
     .threat-high { border-left: 4px solid #f97316; }
     .threat-critical { border-left: 4px solid #ef4444; }
-    .marker-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg); left: 50%; top: 50%; margin: -15px 0 0 -15px; box-shadow: 0px 2px 5px rgba(0,0,0,0.3); }
+    .marker-pin {
+        width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg);
+        left: 50%; top: 50%; margin: -15px 0 0 -15px; box-shadow: 0px 2px 5px rgba(0,0,0,0.3);
+    }
     .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%; }
     .custom-div-icon { background: transparent; border: none; }
     .custom-div-icon img { width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover; }
@@ -194,6 +243,7 @@ export function serveHtml() {
 <body class="h-full overflow-hidden selection:bg-blue-100 selection:text-blue-900">
   <div id="app" class="h-full flex flex-col">
 
+    <!-- Auth Screen -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-gray-50">
         <div class="w-full max-w-sm glass p-8 shadow-xl">
             <div class="text-center mb-8">
@@ -212,7 +262,10 @@ export function serveHtml() {
         </div>
     </div>
 
+    <!-- Main App -->
     <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
+        
+        <!-- Sidebar -->
         <nav class="hidden md:flex flex-col w-20 bg-white border-r border-gray-200 items-center py-6 z-20 shadow-sm">
             <div class="mb-8 text-blue-600 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
@@ -224,16 +277,19 @@ export function serveHtml() {
             <button @click="openSettings" class="text-gray-400 hover:text-gray-600 p-4"><i class="fa-solid fa-gear"></i></button>
         </nav>
 
+        <!-- Mobile Header -->
         <header class="md:hidden h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-20 shrink-0 shadow-sm">
             <span class="font-extrabold text-gray-900 tracking-tight text-lg">People<span class="text-blue-600">OS</span></span>
             <button @click="openSettings"><i class="fa-solid fa-gear text-gray-500"></i></button>
         </header>
 
+        <!-- Content Area -->
         <main class="flex-1 relative overflow-hidden bg-gray-50 flex flex-col">
             <div v-if="actionLoading" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-30 flex items-center justify-center text-sm font-bold text-gray-700">
                 <i class="fa-solid fa-spinner animate-spin mr-2"></i> Working...
             </div>
             
+            <!-- Dashboard -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -264,7 +320,7 @@ export function serveHtml() {
                             <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-gray-50 cursor-pointer flex gap-4 items-start transition-colors">
                                 <div class="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0" :class="item.type === 'interaction' ? 'bg-amber-500' : 'bg-blue-500'"></div>
                                 <div>
-                                    <div class="text-sm font-semibold text-gray-900">{{ item.title }} <span class="text-gray-400 font-normal mx-1">•</span> <span class="text-gray-500">{{ item.desc }}</span></div>
+                                    <div class="text-sm font-semibold text-gray-900">{{ item.title }} <span class="text-gray-400 font-normal mx-1">&bull;</span> <span class="text-gray-500">{{ item.desc }}</span></div>
                                     <div class="text-xs text-gray-400 mt-1">{{ new Date(item.date).toLocaleString() }}</div>
                                 </div>
                             </div>
@@ -273,6 +329,7 @@ export function serveHtml() {
                 </div>
             </div>
 
+            <!-- Contacts List -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col">
                 <div class="p-4 border-b border-gray-200 bg-white flex gap-3 shadow-sm z-10">
                     <div class="relative flex-1">
@@ -299,7 +356,9 @@ export function serveHtml() {
                 </div>
             </div>
 
+            <!-- Subject Detail -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-gray-50">
+                <!-- Top Bar -->
                 <div class="h-16 border-b border-gray-200 flex items-center px-4 justify-between bg-white shadow-sm shrink-0 z-10">
                     <div class="flex items-center gap-3">
                         <button @click="changeTab('targets')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
@@ -315,6 +374,7 @@ export function serveHtml() {
                     </div>
                 </div>
 
+                <!-- Sub Tabs -->
                 <div class="flex border-b border-gray-200 overflow-x-auto bg-white shrink-0">
                     <button v-for="t in ['profile','routine','meetings','locations','network','files']" 
                         @click="changeSubTab(t)" 
@@ -324,124 +384,64 @@ export function serveHtml() {
                     </button>
                 </div>
 
+                <!-- Detail Body -->
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
+                    
+                    <!-- Profile Tab -->
                     <div v-if="subTab === 'profile'" class="space-y-6 max-w-5xl mx-auto">
-                        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                            <div class="text-xs uppercase font-bold text-gray-500">Inline edit mode eliminates the modal freeze and keeps the page responsive.</div>
-                            <div class="flex gap-2">
-                                <button v-if="!editingProfile" @click="startProfileEdit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md transition-all"><i class="fa-solid fa-pen mr-2"></i>Edit Inline</button>
-                                <div v-else class="flex gap-2">
-                                    <button @click="saveProfileEdit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md transition-all"><i class="fa-solid fa-floppy-disk mr-2"></i>Save</button>
-                                    <button @click="cancelProfileEdit" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-xs font-bold border border-gray-300 transition-all">Cancel</button>
-                                </div>
-                            </div>
-                        </div>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-square bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden relative group">
-                                    <img :src="resolveImg(editingProfile ? profileDraft.avatar_path : selected.avatar_path)" class="w-full h-full object-cover">
-                                    <div v-if="editingProfile" class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2 text-white text-xs uppercase font-bold">
-                                        <button @click="triggerUpload('avatar')" class="bg-white text-gray-900 px-3 py-1.5 rounded shadow"><i class="fa-solid fa-cloud-arrow-up mr-2"></i>Upload New</button>
-                                        <div class="w-11/12">
-                                            <input v-model="profileDraft.avatar_path" placeholder="Paste image URL" class="w-full text-[11px] px-2 py-1.5 rounded bg-white/80 text-gray-800" />
-                                        </div>
-                                    </div>
+                                    <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
+                                    <button @click="openModal('edit-profile')" class="absolute inset-0 bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-sm font-bold text-gray-800 cursor-pointer">Edit Profile</button>
                                 </div>
+                                
                                 <div class="glass p-4 space-y-2">
                                     <div class="text-xs text-gray-500 uppercase font-bold">Priority Status</div>
-                                    <template v-if="!editingProfile">
-                                        <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
-                                            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                                        </select>
-                                    </template>
-                                    <template v-else>
-                                        <select v-model="profileDraft.threat_level" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
-                                            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                                        </select>
-                                    </template>
+                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
+                                        <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="md:col-span-2 space-y-4">
-                                <div class="glass p-6">
-                                    <div class="flex items-center justify-between mb-4">
-                                        <h3 class="text-sm text-gray-900 font-bold uppercase flex items-center gap-2"><i class="fa-solid fa-id-card text-blue-500"></i>Core Information</h3>
-                                        <span v-if="editingProfile" class="text-[10px] text-gray-500 uppercase font-bold">Draft updates auto-saved locally</span>
-                                    </div>
+                                <div class="glass p-6 relative">
+                                    <button @click="openModal('edit-profile')" class="absolute top-6 right-6 text-blue-500 hover:text-blue-700"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <h3 class="text-sm text-gray-900 font-bold uppercase mb-6 flex items-center"><i class="fa-solid fa-id-card mr-2 text-blue-500"></i>Core Information</h3>
                                     <div class="grid grid-cols-2 gap-x-8 gap-y-6 text-sm">
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Full Name</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.full_name}}</span></template>
-                                            <input v-else v-model="profileDraft.full_name" class="glass-input w-full p-2.5 text-sm" placeholder="Full name" />
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Nationality</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.nationality || '—'}}</span></template>
-                                            <input v-else v-model="profileDraft.nationality" class="glass-input w-full p-2.5 text-sm" placeholder="Country" list="nationalityOptions" />
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Job Title</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.occupation || '—'}}</span></template>
-                                            <input v-else v-model="profileDraft.occupation" class="glass-input w-full p-2.5 text-sm" placeholder="Role" />
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Affiliations</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.ideology || '—'}}</span></template>
-                                            <input v-else v-model="profileDraft.ideology" class="glass-input w-full p-2.5 text-sm" placeholder="Org / Group" list="ideologyOptions" />
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Religion</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.religion || '—'}}</span></template>
-                                            <input v-else v-model="profileDraft.religion" class="glass-input w-full p-2.5 text-sm" placeholder="Religion" list="religionOptions" />
-                                        </div>
-                                        <div>
-                                            <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Alias</span>
-                                            <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.alias || '—'}}</span></template>
-                                            <input v-else v-model="profileDraft.alias" class="glass-input w-full p-2.5 text-sm" placeholder="Codename" />
-                                        </div>
-                                        <div class="col-span-2 grid grid-cols-2 gap-4">
-                                            <div>
-                                                <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Date of Birth</span>
-                                                <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.dob || '—'}}</span></template>
-                                                <input v-else type="date" v-model="profileDraft.dob" class="glass-input w-full p-2.5 text-sm bg-white" />
-                                            </div>
-                                            <div>
-                                                <span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Age</span>
-                                                <template v-if="!editingProfile"><span class="font-medium text-gray-900">{{selected.age || '--'}}</span></template>
-                                                <input v-else v-model="profileDraft.age" class="glass-input w-full p-2.5 text-sm bg-gray-50" readonly />
-                                            </div>
-                                        </div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Full Name</span> <span class="font-medium text-gray-900">{{selected.full_name}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Nationality</span> <span class="font-medium text-gray-900">{{selected.nationality || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Job Title</span> <span class="font-medium text-gray-900">{{selected.occupation || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Affiliations</span> <span class="font-medium text-gray-900">{{selected.ideology || '—'}}</span></div>
+                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Religion</span> <span class="font-medium text-gray-900">{{selected.religion || '—'}}</span></div>
                                         <div class="col-span-2 border-t border-gray-100 pt-4">
                                             <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Routine & Habits</span>
-                                            <template v-if="!editingProfile"><p class="text-gray-600 leading-relaxed">{{selected.modus_operandi || 'No routine information logged.'}}</p></template>
-                                            <textarea v-else v-model="profileDraft.modus_operandi" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                                            <p class="text-gray-600 leading-relaxed">{{selected.modus_operandi || 'No routine information logged.'}}</p>
                                         </div>
                                         <div class="col-span-2">
                                             <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Pain Points / Challenges</span>
-                                            <template v-if="!editingProfile"><p class="text-red-500 leading-relaxed">{{selected.weakness || 'None identified.'}}</p></template>
-                                            <textarea v-else v-model="profileDraft.weakness" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
+                                            <p class="text-red-500 leading-relaxed">{{selected.weakness || 'None identified.'}}</p>
                                         </div>
                                     </div>
                                 </div>
                                   <div class="glass p-6">
                                       <h3 class="text-sm text-gray-900 font-bold uppercase mb-4">Physical Attributes</h3>
                                       <div class="grid grid-cols-4 gap-4 text-center text-sm mb-4">
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div><template v-if="!editingProfile">{{selected.height || '--'}}</template><input v-else v-model="profileDraft.height" class="glass-input w-full text-center text-sm p-2" placeholder="180cm" /></div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div><template v-if="!editingProfile">{{selected.weight || '--'}}</template><input v-else v-model="profileDraft.weight" class="glass-input w-full text-center text-sm p-2" placeholder="75kg" /></div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Sex</div><template v-if="!editingProfile">{{selected.sex || selected.gender || '--'}}</template><select v-else v-model="profileDraft.sex" class="glass-input w-full text-sm p-2 bg-white"><option disabled value="">Sex</option><option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option></select></div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div><template v-if="!editingProfile">{{selected.age || '--'}}</template><input v-else v-model="profileDraft.age" class="glass-input w-full text-center text-sm p-2 bg-gray-50" readonly /></div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div>{{selected.height || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div>{{selected.weight || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Sex</div>{{selected.sex || selected.gender || '--'}}</div>
+                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div>{{selected.age || '--'}}</div>
                                       </div>
                                     <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
                                         <div class="text-gray-400 text-xs font-bold mb-1 uppercase">Distinguishing Features</div>
-                                        <template v-if="!editingProfile"><div class="text-gray-700 text-sm">{{selected.identifying_marks || 'None listed'}}</div></template>
-                                        <textarea v-else v-model="profileDraft.identifying_marks" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
+                                        <div class="text-gray-700 text-sm">{{selected.identifying_marks || 'None listed'}}</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <datalist id="nationalityOptions"><option v-for="nat in fieldSuggestions.nationality" :value="nat"></option></datalist>
-                        <datalist id="ideologyOptions"><option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option></datalist>
-                        <datalist id="religionOptions"><option v-for="rel in fieldSuggestions.religion" :value="rel"></option></datalist>
                     </div>
+
+                    <!-- Other Tabs... (Similar to before but abbreviated for brevity, they are preserved) -->
+                    <!-- Meetings Tab -->
                     <div v-if="subTab === 'meetings'" class="space-y-4 max-w-3xl mx-auto">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Interaction History</h3>
@@ -464,6 +464,7 @@ export function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- Locations Tab (Map) -->
                     <div v-show="subTab === 'locations'" class="h-full flex flex-col">
                         <div class="flex justify-between items-center mb-4 shrink-0">
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Geographic Data</h3>
@@ -486,6 +487,7 @@ export function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- Network/Graph -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
                          <div class="flex justify-between items-center mb-4 shrink-0">
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Relationship Matrix</h3>
@@ -498,6 +500,7 @@ export function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- Routine / Logs -->
                     <div v-if="subTab === 'routine'" class="space-y-4 max-w-4xl mx-auto">
                         <div class="flex justify-between items-center">
                             <h3 class="text-sm font-bold text-gray-900 uppercase">Detailed Observations</h3>
@@ -518,6 +521,7 @@ export function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- Files -->
                     <div v-if="subTab === 'files'" class="space-y-6">
                         <div class="flex flex-col md:flex-row gap-6">
                             <div @click="triggerUpload('media')" class="h-32 w-full md:w-48 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-all bg-white">
@@ -540,6 +544,7 @@ export function serveHtml() {
                 </div>
             </div>
 
+            <!-- Global Map Tab -->
             <div v-if="currentTab === 'map'" class="flex-1 relative bg-gray-100">
                 <div id="warRoomMap" class="w-full h-full z-0"></div>
                 <div class="absolute top-4 right-4 z-[400] w-72 glass shadow-lg p-1">
@@ -551,6 +556,7 @@ export function serveHtml() {
             </div>
         </main>
 
+        <!-- Mobile Nav -->
         <nav class="md:hidden h-16 bg-white border-t border-gray-200 flex justify-around items-center shrink-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
             <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-600 bg-blue-50 rounded-lg' : 'text-gray-400'" class="flex flex-col items-center justify-center p-2 w-16 transition-all">
                 <i :class="t.icon" class="text-xl mb-1"></i>
@@ -559,6 +565,7 @@ export function serveHtml() {
         </nav>
     </div>
 
+    <!-- Modals -->
     <div v-if="modal.active" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
         <div class="w-full max-w-lg glass bg-white shadow-2xl border border-white/50 animate-fade-in transform transition-all flex flex-col max-h-[85vh]" :class="{'shake': modal.shake}">
             <div class="flex justify-between items-center p-6 border-b border-gray-100 shrink-0">
@@ -567,49 +574,54 @@ export function serveHtml() {
             </div>
             
             <div class="overflow-y-auto p-6">
-                <form v-if="modal.active === 'add-subject'" @submit.prevent="submitSubject" class="space-y-4">
+                <!-- Add/Edit Subject -->
+                <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
                     <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                         <label class="text-[10px] text-gray-500 font-bold uppercase block mb-1">Avatar / Image</label>
                         <div class="flex gap-2">
-                             <input v-model="subjectForm.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
+                             <input v-model="forms.subject.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
                              <button type="button" @click="triggerUpload('avatar')" class="bg-white border border-gray-300 px-3 rounded text-xs font-bold hover:bg-gray-100">Upload</button>
                         </div>
                     </div>
-                    <input v-model="subjectForm.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
-                    <input v-model="subjectForm.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
+                    <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
+                    <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
                     <div class="grid grid-cols-3 gap-4">
-                        <select v-model="subjectForm.sex" class="glass-input p-3 text-sm bg-white">
+                        <select v-model="forms.subject.sex" class="glass-input p-3 text-sm bg-white">
                             <option disabled value="">Sex</option>
                             <option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option>
                         </select>
-                        <select v-model="subjectForm.threat_level" class="glass-input p-3 text-sm bg-white">
+                        <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
                             <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                         </select>
-                        <input v-model="subjectForm.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
                     </div>
                     <div class="grid grid-cols-2 gap-4">
-                        <input type="date" v-model="subjectForm.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
-                        <input v-model="subjectForm.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
+                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
+                        <input v-model="forms.subject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
                     </div>
-                    <input v-model="subjectForm.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
-                    <input v-model="subjectForm.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
-                    <input v-model="subjectForm.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
+                    <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
+                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
+                    <input v-model="forms.subject.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <input v-model="subjectForm.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
-                        <input v-model="subjectForm.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
-                        <input v-model="subjectForm.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.subject.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
                     </div>
-                    <textarea v-model="subjectForm.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="subjectForm.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="subjectForm.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
+                    <textarea v-model="forms.subject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
 
-                    <datalist id="nationalityOptions"><option v-for="nat in fieldSuggestions.nationality" :value="nat"></option></datalist>
-                    <datalist id="ideologyOptions"><option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option></datalist>
-                    <datalist id="religionOptions"><option v-for="rel in fieldSuggestions.religion" :value="rel"></option></datalist>
+                    <datalist id="nationalityOptions">
+                        <option v-for="nat in fieldSuggestions.nationality" :value="nat"></option>
+                    </datalist>
+                    <datalist id="ideologyOptions">
+                        <option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option>
+                    </datalist>
+                    <datalist id="religionOptions">
+                        <option v-for="rel in fieldSuggestions.religion" :value="rel"></option>
+                    </datalist>
 
-                    <button type="submit" :disabled="actionLoading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
-                        {{ actionLoading ? 'Saving...' : 'Save Contact' }}
-                    </button>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
@@ -628,9 +640,13 @@ export function serveHtml() {
                     <div class="relative z-[100]">
                         <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200" :disabled="locationSearchLoading">
                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
-                        <div v-if="locationSearchLoading" class="absolute right-3 top-3 text-blue-500 text-xs font-bold flex items-center gap-1"><i class="fa-solid fa-spinner animate-spin"></i> Searching...</div>
+                        <div v-if="locationSearchLoading" class="absolute right-3 top-3 text-blue-500 text-xs font-bold flex items-center gap-1">
+                            <i class="fa-solid fa-spinner animate-spin"></i> Searching...
+                        </div>
                         <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-[101]">
-                            <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">{{ res.display_name }}</div>
+                            <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
+                                {{ res.display_name }}
+                            </div>
                         </div>
                     </div>
                     <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden z-0">
@@ -669,12 +685,14 @@ export function serveHtml() {
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
                  </form>
 
+                 <!-- UPDATED SHARE MODAL -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <div class="text-center">
                         <div class="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-white text-xl shadow-lg shadow-blue-500/30"><i class="fa-solid fa-paper-plane"></i></div>
                         <h4 class="font-bold text-gray-900">Secure Profile Transmission</h4>
                         <p class="text-xs text-gray-500 mt-1 px-8">Generate a one-time link. Timer starts when the recipient opens it.</p>
                     </div>
+                    
                     <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
                         <div class="flex gap-2">
                             <div class="relative w-32 shrink-0">
@@ -685,13 +703,18 @@ export function serveHtml() {
                                 <i class="fa-solid fa-bolt"></i> Generate Link
                             </button>
                         </div>
+                        
                         <div v-if="forms.share.result" class="relative group">
                             <div class="absolute inset-0 bg-blue-200 blur opacity-20 rounded-lg"></div>
                             <input readonly :value="forms.share.result" class="relative w-full bg-white border border-blue-300 text-blue-600 text-xs p-3 rounded-lg pr-12 font-mono font-medium shadow-sm">
                             <button @click="copyToClipboard(forms.share.result)" class="absolute right-1 top-1 bottom-1 px-3 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><i class="fa-regular fa-copy"></i></button>
                         </div>
-                        <div v-if="forms.share.error" class="text-xs text-red-600 font-semibold bg-red-50 border border-red-100 rounded-lg p-3">{{ forms.share.error }}</div>
+
+                        <div v-if="forms.share.error" class="text-xs text-red-600 font-semibold bg-red-50 border border-red-100 rounded-lg p-3">
+                            {{ forms.share.error }}
+                        </div>
                     </div>
+
                     <div class="border-t border-gray-100 pt-4">
                         <div class="flex justify-between items-center mb-3">
                             <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Active Transmissions</h5>
@@ -704,18 +727,27 @@ export function serveHtml() {
                                         <div class="w-2 h-2 rounded-full shrink-0" :class="link.views > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"></div>
                                         <span class="text-xs font-bold text-gray-700 truncate font-mono">...{{ link.token.slice(-6) }}</span>
                                     </div>
-                                    <div class="text-[10px] text-gray-400 font-medium">{{ (link.duration_seconds/60).toFixed(0) }}m Limit • {{ link.views }} Views</div>
+                                    <div class="text-[10px] text-gray-400 font-medium">
+                                        {{ (link.duration_seconds/60).toFixed(0) }}m Limit &bull; {{ link.views }} Views
+                                    </div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <button @click="copyShare(link.url)" class="text-[10px] font-bold text-blue-500 hover:bg-blue-50 px-3 py-1.5 rounded border border-transparent hover:border-blue-100 transition-all flex items-center gap-1"><i class="fa-regular fa-copy"></i> COPY</button>
+                                    <button @click="copyShare(link.url)" class="text-[10px] font-bold text-blue-500 hover:bg-blue-50 px-3 py-1.5 rounded border border-transparent hover:border-blue-100 transition-all flex items-center gap-1">
+                                        <i class="fa-regular fa-copy"></i>
+                                        COPY
+                                    </button>
                                     <button @click="revokeLink(link.token)" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded border border-transparent hover:border-red-100 transition-all">REVOKE</button>
                                 </div>
                             </div>
-                            <div v-if="activeShareLinks.length === 0" class="text-center py-6"><i class="fa-solid fa-inbox text-gray-200 text-2xl mb-2"></i><div class="text-xs text-gray-400">No active links</div></div>
+                            <div v-if="activeShareLinks.length === 0" class="text-center py-6">
+                                <i class="fa-solid fa-inbox text-gray-200 text-2xl mb-2"></i>
+                                <div class="text-xs text-gray-400">No active links</div>
+                            </div>
                         </div>
                     </div>
                  </div>
 
+                 <!-- Settings Modal -->
                 <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
                     <div class="p-6 bg-red-50 border border-red-100 rounded-xl">
                         <h4 class="text-red-600 font-bold uppercase text-xs mb-2">Danger Zone</h4>
@@ -731,6 +763,7 @@ export function serveHtml() {
   </div>
   <script>
     const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+
     function calculateAge(dob) {
       if (!dob) return null;
       const birthDate = new Date(dob);
@@ -741,6 +774,7 @@ export function serveHtml() {
       if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
       return age >= 0 ? age : null;
     }
+
     createApp({
       setup() {
         const view = ref('auth');
@@ -749,33 +783,63 @@ export function serveHtml() {
         const locationSearchLoading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [{ id: 'dashboard', label: 'Home', icon: 'fa-solid fa-house' }, { id: 'targets', label: 'Contacts', icon: 'fa-solid fa-address-book' }, { id: 'map', label: 'Global Map', icon: 'fa-solid fa-earth-americas' }];
+
         const currentTab = ref('dashboard');
         const subTab = ref('profile');
+
         const stats = ref({});
         const feed = ref([]);
         const subjects = ref([]);
         const selected = ref(null);
-        const editingProfile = ref(false);
         const activeShareLinks = ref([]);
         const search = ref('');
         const modal = reactive({ active: null, shake: false });
         const errors = reactive({});
+
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
         const warMapSearch = ref('');
+
         const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
-        const defaultSubjectValues = { admin_id: '', full_name: '', alias: '', status: 'Active', threat_level: 'Low', sex: '', gender: '', occupation: '', nationality: '', ideology: '', religion: '', dob: '', age: null, modus_operandi: '', weakness: '', avatar_path: '', last_sighted: '', height: '', weight: '', identifying_marks: '', location: '', contact: '', hometown: '', previous_locations: '', notes: '', social_links: '', digital_identifiers: '', eye_color: '', hair_color: '', blood_type: '' };
-        
+        const defaultSubjectValues = {
+            admin_id: '',
+            full_name: '',
+            alias: '',
+            status: 'Active',
+            threat_level: 'Low',
+            sex: '',
+            gender: '',
+            occupation: '',
+            nationality: '',
+            ideology: '',
+            religion: '',
+            dob: '',
+            age: null,
+            modus_operandi: '',
+            weakness: '',
+            avatar_path: '',
+            last_sighted: '',
+            height: '',
+            weight: '',
+            identifying_marks: '',
+            location: '',
+            contact: '',
+            hometown: '',
+            previous_locations: '',
+            notes: '',
+            social_links: '',
+            digital_identifiers: '',
+            eye_color: '',
+            hair_color: '',
+            blood_type: ''
+        };
+
         const buildSubjectForm = (source = {}, adminId = '') => {
-          const form = {};
-          SUBJECT_FORM_FIELDS.forEach((key) => {
-            let val = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
-            if (key === 'dob' && val && typeof val === 'string' && val.includes('T')) {
-              val = val.split('T')[0];
-            }
-            form[key] = val;
-          });
-          return form;
+            const form = {};
+            SUBJECT_FORM_FIELDS.forEach((key) => {
+                form[key] = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
+            });
+            return form;
         };
 
         const buildSubjectPayload = (form) => {
@@ -786,27 +850,24 @@ export function serveHtml() {
             return payload;
         };
 
-        // RECODE: subjectForm is now a standalone ref, detached from the 'forms' reactive proxy
-        const subjectForm = ref(buildSubjectForm({}, ''));
-        const profileDraft = ref(buildSubjectForm({}, ''));
-        const forms = reactive({ interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30, result: '', error: '' } });
+        const forms = reactive({
+            subject: buildSubjectForm({}, localStorage.getItem('admin_id') || ''),
+            interaction: {},
+            location: {},
+            intel: {},
+            rel: {},
+            share: { minutes: 30, result: '', error: '' }
+        });
+
         const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
 
-        const resetProfileDraft = () => {
-            const aid = localStorage.getItem('admin_id') || '';
-            profileDraft.value = buildSubjectForm(selected.value || {}, aid);
-        };
-
         const api = async (ep, opts = {}) => {
-            const finalOpts = { ...opts, headers: { ...(opts.headers || {}) } };
-            const token = localStorage.getItem('auth_token');
-            if(token) finalOpts.headers['Authorization'] = 'Bearer ' + token;
-            if (finalOpts.body && !(finalOpts.body instanceof FormData) && !finalOpts.headers['Content-Type']) {
-                finalOpts.headers['Content-Type'] = 'application/json';
+            const finalOpts = { ...opts };
+            if (finalOpts.body && !finalOpts.headers?.['Content-Type']) {
+                finalOpts.headers = { ...(finalOpts.headers || {}), 'Content-Type': 'application/json' };
             }
             const res = await fetch('/api' + ep, finalOpts);
             if (!res.ok) {
-                 if(res.status === 401) { localStorage.removeItem('auth_token'); view.value = 'auth'; }
                  const text = await res.text();
                  try { const json = JSON.parse(text); throw new Error(json.error || "Server Error"); }
                  catch(e) { throw new Error(text || res.statusText); }
@@ -815,51 +876,59 @@ export function serveHtml() {
         };
 
         let actionDepth = 0;
-        const withAction = async (fn) => { actionDepth++; actionLoading.value = true; try { await fn(); } finally { actionDepth = Math.max(0, actionDepth - 1); if (actionDepth === 0) actionLoading.value = false; } };
+        const withAction = async (fn) => {
+            actionDepth++; actionLoading.value = true;
+            try { await fn(); } finally { actionDepth = Math.max(0, actionDepth - 1); if (actionDepth === 0) actionLoading.value = false; }
+        };
+
         const handleAuth = async () => {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
-                localStorage.setItem('auth_token', res.token);
-                localStorage.setItem('admin_id', res.id); 
+                localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
                 fetchData();
             } catch(e) { alert(e.message); } finally { loading.value = false; }
         };
+
         const fetchData = async () => withAction(async () => {
-            const [d, s, sugg] = await Promise.all([ api('/dashboard'), api('/subjects'), api('/subject-suggestions') ]);
+            const adminId = localStorage.getItem('admin_id');
+            const [d, s, sugg] = await Promise.all([
+                api('/dashboard?adminId='+adminId),
+                api('/subjects?adminId='+adminId),
+                api('/subject-suggestions?adminId='+adminId)
+            ]);
             stats.value = d.stats; feed.value = d.feed; subjects.value = s;
-            fieldSuggestions.nationality = sugg.nationality || []; fieldSuggestions.ideology = sugg.ideology || []; fieldSuggestions.religion = sugg.religion || [];
+            fieldSuggestions.nationality = sugg.nationality || [];
+            fieldSuggestions.ideology = sugg.ideology || [];
+            fieldSuggestions.religion = sugg.religion || [];
             if(!selected.value && subjects.value.length) await viewSubject(subjects.value[0].id);
         });
+
         const viewSubject = async (id) => withAction(async () => {
             selected.value = await api('/subjects/'+id);
             if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob);
-            resetProfileDraft();
-            editingProfile.value = false;
-            currentTab.value = 'detail';
-            subTab.value = 'profile';
+            currentTab.value = 'detail'; subTab.value = 'profile';
         });
+
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
-        const updateSubject = async () => withAction(async () => {
-            if(!selected.value) return;
-            try {
-                await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
-            } catch(e) {
-                alert("Failed to update status: " + e.message);
-                throw e;
-            }
-        });
-        
-        // RECODE: Updated submit logic to use subjectForm.value
+
+        const updateSubject = async () => {
+             if(!selected.value) return;
+             await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
+        };
+
         const submitSubject = async () => withAction(async () => {
             try {
-                const payload = buildSubjectPayload(subjectForm.value);
+                const isEdit = modal.active === 'edit-profile';
+                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
+                const method = isEdit ? 'PATCH' : 'POST';
+                const payload = buildSubjectPayload(forms.subject);
                 payload.age = payload.dob ? calculateAge(payload.dob) : null;
 
-                await api('/subjects', { method: 'POST', body: JSON.stringify(payload) });
-                fetchData();
+                await api(ep, { method, body: JSON.stringify(payload) });
+                if(isEdit) selected.value = { ...selected.value, ...payload }; else fetchData();
                 closeModal();
             } catch(e) {
                 errors.form = e.message;
@@ -867,115 +936,227 @@ export function serveHtml() {
             }
         });
 
-        const saveProfileEdit = async () => withAction(async () => {
-            if (!selected.value) return;
-            try {
-                const payload = buildSubjectPayload(profileDraft.value);
-                payload.age = profileDraft.value.dob ? calculateAge(profileDraft.value.dob) : null;
-
-                await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
-                editingProfile.value = false;
-                await viewSubject(selected.value.id);
-            } catch(e) {
-                errors.form = e.message;
-                alert(e.message);
-            }
+        const submitInteraction = async () => withAction(async () => {
+            await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
+            viewSubject(selected.value.id); closeModal();
         });
-        const startProfileEdit = () => { resetProfileDraft(); editingProfile.value = true; };
-        const cancelProfileEdit = () => { resetProfileDraft(); editingProfile.value = false; };
 
-        const submitInteraction = async () => withAction(async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); });
-        const submitLocation = async () => withAction(async () => { Object.keys(errors).forEach(k => delete errors[k]); if(!forms.location.name) errors.loc_name = 'Required'; if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map'; if(errors.loc_name || errors.loc_coords) return; await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); });
-        const submitIntel = async () => withAction(async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); });
-        const submitRel = async () => withAction(async () => { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); });
-        const fetchShareLinks = async () => { if(!selected.value) return; const links = await api('/share-links?subjectId=' + selected.value.id); activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : []; };
-        const revokeLink = async (token) => { if (!token) return; if (!confirm('Revoke this share link? Recipients will immediately lose access.')) return; await withAction(async () => { await api('/share-links?token=' + token, { method: 'DELETE' }); fetchShareLinks(); }); };
-        const copyShare = (url) => { if (!url) return; copyToClipboard(url); };
-        const createShareLink = async () => { try { if (!selected.value) return; forms.share.error = ''; forms.share.result = ''; await withAction(async () => { const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); forms.share.result = res.url; }); fetchShareLinks(); } catch(e) { forms.share.error = e.message; } };
-        const copyToClipboard = (text) => { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => fallbackCopy(text)); } else { fallbackCopy(text); } };
-        const fallbackCopy = (text) => { const textArea = document.createElement("textarea"); textArea.value = text; textArea.style.position = "fixed"; document.body.appendChild(textArea); textArea.focus(); textArea.select(); try { document.execCommand('copy'); alert("Copied to clipboard!"); } catch (err) { alert("Could not copy text."); } document.body.removeChild(textArea); };
+        const submitLocation = async () => withAction(async () => {
+            Object.keys(errors).forEach(k => delete errors[k]);
+            if(!forms.location.name) errors.loc_name = 'Required';
+            if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map';
+            if(errors.loc_name || errors.loc_coords) return;
+            await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
+            viewSubject(selected.value.id); closeModal();
+        });
         
-        // RECODE: Updated watcher to watch subjectForm.value.dob
-        watch(() => subjectForm.value.dob, (val) => { subjectForm.value.age = calculateAge(val); });
-        watch(() => profileDraft.value.dob, (val) => { profileDraft.value.age = calculateAge(val); });
-        
+        const submitIntel = async () => withAction(async () => {
+             await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
+             viewSubject(selected.value.id); closeModal();
+        });
+
+        const submitRel = async () => withAction(async () => {
+             await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
+             viewSubject(selected.value.id); closeModal();
+        });
+
+        const fetchShareLinks = async () => {
+            if(!selected.value) return;
+            const links = await api('/share-links?subjectId=' + selected.value.id);
+            activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : [];
+        };
+
+        const revokeLink = async (token) => {
+            if (!token) return;
+            const confirmMsg = 'Revoke this share link? Recipients will immediately lose access.';
+            if (!confirm(confirmMsg)) return;
+            await withAction(async () => {
+                await api('/share-links?token=' + token, { method: 'DELETE' });
+                fetchShareLinks();
+            });
+        };
+
+        const copyShare = (url) => {
+            if (!url) return;
+            copyToClipboard(url);
+        };
+
+        const createShareLink = async () => {
+            try {
+                if (!selected.value) return;
+                forms.share.error = '';
+                forms.share.result = '';
+                await withAction(async () => {
+                    const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
+                    forms.share.result = res.url;
+                });
+                fetchShareLinks();
+            } catch(e) { forms.share.error = e.message; }
+        };
+
+        // Improved Copy Logic for Iframes
+        const copyToClipboard = (text) => { 
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => fallbackCopy(text));
+            } else {
+                fallbackCopy(text);
+            }
+        };
+
+        const fallbackCopy = (text) => {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; 
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                alert("Copied to clipboard!");
+            } catch (err) {
+                alert("Could not copy text.");
+            }
+            document.body.removeChild(textArea);
+        };
+
+        watch(() => forms.subject.dob, (val) => { forms.subject.age = calculateAge(val); });
+
         let mapInstance = null, pickerMapInstance = null, pickerMarker = null;
-        const initMap = (elementId, locations, isGlobal = false, isPicker = false) => { const el = document.getElementById(elementId); if(!el) return; if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; } if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; } const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2); L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map); if(isPicker) { pickerMapInstance = map; map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng)); setTimeout(() => map.invalidateSize(), 100); } else { mapInstance = map; const markers = []; locations.forEach(loc => { if(loc.lat && loc.lng) { const m = L.marker([loc.lat, loc.lng]).addTo(map); if(!isGlobal) m.bindPopup(\`<b>\${loc.name}</b>\`); markers.push(m); } }); if(markers.length > 0) { const group = L.featureGroup(markers); map.fitBounds(group.getBounds().pad(0.1)); } } };
-        watch(() => subTab.value, (val) => { if(val === 'locations' && selected.value) nextTick(() => initMap('subjectMap', selected.value.locations || [])); if(val === 'network' && selected.value) nextTick(initNetwork); });
-        watch(() => currentTab.value, (val) => { if(val === 'map') nextTick(async () => { const allLocs = await api('/map-data'); initMap('warRoomMap', allLocs, true); }); });
-        watch(() => selected.value?.id, () => { resetProfileDraft(); editingProfile.value = false; });
-        const placePickerMarker = (map, lat, lng) => { forms.location.lat = lat; forms.location.lng = lng; if (pickerMarker) map.removeLayer(pickerMarker); pickerMarker = L.marker([lat, lng]).addTo(map); };
-        const searchLocations = async () => { if(!locationSearchQuery.value) return; locationSearchLoading.value = true; locationSearchResults.value = []; try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } }); locationSearchResults.value = await res.json(); } catch(e) { locationSearchResults.value = []; errors.loc_coords = 'Unable to search locations right now'; } finally { locationSearchLoading.value = false; } };
-        const selectLocation = (res) => { forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng); } };
-        
-        // RECODE: Completely rewritten openModal to prevent reactivity freezes
-        const openModal = async (type) => {
-          try {
+
+        const initMap = (elementId, locations, isGlobal = false, isPicker = false) => {
+            const el = document.getElementById(elementId);
+            if(!el) return;
+            if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
+            if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
+
+            const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+
+            if(isPicker) {
+                pickerMapInstance = map;
+                map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng));
+                setTimeout(() => map.invalidateSize(), 100);
+            } else {
+                mapInstance = map;
+                const markers = [];
+                locations.forEach(loc => {
+                    if(loc.lat && loc.lng) {
+                        const m = L.marker([loc.lat, loc.lng]).addTo(map);
+                        if(!isGlobal) m.bindPopup(\`<b>\${loc.name}</b>\`);
+                        markers.push(m);
+                    }
+                });
+                if(markers.length > 0) {
+                     const group = L.featureGroup(markers);
+                     map.fitBounds(group.getBounds().pad(0.1));
+                }
+            }
+        };
+
+        watch(() => subTab.value, (val) => {
+            if(val === 'locations' && selected.value) nextTick(() => initMap('subjectMap', selected.value.locations || []));
+            if(val === 'network' && selected.value) nextTick(initNetwork);
+        });
+
+        watch(() => currentTab.value, (val) => {
+            if(val === 'map') nextTick(async () => { const allLocs = await api('/map-data?adminId=' + localStorage.getItem('admin_id')); initMap('warRoomMap', allLocs, true); });
+        });
+
+        const placePickerMarker = (map, lat, lng) => {
+            forms.location.lat = lat; forms.location.lng = lng;
+            if (pickerMarker) map.removeLayer(pickerMarker);
+            pickerMarker = L.marker([lat, lng]).addTo(map);
+        };
+
+        const searchLocations = async () => {
+            if(!locationSearchQuery.value) return;
+            locationSearchLoading.value = true;
+            locationSearchResults.value = [];
+            try {
+                const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } });
+                locationSearchResults.value = await res.json();
+            } catch(e) {
+                locationSearchResults.value = [];
+                errors.loc_coords = 'Unable to search locations right now';
+            } finally { locationSearchLoading.value = false; }
+        };
+
+        const selectLocation = (res) => {
+            forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name;
+            locationSearchResults.value = [];
+            if(pickerMapInstance) {
+                pickerMapInstance.setView([res.lat, res.lon], 15);
+                placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng);
+            }
+        };
+
+        const openModal = (type) => {
+            modal.active = type;
             const aid = localStorage.getItem('admin_id');
             Object.keys(errors).forEach(k => delete errors[k]);
-
-            // Add slight delay to unblock main thread before heavy modal render
-            // This prevents the "jamming" feeling on click
-            if(type === 'add-subject') {
-                subjectForm.value = buildSubjectForm({}, aid);
-            }
-
-            // Initialization for other forms
+              if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
+            if(type === 'edit-profile') forms.subject = buildSubjectForm(selected.value || {}, aid);
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
-            if(type === 'add-location') {
-              forms.location = { subject_id: selected.value.id };
-              locationSearchQuery.value = '';
-              locationSearchResults.value = [];
-              nextTick(() => initMap('locationPickerMap', [], false, true));
-            }
+            if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false };
             if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); }
-            
-            // Set active last to trigger render only after data is ready
-            nextTick(() => { modal.active = type; });
-          } catch (e) {
-            console.error("Modal Error:", e);
-            alert("Failed to open form: " + e.message);
-          }
+        };
+        const closeModal = () => modal.active = null;
+
+        const initNetwork = () => {
+            const container = document.getElementById('relNetwork');
+            if(!container || !selected.value) return;
+            const nodes = [{ id: selected.value.id, label: selected.value.full_name, shape: 'circularImage', image: resolveImg(selected.value.avatar_path), size: 30 }];
+            const edges = [];
+            selected.value.relationships.forEach((r, i) => {
+                const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                nodes.push({ id: targetId || 'ext-'+i, label: r.target_name, shape: 'circularImage', image: resolveImg(r.target_avatar) });
+                edges.push({ from: selected.value.id, to: targetId || 'ext-'+i });
+            });
+            new vis.Network(container, { nodes, edges }, { nodes: { font: { color: '#374151' }, borderWidth: 2 }, edges: { color: '#cbd5e1' } });
         };
 
-        const closeModal = () => modal.active = null;
-        const initNetwork = () => { const container = document.getElementById('relNetwork'); if(!container || !selected.value) return; const nodes = [{ id: selected.value.id, label: selected.value.full_name, shape: 'circularImage', image: resolveImg(selected.value.avatar_path), size: 30 }]; const edges = []; selected.value.relationships.forEach((r, i) => { const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id; nodes.push({ id: targetId || 'ext-'+i, label: r.target_name, shape: 'circularImage', image: resolveImg(r.target_avatar) }); edges.push({ from: selected.value.id, to: targetId || 'ext-'+i }); }); new vis.Network(container, { nodes, edges }, { nodes: { font: { color: '#374151' }, borderWidth: 2 }, edges: { color: '#cbd5e1' } }); };
         const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
         const getThreatColor = (l, isBg = false) => { const c = { 'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600', 'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600', 'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600', 'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600' }; return c[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500'); };
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const openSettings = () => openModal('settings');
-        const logout = () => { if (!confirm('Log out of PEOPLE OS? Any unsaved changes will be lost.')) return; localStorage.clear(); location.reload(); };
+        const logout = () => {
+            if (!confirm('Log out of PEOPLE OS? Any unsaved changes will be lost.')) return;
+            localStorage.clear();
+            location.reload();
+        };
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const exportData = () => { const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = (selected.value.alias || 'contact') + '.json'; link.click(); };
         const fileInput = ref(null); const uploadType = ref(null);
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
         const handleFile = async (e) => {
             const f = e.target.files[0]; if(!f) return;
-            const fd = new FormData();
-            fd.append('file', f);
-            fd.append('subjectId', selected.value.id);
-            const endpoint = uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media';
-            // FormData is handled automatically by browser fetch
-            await api(endpoint, { method: 'POST', body: fd });
-            viewSubject(selected.value.id);
+            const reader = new FileReader(); reader.readAsDataURL(f);
+            reader.onload = async (ev) => {
+                const b64 = ev.target.result.split(',')[1];
+                const endpoint = uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media';
+                await api(endpoint, { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: b64, filename: f.name, contentType: f.type })});
+                viewSubject(selected.value.id);
+            };
         };
-        const deleteItem = async (table, id) => { if(confirm('Delete this item?')) { await withAction(async () => { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); await viewSubject(selected.value.id); }); } };
+          const deleteItem = async (table, id) => { if(confirm('Delete this item?')) { await withAction(async () => { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); await viewSubject(selected.value.id); }); } };
         const burnProtocol = async () => { if(prompt("Type 'BURN' to confirm factory reset.") === 'BURN') { await api('/nuke', { method: 'POST' }); localStorage.clear(); location.reload(); } };
-        const modalTitle = computed(() => { const m = { 'add-subject': 'Add Contact', 'add-interaction': 'Log Meeting', 'add-location': 'Pin Location', 'add-intel': 'Add Observation', 'add-rel': 'Add Connection', 'share-secure': 'Share Access', 'settings': 'Settings' }; return m[modal.active] || 'System Dialog'; });
-        onMounted(() => { if(localStorage.getItem('auth_token')) { view.value = 'app'; fetchData(); } else { view.value = 'auth'; } });
+        const modalTitle = computed(() => { const m = { 'add-subject': 'Add Contact', 'edit-profile': 'Edit Contact', 'add-interaction': 'Log Meeting', 'add-location': 'Pin Location', 'add-intel': 'Add Observation', 'add-rel': 'Add Connection', 'share-secure': 'Share Access', 'settings': 'Settings' }; return m[modal.active] || 'System Dialog'; });
+
+        onMounted(() => { if(localStorage.getItem('admin_id')) { view.value = 'app'; fetchData(); } });
+
         return { 
             view, auth, loading, actionLoading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
             activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, fetchShareLinks, revokeLink, copyShare, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
-            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData,
-            subjectForm, profileDraft, editingProfile, startProfileEdit, cancelProfileEdit, saveProfileEdit // EXPOSED NEW REF
+            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
         };
       }
     }).mount('#app');
   </script>
 </body>
-</html>`, { headers: { 'Content-Type': 'text/html' } });
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
