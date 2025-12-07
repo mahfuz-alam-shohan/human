@@ -762,7 +762,7 @@ function serveSharedHtml(token) {
                     {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
                 ];
 
-                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : `/api/media/${p}?shareToken=${token}`) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
+                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/' + p + '?shareToken=' + token) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
                 
                 const formatTime = (s) => {
                     if(s <= 0) return "EXPIRED";
@@ -1553,7 +1553,7 @@ function serveHtml() {
                 const token = localStorage.getItem('auth_token');
                 const headers = { ...(opts.headers || {}) };
                 if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-                if (token) headers['Authorization'] = `Bearer ${token}`;
+                if (token) headers['Authorization'] = 'Bearer ' + token;
 
                 const res = await fetch('/api' + ep, { ...opts, headers });
                 if (res.status === 401) {
@@ -1857,7 +1857,7 @@ function serveHtml() {
             if (!p) return null;
             if (p.startsWith('http')) return p;
             const token = localStorage.getItem('auth_token');
-            return `/api/media/${p}${token ? `?auth=${token}` : ''}`;
+            return '/api/media/' + p + (token ? '?auth=' + token : '');
         };
         const resolveImg = (p) => mediaUrl(p);
         const getThreatColor = (l, isBg = false) => {
