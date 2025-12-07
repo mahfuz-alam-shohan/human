@@ -154,7 +154,7 @@ export function serveSharedHtml(token) {
 }
 
 export function serveHtml() {
-  const html = `<!DOCTYPE html>
+  return new Response(`<!DOCTYPE html>
 <html lang="en" class="h-full bg-gray-50">
 <head>
   <meta charset="utf-8" />
