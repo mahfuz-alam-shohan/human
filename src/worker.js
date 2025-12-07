@@ -615,12 +615,12 @@ function serveSharedHtml(token) {
             <!-- 5. FILES TAB -->
             <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
-                    <img v-if="m.content_type.startsWith('image')" :src="'/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105">
+                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
                     <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
                         <i class="fa-solid fa-file text-4xl mb-2"></i>
-                        <span class="text-xs uppercase font-bold">{{m.content_type.split('/')[1]}}</span>
+                        <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
                     </div>
-                    <a :href="'/api/media/'+m.object_key" download class="absolute inset-0 z-10"></a>
+                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
                     <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
                         {{m.description || 'File'}}
                     </div>
@@ -1093,15 +1093,22 @@ function serveHtml() {
                     <!-- FILES TAB -->
                     <div v-if="subTab === 'files'" class="space-y-6">
                         <div class="flex flex-col md:flex-row gap-6">
-                            <div @click="triggerUpload('media')" class="h-32 md:h-40 w-full md:w-56 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl mb-2 group-hover:scale-110 transition-transform"></i>
-                                <span class="text-xs font-bold uppercase">Upload File</span>
+                            <div class="space-y-3 w-full md:w-56 shrink-0">
+                                <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
+                                    <span class="text-xs font-bold uppercase">Upload</span>
+                                </div>
+                                <div @click="openModal('add-media-link')" class="h-10 rounded-xl border border-slate-700 bg-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-700 transition-all text-slate-400 hover:text-white gap-2">
+                                    <i class="fa-solid fa-link text-sm"></i>
+                                    <span class="text-xs font-bold uppercase">Link URL</span>
+                                </div>
                             </div>
-                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-4">
+                            
+                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                                 <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
-                                    <img v-if="m.content_type.startsWith('image')" :src="'/api/media/' + m.object_key" class="w-full h-full object-cover">
+                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
-                                    <a :href="'/api/media/' + m.object_key" download class="absolute inset-0 z-10"></a>
+                                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
                                     <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
                                     <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
                                 </div>
@@ -1157,6 +1164,8 @@ function serveHtml() {
                             <input v-model="forms.subject.alias" placeholder="Nickname / Alias" class="glass-input w-full p-3 text-sm">
                             <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Occupation" class="glass-input w-full p-3 text-sm">
                             <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
+                            <!-- Image URL Input -->
+                            <input v-model="forms.subject.avatar_path" placeholder="Avatar URL (Optional)" class="glass-input w-full p-3 text-sm text-blue-400">
                         </div>
                         <div class="space-y-4">
                              <label class="block text-xs font-bold uppercase text-slate-500">Status</label>
@@ -1166,7 +1175,10 @@ function serveHtml() {
                                 <option value="High">High Priority</option>
                                 <option value="Critical">Critical</option>
                             </select>
-                            <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-400">
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-400" title="Date of Birth">
+                                <input type="number" v-model="forms.subject.age" placeholder="Age" class="glass-input w-full p-3 text-sm" title="Age (Auto-calc)">
+                            </div>
                              <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
                         </div>
                     </div>
@@ -1183,7 +1195,7 @@ function serveHtml() {
                             <input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs">
                             <input v-model="forms.subject.weight" placeholder="Weight" class="glass-input p-2 text-xs">
                             <input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs">
-                            <input v-model="forms.subject.age" placeholder="Age" type="number" class="glass-input p-2 text-xs">
+                            <!-- Removed age from here as it's moved up -->
                         </div>
                     </div>
 
@@ -1204,6 +1216,19 @@ function serveHtml() {
                     <input v-model="forms.intel.label" placeholder="Label (e.g., 'Instagram', 'University')" class="glass-input w-full p-3 text-sm" required>
                     <textarea v-model="forms.intel.value" placeholder="Value / Detail" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
                     <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Add Attribute</button>
+                 </form>
+
+                 <!-- ADD MEDIA LINK -->
+                 <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
+                    <input v-model="forms.mediaLink.url" placeholder="Paste Image/File URL *" class="glass-input w-full p-3 text-sm" required>
+                    <input v-model="forms.mediaLink.description" placeholder="Description / Label" class="glass-input w-full p-3 text-sm">
+                    <select v-model="forms.mediaLink.type" class="glass-input w-full p-3 text-sm">
+                        <option value="image/jpeg">Image</option>
+                        <option value="application/pdf">Document</option>
+                        <option value="video/mp4">Video</option>
+                        <option value="text/plain">Other</option>
+                    </select>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Save Link</button>
                  </form>
 
                  <!-- SECURE SHARE -->
@@ -1331,7 +1356,7 @@ function serveHtml() {
         const cmdInput = ref(null);
 
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }, mediaLink: {}
         });
 
         const filteredSubjects = computed(() => subjects.value.filter(s => 
@@ -1372,7 +1397,7 @@ function serveHtml() {
         };
 
         const modalTitle = computed(() => {
-             const m = { 'add-subject':'Add New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'add-intel':'Add Attribute', 'add-rel':'Add Connection', 'share-secure':'Share Profile' };
+             const m = { 'add-subject':'Add New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'add-intel':'Add Attribute', 'add-rel':'Add Connection', 'share-secure':'Share Profile', 'add-media-link': 'Add External Media' };
              return m[modal.active] || 'Search';
         });
 
@@ -1498,6 +1523,7 @@ function serveHtml() {
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
+             if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              if(t === 'add-location') {
                  forms.location = { subject_id: selected.value.id };
                  locationSearchQuery.value = '';
@@ -1556,6 +1582,23 @@ function serveHtml() {
              });
         });
 
+        // Watchers for Age/DOB Auto-calc
+        watch(() => forms.subject.dob, (val) => {
+            if(!val) return;
+            const dob = new Date(val);
+            const diff = Date.now() - dob.getTime();
+            const age = new Date(diff).getUTCFullYear() - 1970;
+            if (forms.subject.age !== age) forms.subject.age = age;
+        });
+
+        watch(() => forms.subject.age, (val) => {
+            // Only auto-fill DOB if it's currently empty to avoid overwriting specific dates
+            if (val && !forms.subject.dob) {
+                const year = new Date().getFullYear() - val;
+                forms.subject.dob = \`\${year}-01-01\`;
+            }
+        });
+
         // CRUD
         const submitSubject = async () => {
             const isEdit = modal.active === 'edit-profile';
@@ -1569,6 +1612,7 @@ function serveHtml() {
         const submitLocation = async () => { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); };
         const submitIntel = async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); };
         const submitRel = async () => { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); };
+        const submitMediaLink = async () => { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); };
         const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
         
         const fileInput = ref(null);
@@ -1627,7 +1671,7 @@ function serveHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, flyTo, debounceSearch, selectLocation, openSettings,
-            isSearching, mapData, showMapSidebar, flyToGlobal, fileInput
+            isSearching, mapData, showMapSidebar, flyToGlobal, fileInput, submitMediaLink
         };
       }
     }).mount('#app');
@@ -1730,6 +1774,12 @@ export default {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
                 .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/media-link') {
+            const { subjectId, url, type, description } = await req.json();
+            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
             return response({success:true});
         }
 
