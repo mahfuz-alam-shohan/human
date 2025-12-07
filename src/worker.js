@@ -1,1621 +1,1648 @@
-/**
- * PEOPLE OS - Cloudflare Worker
- * Fully Recoded Profile Sharing & Bug Fixes
- */
-
 const encoder = new TextEncoder();
-const APP_TITLE = "PEOPLE OS";
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
 
-// Only allow scalar columns that exist on the subjects table to be written.
-const SUBJECT_COLUMNS = [
-  'admin_id',
-  'full_name',
-  'alias',
-  'dob',
-  'age',
-  'gender',
-  'sex',
-  'occupation',
-  'nationality',
-  'ideology',
-  'religion',
-  'location',
-  'contact',
-  'hometown',
-  'previous_locations',
-  'modus_operandi',
-  'notes',
-  'weakness',
-  'avatar_path',
-  'is_archived',
-  'status',
-  'threat_level',
-  'last_sighted',
-  'height',
-  'weight',
-  'eye_color',
-  'hair_color',
-  'blood_type',
-  'identifying_marks',
-  'social_links',
-  'digital_identifiers',
+// --- Configuration & Constants ---
+const ALLOWED_ORIGINS = ['*']; 
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024; // 15MB
+
+// --- Schema Definitions ---
+// MIGRATIONS: Add SQL statements here to evolve the schema over time.
+const MIGRATIONS = [
+  "ALTER TABLE subject_data_points ADD COLUMN parent_id INTEGER REFERENCES subject_data_points(id)",
+  "ALTER TABLE subjects ADD COLUMN avatar_path TEXT",
+  "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0",
+  "ALTER TABLE subject_data_points ADD COLUMN confidence INTEGER DEFAULT 100",
+  "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
+  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
+  "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
+  // Physical Attributes
+  "ALTER TABLE subjects ADD COLUMN height TEXT",
+  "ALTER TABLE subjects ADD COLUMN weight TEXT",
+  "ALTER TABLE subjects ADD COLUMN eye_color TEXT",
+  "ALTER TABLE subjects ADD COLUMN hair_color TEXT",
+  "ALTER TABLE subjects ADD COLUMN blood_type TEXT",
+  "ALTER TABLE subjects ADD COLUMN identifying_marks TEXT",
+  // Psychological & Digital Profile
+  "ALTER TABLE subjects ADD COLUMN mbti TEXT",
+  "ALTER TABLE subjects ADD COLUMN alignment TEXT",
+  "ALTER TABLE subjects ADD COLUMN social_links TEXT",
+  "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT",
+  // Routine & Activities
+  "CREATE TABLE IF NOT EXISTS subject_routine (id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT)",
+  // Media Links
+  "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
+  "ALTER TABLE subject_media ADD COLUMN external_url TEXT"
 ];
 
-class BadRequestError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'BadRequestError';
-    this.status = 400;
-  }
-}
-
-// --- 1. UTILITIES & HELPERS ---
+// --- Helper Functions ---
 
 function isoTimestamp() {
   return new Date().toISOString();
-}
-
-function calculateAge(dob) {
-  if (!dob) return null;
-  const birthDate = new Date(dob);
-  if (isNaN(birthDate.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const monthDiff = today.getMonth() - birthDate.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
-  return age >= 0 ? age : null;
-}
-
-function generateToken() {
-  const array = new Uint8Array(16);
-  crypto.getRandomValues(array);
-  return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function buildShareUrl(origin, token) {
-  try {
-    const base = origin || '';
-    const url = new URL(`/share/${token}`, base);
-    return url.toString();
-  } catch (e) {
-    // Fallback to relative if origin is malformed
-    return `/share/${token}`;
-  }
 }
 
 async function hashPassword(secret) {
   const data = encoder.encode(secret);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
 }
 
 function sanitizeFileName(name) {
-  return (name || 'file')
-    .toLowerCase()
+  return name.toLowerCase()
     .replace(/[^a-z0-9.-]+/g, '-')
+    .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '') || 'upload';
 }
 
-function safeVal(v) {
-  return v === undefined || v === '' ? null : v;
-}
-
-function sanitizeSubjectPayload(data = {}) {
-  const payload = {};
-  SUBJECT_COLUMNS.forEach((key) => {
-    if (data[key] !== undefined) payload[key] = safeVal(data[key]);
-  });
-  return payload;
-}
-
-function coerceLatLng(record) {
-  if (!record) return record;
-  const toNum = (val) => (val === null || val === undefined ? null : Number(val));
-  return {
-    ...record,
-    lat: toNum(record.lat),
-    lng: toNum(record.lng),
-  };
-}
-
-// --- 2. RESPONSE HELPERS ---
-
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...CORS_HEADERS,
-    },
-  });
-}
-
-function errorResponse(msg, status = 500, details = null) {
-  console.error(`API Error: ${msg}`, details);
-  return jsonResponse({ error: msg, details }, status);
-}
-
-async function safeJson(req) {
-  try {
-    const text = await req.text();
-    return text ? JSON.parse(text) : {};
-  } catch (e) {
-    throw new BadRequestError('Invalid JSON body');
-  }
-}
-
-function ensureEnv(env) {
-  if (!env || !env.DB || !env.BUCKET) {
-    throw new Error('Required bindings are missing (DB or BUCKET)');
-  }
-}
-
-function evaluateShareStatus(link, now = new Date()) {
-  const durationSeconds = Number(link.duration_seconds) || 0;
-  if (!durationSeconds) return { expired: false, remainingSeconds: null, expiresAt: null };
-
-  if (!link.started_at) {
-    return { expired: false, remainingSeconds: durationSeconds, expiresAt: null };
-  }
-
-  const expiresAt = new Date(new Date(link.started_at).getTime() + durationSeconds * 1000);
-  const remainingSeconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
-  return { expired: remainingSeconds <= 0, remainingSeconds, expiresAt };
-}
-
-// --- 3. DATABASE LAYER ---
-
-class Database {
-  constructor(db) {
-    this.db = db;
-  }
-
-  async ensureSchema() {
-    try { await this.db.prepare("PRAGMA foreign_keys = ON;").run(); } catch(e) {}
-
-    const statements = [
-      `CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, alias TEXT, dob TEXT, age INTEGER, gender TEXT, sex TEXT, occupation TEXT, nationality TEXT, ideology TEXT, religion TEXT, location TEXT, contact TEXT, hometown TEXT, previous_locations TEXT, modus_operandi TEXT, notes TEXT, weakness TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0, status TEXT DEFAULT 'Active', threat_level TEXT DEFAULT 'Low', last_sighted TEXT, height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT, social_links TEXT, digital_identifiers TEXT, created_at TEXT, updated_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_intel (id INTEGER PRIMARY KEY, subject_id INTEGER, category TEXT, label TEXT, value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_media (id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, media_type TEXT DEFAULT 'file', external_url TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_relationships (id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, custom_name TEXT, custom_avatar TEXT, custom_notes TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_interactions (id INTEGER PRIMARY KEY, subject_id INTEGER, date TEXT, type TEXT, transcript TEXT, conclusion TEXT, evidence_url TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_locations (id INTEGER PRIMARY KEY, subject_id INTEGER, name TEXT, address TEXT, lat REAL, lng REAL, type TEXT, notes TEXT, created_at TEXT)`,
-      `CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, views INTEGER DEFAULT 0, started_at TEXT, created_at TEXT)`
-    ];
-
-    for (const stmt of statements) {
-      try { await this.db.prepare(stmt).run(); } catch (e) { /* Ignore exists errors */ }
-    }
-
-    await this.ensureShareMigrations();
-    await this.ensureSubjectMigrations();
-  }
-
-  async nuke() {
-    const tables = ['subject_shares', 'subject_locations', 'subject_interactions', 'subject_relationships', 'subject_media', 'subject_intel', 'subjects', 'admins'];
-    await this.db.prepare("PRAGMA foreign_keys = OFF;").run();
-    for (const t of tables) {
-      try { await this.db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch (e) {}
-    }
-    await this.db.prepare("PRAGMA foreign_keys = ON;").run();
-    await this.ensureSchema();
-  }
-
-  async ensureShareMigrations() {
-    try {
-      const info = await this.db.prepare("PRAGMA table_info('subject_shares')").all();
-      const cols = new Set((info?.results || []).map((c) => c.name));
-
-      const maybeAddColumn = async (name, ddl) => {
-        if (!cols.has(name)) {
-          try {
-            await this.db.prepare(ddl).run();
-          } catch (e) {
-            console.warn(`Migration skipped for ${name}:`, e?.message || e);
-          }
+function response(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
         }
-      };
+    });
+}
 
-      await maybeAddColumn('views', 'ALTER TABLE subject_shares ADD COLUMN views INTEGER DEFAULT 0');
-      await maybeAddColumn('started_at', 'ALTER TABLE subject_shares ADD COLUMN started_at TEXT');
-      await maybeAddColumn('duration_seconds', 'ALTER TABLE subject_shares ADD COLUMN duration_seconds INTEGER');
-      await maybeAddColumn('is_active', 'ALTER TABLE subject_shares ADD COLUMN is_active INTEGER DEFAULT 1');
-      await maybeAddColumn('created_at', 'ALTER TABLE subject_shares ADD COLUMN created_at TEXT');
-    } catch (e) {
-      console.warn('Share table migration check failed:', e?.message || e);
-    }
-  }
-
-  async ensureSubjectMigrations() {
-    try {
-      const info = await this.db.prepare("PRAGMA table_info('subjects')").all();
-      const cols = new Set((info?.results || []).map((c) => c.name));
-      if (!cols.has('sex')) {
-        try {
-          await this.db.prepare('ALTER TABLE subjects ADD COLUMN sex TEXT').run();
-        } catch (e) {
-          console.warn('Sex column migration skipped:', e?.message || e);
+function csvResponse(csvData, filename) {
+    return new Response(csvData, {
+        headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Access-Control-Allow-Origin': '*'
         }
-      }
-      if (!cols.has('religion')) {
-        try {
-          await this.db.prepare('ALTER TABLE subjects ADD COLUMN religion TEXT').run();
-        } catch (e) {
-          console.warn('Religion column migration skipped:', e?.message || e);
-        }
-      }
-    } catch (e) {
-      console.warn('Subject table migration check failed:', e?.message || e);
-    }
-  }
+    });
 }
 
-// --- 4. BUSINESS LOGIC HANDLERS ---
-
-async function handleLogin(req, db) {
-  const { email, password } = await safeJson(req);
-  if (!email || !password) return errorResponse("Missing credentials", 400);
-
-  const admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-
-  if (!admin) {
-    const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
-    if (count.c === 0) {
-      const hash = await hashPassword(password);
-      const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-      return jsonResponse({ id: res.meta.last_row_id, message: "Admin created" });
-    }
-    return errorResponse("Admin not found", 404);
-  }
-
-  const hashed = await hashPassword(password);
-  if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401);
-  return jsonResponse({ id: admin.id });
+function errorResponse(msg, status = 500) {
+    return response({ error: msg }, status);
 }
 
-// --- NEW SHARING LOGIC START ---
+// --- Database Layer ---
 
-async function handleShareCreate(req, db, origin) {
+// GLOBAL CACHE: Prevents running schema checks on every single request
+let schemaInitialized = false;
+
+async function ensureSchema(db) {
+  if (schemaInitialized) return; // Skip if already done in this worker instance
+
   try {
-    const body = await safeJson(req);
+      // Enforce foreign keys for data integrity
+      await db.prepare("PRAGMA foreign_keys = ON;").run();
 
-    // Basic validation
-    if (!body.subjectId) return errorResponse('Subject ID required', 400);
-    const subjectId = Number(body.subjectId);
-    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
-    if (!subject) return errorResponse('Subject not found or archived', 404);
+      await db.batch([
+        db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
+          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT, 
+          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
+          habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'Active', last_sighted TEXT,
+          height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT,
+          mbti TEXT, alignment TEXT, social_links TEXT, digital_identifiers TEXT,
+          created_at TEXT, updated_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_data_points (
+          id INTEGER PRIMARY KEY, subject_id INTEGER, parent_id INTEGER, category TEXT, label TEXT, 
+          value TEXT, analysis TEXT, confidence INTEGER DEFAULT 100, source TEXT, created_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_events (
+          id INTEGER PRIMARY KEY, subject_id INTEGER, title TEXT, description TEXT, event_date TEXT, created_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
+          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
+          id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT,
+          media_type TEXT DEFAULT 'file', external_url TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_routine (
+          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
+        )`)
+      ]);
 
-    // Validate duration: Min 1 minute, Max 1 week (10080 mins)
-    const requestedMinutes = Number.parseInt(body.durationMinutes, 10);
-    const minutes = Math.max(1, Math.min(Number.isNaN(requestedMinutes) ? 30 : requestedMinutes, 10080));
-    const durationSeconds = minutes * 60;
-    const token = generateToken();
-    const createdAt = isoTimestamp();
-
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, is_active, views, created_at) VALUES (?, ?, ?, 1, 0, ?)')
-      .bind(subject.id, token, durationSeconds, createdAt).run();
-
-    const shareUrl = buildShareUrl(origin, token);
-    const expiresAt = new Date(new Date(createdAt).getTime() + durationSeconds * 1000).toISOString();
-
-    return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201);
-  } catch (e) {
-    return errorResponse('Failed to create share link', 500, e.message);
-  }
-}
-
-async function handleGetSharedSubject(db, token) {
-  // 1. Fetch Link Record
-  const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
-
-  // 2. Validate Link Existence & State
-  if (!link) return errorResponse('INVALID LINK', 404);
-
-  // D1 can return numeric columns as strings. Normalize to a boolean-safe number check
-  const isActive = Number(link.is_active) === 1;
-  const { expired, remainingSeconds, expiresAt: evaluatedExpiry } = evaluateShareStatus(link);
-
-  if (expired || !isActive) {
-    if (isActive) await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-    return errorResponse('LINK EXPIRED', 410);
-  }
-
-  let remaining = remainingSeconds ?? link.duration_seconds;
-  const now = new Date();
-  const startTime = link.started_at ? new Date(link.started_at) : now;
-  const computedExpiry = evaluatedExpiry || new Date(startTime.getTime() + link.duration_seconds * 1000);
-
-  // 3. Handle Timer Logic
-  if (!link.started_at) {
-    // First view: Start the clock
-    await db.prepare('UPDATE subject_shares SET started_at = ?, views = 1 WHERE id = ?')
-      .bind(startTime.toISOString(), link.id).run();
-  } else {
-    // Subsequent view: Calculate remaining time
-    const elapsedSeconds = (now.getTime() - startTime.getTime()) / 1000;
-    remaining = link.duration_seconds - elapsedSeconds;
-
-    // Check Expiration
-    if (remaining <= 0) {
-      await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-      return errorResponse('LINK EXPIRED', 410);
-    }
-
-    // Increment View Count
-    await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
-  }
-
-  // 4. Fetch Restricted Subject Data (No hidden notes, strictly public fields)
-  const subject = await db.prepare(`
-    SELECT full_name, alias, occupation, nationality, ideology, threat_level,
-           avatar_path, status, social_links, age, sex, gender, height, weight,
-           identifying_marks, last_sighted, created_at
-    FROM subjects WHERE id = ?
-  `).bind(link.subject_id).first();
-
-  if (!subject) return errorResponse("Subject data unavailable", 404);
-
-  // 5. Fetch Restricted Related Data
-  const [interactions, locations, media] = await Promise.all([
-    // Limit interactions to 5 recent, public-facing ones
-    db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 5').bind(link.subject_id).all(),
-    // Locations (Safe columns only)
-    db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all(),
-    // Media (Safe columns only)
-    db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all()
-  ]);
-
-  return jsonResponse({
-    ...subject,
-    interactions: interactions.results,
-    locations: (locations.results || []).map(coerceLatLng),
-    media: media.results,
-    meta: {
-      remaining_seconds: Math.floor(remaining),
-      started_at: link.started_at || startTime.toISOString(),
-      expires_at: computedExpiry.toISOString(),
-      views: link.views + 1
-    }
-  });
-}
-
-async function handleShareList(db, subjectId, origin) {
-  try {
-    if (!subjectId) return errorResponse('Subject ID required', 400);
-    const result = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    const now = new Date();
-    const links = await Promise.all((result.results || []).map(async (link) => {
-      const isActive = Number(link.is_active) === 1;
-      const status = evaluateShareStatus(link, now);
-
-      if (status.expired && isActive) {
-        await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+      // Safe Migrations application
+      for (const query of MIGRATIONS) {
+        try { await db.prepare(query).run(); } catch(e) { /* Ignore if column exists */ }
       }
-
-      return {
-        ...link,
-        is_active: !status.expired && isActive,
-        expires_at: status.expiresAt ? status.expiresAt.toISOString() : null,
-        remaining_seconds: status.remainingSeconds,
-        url: buildShareUrl(origin, link.token)
-      };
-    }));
-    return jsonResponse(links);
-  } catch (e) {
-    return errorResponse('Failed to fetch share links', 500, e.message);
+      
+      schemaInitialized = true; // Mark as initialized
+  } catch (err) {
+      console.error("Schema Init Error:", err);
   }
 }
 
-async function handleShareRevoke(db, token) {
-  if (!token) return errorResponse('Share token required', 400);
-  try {
-    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
-    return jsonResponse({ success: true });
-  } catch (e) {
-    return errorResponse('Failed to revoke link', 500, e.message);
-  }
+// --- API Handlers ---
+
+async function handleGetDashboard(db, adminId) {
+    // Get recent activity feed
+    const recent = await db.prepare(`
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'New Subject Created' as desc, created_at as date FROM subjects WHERE admin_id = ?
+        UNION ALL
+        SELECT 'event' as type, subject_id as ref_id, title, description as desc, created_at as date FROM subject_events WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        UNION ALL
+        SELECT 'media' as type, subject_id as ref_id, 'New Evidence' as title, description as desc, created_at as date FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        ORDER BY date DESC LIMIT 20
+    `).bind(adminId, adminId, adminId).all();
+
+    const stats = await db.prepare(`
+        SELECT 
+            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as active_subjects,
+            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as total_media,
+            (SELECT COUNT(*) FROM subject_data_points WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as total_intel
+    `).bind(adminId, adminId, adminId).first();
+
+    return response({ feed: recent.results, stats });
 }
 
-async function handleCreateLocation(db, payload) {
-  const errors = [];
-
-  const subjectId = Number(payload.subject_id);
-  if (!subjectId || Number.isNaN(subjectId)) errors.push('Valid subject_id is required');
-  if (!payload.name || !payload.name.trim()) errors.push('Location name is required');
-
-  const lat = Number(payload.lat);
-  const lng = Number(payload.lng);
-  if (Number.isNaN(lat) || Number.isNaN(lng)) errors.push('Valid coordinates are required');
-
-  if (errors.length) return errorResponse(errors.join('; '), 400);
-
-  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
-  if (!subject) return errorResponse('Subject not found or archived', 404);
-
-  const createdAt = isoTimestamp();
-  await db.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(subjectId, payload.name.trim(), safeVal(payload.address), lat, lng, safeVal(payload.type) || 'pin', safeVal(payload.notes), createdAt)
-    .run();
-
-  return jsonResponse({
-    success: true,
-    location: {
-      subject_id: subjectId,
-      name: payload.name.trim(),
-      address: safeVal(payload.address),
-      lat,
-      lng,
-      type: safeVal(payload.type) || 'pin',
-      notes: safeVal(payload.notes),
-      created_at: createdAt,
-    },
-  });
-}
-
-// --- NEW SHARING LOGIC END ---
-
-// --- 5. FRONTEND SERVING (VUE.JS APPS) ---
-
-function serveSharedHtml(token) {
-  return new Response(`<!DOCTYPE html>
-<html lang="en" class="h-full bg-zinc-900">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Restricted Access File</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-  <style>
-    body { font-family: 'Inter', sans-serif; }
-    .mono { font-family: 'JetBrains Mono', monospace; }
-    [v-cloak] { display: none; }
-    .scan-line { width: 100%; height: 2px; background: rgba(16, 185, 129, 0.5); position: absolute; top: 0; left: 0; animation: scan 3s linear infinite; z-index: 50; pointer-events: none; }
-    @keyframes scan { 0% { top: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
-    .flicker { animation: flicker 4s infinite; }
-    @keyframes flicker { 0%, 95% { opacity: 1; } 96% { opacity: 0.8; } 97% { opacity: 1; } 98% { opacity: 0.5; } 100% { opacity: 1; } }
-  </style>
-</head>
-<body class="h-full overflow-hidden text-zinc-300">
-  <div id="app" v-cloak class="h-full flex flex-col max-w-4xl mx-auto bg-zinc-900 shadow-2xl relative overflow-hidden border-x border-zinc-800">
+async function handleGetSuggestions(db, adminId) {
+    // Fetch unique values for autocomplete
+    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ? AND occupation IS NOT NULL AND occupation != ''").bind(adminId).all();
+    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ? AND nationality IS NOT NULL AND nationality != ''").bind(adminId).all();
+    const religions = await db.prepare("SELECT DISTINCT religion FROM subjects WHERE admin_id = ? AND religion IS NOT NULL AND religion != ''").bind(adminId).all();
     
-    <!-- Loading State -->
-    <div v-if="loading" class="flex-1 flex flex-col items-center justify-center gap-6 bg-zinc-950">
-        <div class="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-        <div class="text-xs font-bold uppercase tracking-[0.2em] text-emerald-500 animate-pulse">Establishing Secure Handshake...</div>
-    </div>
-
-    <!-- Error State -->
-    <div v-else-if="error" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-zinc-950 relative overflow-hidden">
-        <div class="scan-line"></div>
-        <div class="max-w-md relative z-10">
-            <div class="text-red-600 text-7xl mb-6"><i class="fa-solid fa-file-shield"></i></div>
-            <h1 class="text-3xl font-black text-white mb-2 uppercase tracking-tight">Access Terminated</h1>
-            <p class="text-red-400 font-mono text-sm mb-8 border border-red-900/50 bg-red-950/20 p-4 rounded">{{ error }}</p>
-            <div class="text-zinc-600 text-xs uppercase tracking-widest">Connection Logged: {{ new Date().toISOString() }}</div>
-        </div>
-    </div>
-
-    <!-- Success State -->
-    <div v-else class="flex-1 flex flex-col h-full overflow-hidden relative bg-zinc-900">
-        <!-- Top Bar -->
-        <div class="h-16 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-6 shrink-0 z-20">
-            <div class="flex items-center gap-3">
-                <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
-                <div class="text-xs font-bold text-emerald-500 uppercase tracking-widest">Live View</div>
-            </div>
-            <div class="flex items-center gap-4">
-                 <div class="text-right">
-                    <div class="text-[10px] text-zinc-500 uppercase font-bold">Time Remaining</div>
-                    <div class="text-xl font-black mono" :class="timer < 60 ? 'text-red-500' : 'text-white'">{{ formatTime(timer) }}</div>
-                 </div>
-            </div>
-        </div>
-
-        <div class="flex-1 overflow-y-auto relative scrollbar-hide">
-            <!-- Header Profile -->
-            <div class="bg-zinc-900 p-8 pb-12 relative overflow-hidden">
-                <div class="absolute inset-0 bg-gradient-to-b from-emerald-900/10 to-transparent pointer-events-none"></div>
-                <div class="flex flex-col md:flex-row gap-8 items-center md:items-start relative z-10">
-                    <div class="w-40 h-40 bg-zinc-800 rounded-none border-2 border-zinc-700 p-1 shrink-0 relative">
-                        <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover grayscale contrast-125 hover:grayscale-0 transition-all duration-500">
-                        <div class="absolute -bottom-3 -right-3 bg-zinc-950 border border-zinc-700 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
-                            {{ data.status }}
-                        </div>
-                    </div>
-                    <div class="text-center md:text-left flex-1">
-                        <h1 class="text-4xl md:text-5xl font-black text-white uppercase tracking-tighter mb-2 flicker">{{ data.full_name }}</h1>
-                        <div class="text-emerald-500 font-mono text-sm uppercase mb-6">{{ data.occupation || 'Unknown Designation' }}</div>
-                        
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-zinc-800 pt-6">
-                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Affiliation</div><div class="text-zinc-300 font-medium text-sm">{{ data.ideology || 'N/A' }}</div></div>
-                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Nationality</div><div class="text-zinc-300 font-medium text-sm">{{ data.nationality || 'N/A' }}</div></div>
-                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Age / Sex</div><div class="text-zinc-300 font-medium text-sm">{{ data.age || '?' }} / {{ data.sex || data.gender || '?' }}</div></div>
-                            <div><div class="text-[10px] text-zinc-600 uppercase font-bold mb-1">Clearance</div><div class="text-xs font-bold px-2 py-0.5 inline-block rounded" :class="getThreatClass(data.threat_level)">{{ data.threat_level }}</div></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 border-t border-zinc-800">
-                <!-- Activity Log -->
-                <div class="border-b md:border-b-0 md:border-r border-zinc-800">
-                    <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
-                        <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest"><i class="fa-solid fa-list-ul mr-2"></i>Recent Intel</h3>
-                    </div>
-                    <div v-if="data.interactions.length === 0" class="p-8 text-center text-xs text-zinc-600 font-mono">NO RECORDS FOUND</div>
-                    <div v-for="ix in data.interactions" class="p-5 border-b border-zinc-800/50 hover:bg-white/5 transition-colors">
-                        <div class="flex justify-between items-baseline mb-2">
-                            <span class="text-emerald-500 font-mono text-xs font-bold uppercase">{{ ix.type }}</span>
-                            <span class="text-[10px] text-zinc-600">{{ new Date(ix.date).toLocaleDateString() }}</span>
-                        </div>
-                        <p class="text-sm text-zinc-400 leading-relaxed">{{ ix.conclusion || 'Log entry redacted.' }}</p>
-                    </div>
-                </div>
-
-                <!-- Locations & Assets -->
-                <div>
-                    <div class="border-b border-zinc-800">
-                        <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
-                            <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest"><i class="fa-solid fa-map-pin mr-2"></i>Known Locations</h3>
-                        </div>
-                        <div class="max-h-64 overflow-y-auto">
-                            <div v-if="data.locations.length === 0" class="p-8 text-center text-xs text-zinc-600 font-mono">NO LOCATION DATA</div>
-                            <div v-for="loc in data.locations" class="p-4 border-b border-zinc-800/50 flex items-start gap-3 hover:bg-white/5">
-                                <i class="fa-solid fa-location-crosshairs mt-1 text-zinc-600"></i>
-                                <div>
-                                    <div class="text-sm font-bold text-zinc-300">{{ loc.name }}</div>
-                                    <div class="text-xs text-zinc-500">{{ loc.address }}</div>
-                                </div>
-                                <a :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="ml-auto text-zinc-600 hover:text-emerald-500"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <div class="bg-zinc-950/50 p-4 border-b border-zinc-800 sticky top-0 backdrop-blur-sm z-10">
-                            <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest"><i class="fa-solid fa-paperclip mr-2"></i>Attachments</h3>
-                        </div>
-                        <div class="p-4 grid grid-cols-2 gap-3">
-                             <div v-if="data.media.length === 0" class="col-span-2 py-8 text-center text-xs text-zinc-600 font-mono">NO FILES ATTACHED</div>
-                             <a v-for="m in data.media" :href="resolveImg(m.object_key)" target="_blank" class="block bg-zinc-800/50 border border-zinc-700/50 p-3 hover:bg-zinc-800 hover:border-emerald-500/50 transition-all group">
-                                <div class="flex items-center gap-3">
-                                    <i class="fa-regular fa-file text-zinc-500 group-hover:text-emerald-500"></i>
-                                    <div class="min-w-0">
-                                        <div class="text-xs font-bold text-zinc-400 truncate group-hover:text-white">{{ m.description }}</div>
-                                        <div class="text-[9px] text-zinc-600 uppercase">{{ m.content_type.split('/')[1] }}</div>
-                                    </div>
-                                </div>
-                             </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-  </div>
-  <script>
-    const { createApp, ref, onMounted } = Vue;
-    createApp({
-        setup() {
-            const loading = ref(true);
-            const error = ref(null);
-            const data = ref(null);
-            const timer = ref(0);
-            const token = "${token}";
-
-            const formatTime = (s) => {
-                if(s < 0) return "00:00";
-                const m = Math.floor(s / 60);
-                const sec = Math.floor(s % 60);
-                return \`\${m.toString().padStart(2, '0')}:\${sec.toString().padStart(2, '0')}\`;
-            };
-
-            const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
-            
-            const getThreatClass = (l) => {
-                const map = { 
-                    'Low': 'bg-emerald-900 text-emerald-300', 
-                    'Medium': 'bg-amber-900 text-amber-300', 
-                    'High': 'bg-orange-900 text-orange-300', 
-                    'Critical': 'bg-red-900 text-red-300 animate-pulse' 
-                };
-                return map[l] || 'bg-zinc-800 text-zinc-400';
-            };
-
-            onMounted(async () => {
-                try {
-                    const res = await fetch('/api/share/' + token);
-                    if (!res.ok) {
-                        const err = await res.json();
-                        throw new Error(err.error || "Connection Refused");
-                    }
-                    data.value = await res.json();
-                    timer.value = data.value.meta.remaining_seconds;
-                    
-                    // Client side countdown
-                    setInterval(() => { 
-                        if(timer.value > 0) timer.value--; 
-                        else if(!error.value) error.value = "Link Expired"; 
-                    }, 1000);
-
-                } catch(e) { 
-                    error.value = e.message || "Access Denied"; 
-                } finally { 
-                    loading.value = false; 
-                }
-            });
-
-            return { loading, error, data, timer, formatTime, getThreatClass, resolveImg };
-        }
-    }).mount('#app');
-  </script>
-</body>
-</html>`, { headers: { 'Content-Type': 'text/html' } });
+    return response({
+        occupations: occupations.results.map(r => r.occupation),
+        nationalities: nationalities.results.map(r => r.nationality),
+        religions: religions.results.map(r => r.religion)
+    });
 }
+
+async function handleGetGraph(db, adminId) {
+    const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation, status FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
+    const rels = await db.prepare(`
+        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
+        FROM subject_relationships r 
+        JOIN subjects s ON r.subject_a_id = s.id 
+        WHERE s.admin_id = ?
+    `).bind(adminId).all();
+    
+    return response({ nodes: subjects.results, edges: rels.results });
+}
+
+async function handleGetSubjectFull(db, id) {
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
+    if (!subject) return errorResponse("Subject not found", 404);
+
+    const [media, dataPoints, events, relationships, routine] = await Promise.all([
+        db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
+        db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
+        // Updated to fetch relationships where this subject is EITHER side A or B
+        db.prepare(`
+            SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
+            FROM subject_relationships r 
+            JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+        `).bind(id, id, id).all(),
+        db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
+    ]);
+
+    return response({ 
+        ...subject, 
+        media: media.results, 
+        dataPoints: dataPoints.results, 
+        events: events.results, 
+        relationships: relationships.results,
+        routine: routine.results
+    });
+}
+
+async function handleUpdateSubject(req, db, id) {
+    const p = await req.json();
+    const allowed = [
+        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 
+        'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted',
+        'height', 'weight', 'eye_color', 'hair_color', 'blood_type', 'identifying_marks',
+        'mbti', 'alignment', 'social_links', 'digital_identifiers'
+    ];
+    const updates = Object.keys(p).filter(k => allowed.includes(k));
+    
+    if (updates.length === 0) return response({ success: true });
+
+    const setClause = updates.map((k, i) => `${k} = ?${i+1}`).join(', ');
+    const values = updates.map(k => p[k]);
+    values.push(isoTimestamp(), id);
+
+    const query = `UPDATE subjects SET ${setClause}, updated_at = ?${values.length-1} WHERE id = ?${values.length}`;
+    await db.prepare(query).bind(...values).run();
+    return response({ success: true });
+}
+
+async function handleDeleteItem(req, db, table, id) {
+    // Validate table name to prevent SQL injection
+    const allowedTables = ['subjects', 'subject_data_points', 'subject_events', 'subject_relationships', 'subject_routine', 'subject_media'];
+    if(!allowedTables.includes(table)) return errorResponse("Invalid table", 400);
+
+    if(table === 'subjects') {
+        // Soft delete/archive
+        await db.prepare("UPDATE subjects SET is_archived = 1 WHERE id = ?").bind(id).run();
+    } else {
+        await db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+    }
+    return response({ success: true });
+}
+
+async function handleExportCSV(db, adminId) {
+    const subjects = await db.prepare("SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
+    if (!subjects.results.length) return errorResponse("No data to export", 404);
+
+    const headers = Object.keys(subjects.results[0]).join(',');
+    const rows = subjects.results.map(row => 
+        Object.values(row).map(val => {
+            if (val === null) return '';
+            const str = String(val);
+            // Escape quotes and wrap in quotes if contains comma
+            return str.includes(',') || str.includes('"') || str.includes('\n') 
+                ? `"${str.replace(/"/g, '""')}"` 
+                : str;
+        }).join(',')
+    );
+    
+    const csv = [headers, ...rows].join('\n');
+    return csvResponse(csv, `subjects_export_${new Date().toISOString().split('T')[0]}.csv`);
+}
+
+// --- Frontend Application ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-50">
+<html lang="en" class="h-full bg-slate-950">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>${APP_TITLE}</title>
+  <title>Deep Research OS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   
-  <style>
-    :root { --primary: #2563eb; --accent: #0ea5e9; --danger: #ef4444; }
-    body { font-family: 'Inter', sans-serif; color: #1f2937; }
-    .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(229, 231, 235, 0.5); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); border-radius: 1rem; }
-    .glass-input { background: #ffffff; border: 1px solid #d1d5db; color: #111827; transition: all 0.2s; border-radius: 0.5rem; }
-    .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(37, 99, 235, 0.1); }
-    .glass-input.error { border-color: var(--danger); background: #fef2f2; }
-    .threat-low { border-left: 4px solid #10b981; }
-    .threat-medium { border-left: 4px solid #f59e0b; }
-    .threat-high { border-left: 4px solid #f97316; }
-    .threat-critical { border-left: 4px solid #ef4444; }
-    .marker-pin {
-        width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg);
-        left: 50%; top: 50%; margin: -15px 0 0 -15px; box-shadow: 0px 2px 5px rgba(0,0,0,0.3);
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+          colors: {
+             obsidian: '#020617',
+             charcoal: '#0f172a',
+             primary: '#6366f1',
+             accent: '#06b6d4',
+             alert: '#ef4444',
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.3s ease-out',
+            'slide-up': 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+          },
+          keyframes: {
+            fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+            slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
+          }
+        }
+      }
     }
-    .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%; }
-    .custom-div-icon { background: transparent; border: none; }
-    .custom-div-icon img { width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover; }
-    .leaflet-popup-content-wrapper { background: white; color: #111827; border-radius: 0.5rem; font-family: 'Inter', sans-serif; font-size: 12px; }
+  </script>
+
+  <style>
+    body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
-    @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    
+    .glass-panel { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); }
+    .glass-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.1); color: white; }
+    .glass-input:focus { border-color: #6366f1; outline: none; background: rgba(30, 41, 59, 0.8); }
+    
+    .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+    
+    .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+    .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(10px); }
+
+    #network-graph { width: 100%; height: 100%; }
+    .touch-target { min-height: 44px; min-width: 44px; }
+    
+    .loader { border: 2px solid #334155; border-top: 2px solid #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
-<body class="h-full overflow-hidden selection:bg-blue-100 selection:text-blue-900">
+<body class="h-full text-slate-200 antialiased overflow-hidden bg-obsidian selection:bg-indigo-500/30">
   <div id="app" class="h-full flex flex-col">
 
-    <!-- Auth Screen -->
-    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-gray-50">
-        <div class="w-full max-w-sm glass p-8 shadow-xl">
-            <div class="text-center mb-8">
-                <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-3xl shadow-lg shadow-blue-500/30">
-                    <i class="fa-solid fa-users-viewfinder"></i>
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-6 right-6 z-[200] flex flex-col gap-2 pointer-events-none">
+        <transition-group name="toast">
+            <div v-for="t in toasts" :key="t.id" class="pointer-events-auto glass-panel border-l-4 p-4 rounded-lg shadow-2xl flex items-center gap-3 min-w-[300px]" 
+                 :class="t.type === 'error' ? 'border-red-500 bg-red-900/10' : 'border-emerald-500 bg-emerald-900/10'">
+                <i :class="t.type === 'error' ? 'fa-solid fa-circle-exclamation text-red-400' : 'fa-solid fa-circle-check text-emerald-400'"></i>
+                <div>
+                    <h4 class="font-bold text-sm text-white">{{ t.title }}</h4>
+                    <p class="text-xs text-slate-400">{{ t.msg }}</p>
                 </div>
-                <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">People<span class="text-blue-600">OS</span></h1>
             </div>
+        </transition-group>
+    </div>
+
+    <!-- Global Lightbox -->
+    <transition name="fade">
+        <div v-if="lightbox.active" class="fixed inset-0 z-[100] bg-black/98 flex flex-col items-center justify-center p-2" @click.self="lightbox.active = null">
+            <div class="relative max-w-full max-h-[85vh]">
+                <img :src="lightbox.url" class="max-h-[80vh] max-w-full rounded shadow-2xl object-contain mx-auto" />
+            </div>
+            <div class="mt-4 text-center max-w-md w-full px-4">
+                <p class="text-white/90 font-mono text-sm">{{ lightbox.desc || 'No description' }}</p>
+                <div class="flex gap-4 justify-center mt-4">
+                     <a v-if="lightbox.url.startsWith('/api')" :href="lightbox.url" download class="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase p-2"><i class="fa-solid fa-download mr-1"></i> Save</a>
+                     <button @click="lightbox.active = null" class="text-xs text-slate-400 hover:text-white font-bold uppercase p-2"><i class="fa-solid fa-xmark mr-1"></i> Close</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Authentication View -->
+    <div v-if="view === 'auth'" class="flex-1 flex flex-col items-center justify-center p-6 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-cover">
+        <div class="w-full max-w-sm glass-panel p-8 rounded-3xl shadow-2xl relative overflow-hidden animate-slide-up">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
+                    <i class="fa-solid fa-layer-group text-3xl text-indigo-400"></i>
+                </div>
+                <h1 class="text-2xl font-black tracking-tight text-white">DEEP<span class="text-indigo-400">RESEARCH</span></h1>
+                <p class="text-slate-400 text-xs font-mono mt-1">SECURE INTELLIGENCE SYSTEM</p>
+            </div>
+            
             <form @submit.prevent="handleAuth" class="space-y-4">
-                <input v-model="auth.email" type="email" placeholder="user@domain.com" class="glass-input w-full p-3 text-sm" required>
-                <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-3 text-sm" required>
-                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg text-sm shadow-lg shadow-blue-500/20">
-                    {{ loading ? 'Accessing...' : 'Secure Login' }}
+                <div v-if="setupMode" class="bg-indigo-500/20 text-indigo-200 p-3 rounded-xl text-xs flex items-start gap-2 border border-indigo-500/30">
+                    <i class="fa-solid fa-circle-info mt-0.5"></i> <span>System Reset. Create new admin credentials.</span>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Identity</label>
+                    <input v-model="auth.email" type="email" placeholder="researcher@agency.com" class="glass-input w-full p-4 rounded-xl transition-all" required>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">Passcode</label>
+                    <input v-model="auth.password" type="password" placeholder="••••••••" class="glass-input w-full p-4 rounded-xl transition-all" required>
+                </div>
+                <button type="submit" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 touch-target flex justify-center items-center">
+                    <span v-if="loading" class="loader border-white/30 border-t-white mr-2"></span>
+                    <span>{{ setupMode ? 'Initialize System' : 'Access Terminal' }}</span>
                 </button>
             </form>
         </div>
     </div>
 
-    <!-- Main App -->
-    <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
+    <!-- Main Application -->
+    <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden bg-obsidian">
         
-        <!-- Sidebar -->
-        <nav class="hidden md:flex flex-col w-20 bg-white border-r border-gray-200 items-center py-6 z-20 shadow-sm">
-            <div class="mb-8 text-blue-600 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
-            <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 text-blue-600 shadow-sm ring-1 ring-blue-100' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
-                    <i :class="t.icon" class="text-xl"></i>
-                    <span class="text-[10px] font-bold">{{t.label}}</span>
+        <!-- Desktop Sidebar -->
+        <aside class="hidden md:flex flex-col w-64 border-r border-slate-800 bg-charcoal z-20">
+            <div class="h-16 flex items-center px-6 border-b border-slate-800/50">
+                <i class="fa-solid fa-fingerprint text-indigo-500 text-xl mr-3"></i>
+                <span class="font-bold text-white tracking-tight">RESEARCH<span class="text-slate-500">.OS</span></span>
+            </div>
+            <nav class="flex-1 p-4 space-y-2">
+                <template v-for="item in navItems">
+                    <a @click="changeTab(item.id)" 
+                       :class="currentTab === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+                       class="flex items-center px-4 py-3 rounded-xl cursor-pointer transition-all group font-medium text-sm">
+                        <i :class="item.icon" class="w-6 text-center mr-2 text-base transition-transform group-hover:scale-110"></i>
+                        {{ item.label }}
+                    </a>
+                </template>
+            </nav>
+            <div class="p-4 border-t border-slate-800/50 space-y-2">
+                <button @click="downloadCSV" class="flex items-center w-full px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl transition-all text-sm font-medium">
+                    <i class="fa-solid fa-file-csv w-6 mr-2"></i> Export Data
+                </button>
+                <button @click="logout" class="flex items-center w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl transition-all text-sm font-medium">
+                    <i class="fa-solid fa-power-off w-6 mr-2"></i> Disconnect
                 </button>
             </div>
-            <button @click="openSettings" class="text-gray-400 hover:text-gray-600 p-4"><i class="fa-solid fa-gear"></i></button>
-        </nav>
+        </aside>
 
-        <!-- Mobile Header -->
-        <header class="md:hidden h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-20 shrink-0 shadow-sm">
-            <span class="font-extrabold text-gray-900 tracking-tight text-lg">People<span class="text-blue-600">OS</span></span>
-            <button @click="openSettings"><i class="fa-solid fa-gear text-gray-500"></i></button>
-        </header>
-
-        <!-- Content Area -->
-        <main class="flex-1 relative overflow-hidden bg-gray-50 flex flex-col">
-            <div v-if="actionLoading" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-30 flex items-center justify-center text-sm font-bold text-gray-700">
-                <i class="fa-solid fa-spinner animate-spin mr-2"></i> Working...
-            </div>
+        <!-- Main Content Area -->
+        <main class="flex-1 relative flex flex-col h-full overflow-hidden pb-[80px] md:pb-0">
             
-            <!-- Dashboard -->
-            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                <div class="max-w-6xl mx-auto space-y-6">
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div class="glass p-5 border-t-4 border-blue-500">
-                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Contacts</div>
-                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.targets || 0 }}</div>
-                        </div>
-                        <div class="glass p-5 border-t-4 border-amber-500">
-                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Meetings</div>
-                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.encounters || 0 }}</div>
-                        </div>
-                        <div class="glass p-5 border-t-4 border-emerald-500">
-                            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Documents</div>
-                            <div class="text-3xl font-black text-gray-900 mt-1">{{ stats.evidence || 0 }}</div>
-                        </div>
-                        <button @click="openModal('add-subject')" class="bg-white border-2 border-dashed border-gray-300 p-4 flex flex-col items-center justify-center group transition-all cursor-pointer hover:border-blue-500 hover:bg-blue-50 rounded-2xl">
-                            <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"><i class="fa-solid fa-plus"></i></div>
-                            <span class="text-xs font-bold text-gray-600 uppercase">Add Contact</span>
-                        </button>
-                    </div>
-
-                    <div class="glass p-0 overflow-hidden">
-                        <div class="bg-gray-50/50 p-4 border-b border-gray-200 flex justify-between items-center">
-                            <h3 class="text-sm font-bold text-gray-800"><i class="fa-solid fa-rss mr-2 text-blue-500"></i>Activity Feed</h3>
-                            <button @click="fetchData" class="text-gray-400 hover:text-blue-600"><i class="fa-solid fa-rotate-right text-sm"></i></button>
-                        </div>
-                        <div class="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
-                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-gray-50 cursor-pointer flex gap-4 items-start transition-colors">
-                                <div class="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0" :class="item.type === 'interaction' ? 'bg-amber-500' : 'bg-blue-500'"></div>
-                                <div>
-                                    <div class="text-sm font-semibold text-gray-900">{{ item.title }} <span class="text-gray-400 font-normal mx-1">&bull;</span> <span class="text-gray-500">{{ item.desc }}</span></div>
-                                    <div class="text-xs text-gray-400 mt-1">{{ new Date(item.date).toLocaleString() }}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Contacts List -->
-            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col">
-                <div class="p-4 border-b border-gray-200 bg-white flex gap-3 shadow-sm z-10">
-                    <div class="relative flex-1">
-                        <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400"></i>
-                        <input v-model="search" placeholder="Search contacts..." class="w-full bg-gray-100 border-none rounded-lg py-3 pl-10 text-sm focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <button @click="openModal('add-subject')" class="bg-blue-600 hover:bg-blue-700 text-white px-5 rounded-lg font-bold text-sm shadow-lg shadow-blue-500/20 transition-all"><i class="fa-solid fa-user-plus mr-2"></i>New</button>
-                </div>
-                <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 transition-all group relative overflow-hidden" :class="'threat-' + s.threat_level.toLowerCase()">
-                        <div class="flex items-start justify-between">
-                            <div class="flex gap-3">
-                                <div class="w-12 h-12 bg-gray-200 rounded-full overflow-hidden border-2 border-white shadow-sm">
-                                    <img :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
-                                </div>
-                                <div>
-                                    <div class="font-bold text-gray-900 text-sm">{{ s.full_name }}</div>
-                                    <div class="text-xs text-gray-500">{{ s.occupation || 'No Title' }}</div>
-                                    <div class="text-[10px] mt-1 inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium" :class="getThreatColor(s.threat_level, true)">{{ s.threat_level }} Priority</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Subject Detail -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-gray-50">
-                <!-- Top Bar -->
-                <div class="h-16 border-b border-gray-200 flex items-center px-4 justify-between bg-white shadow-sm shrink-0 z-10">
-                    <div class="flex items-center gap-3">
-                        <button @click="changeTab('targets')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
+            <!-- Dashboard View -->
+            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
+                <div class="max-w-5xl mx-auto space-y-6 md:space-y-8 animate-fade-in">
+                    <header class="flex justify-between items-end">
                         <div>
-                            <div class="font-bold text-gray-900 text-sm">{{ selected.full_name }}</div>
-                            <div class="text-xs text-gray-500" v-if="selected.alias">aka {{ selected.alias }}</div>
+                            <h2 class="text-2xl md:text-3xl font-black text-white">Command Center</h2>
+                            <p class="text-slate-500 mt-1 text-sm md:text-base">System status and recent intelligence.</p>
+                        </div>
+                        <button @click="fetchDashboard" class="md:hidden text-slate-400 p-2"><i class="fa-solid fa-rotate-right"></i></button>
+                    </header>
+
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-indigo-500">
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Active Subjects</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.active_subjects || 0 }}</div>
+                        </div>
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-emerald-500">
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Intel Points</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.total_intel || 0 }}</div>
+                        </div>
+                        <div class="glass-panel p-4 rounded-2xl border-l-4 border-cyan-500">
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Media Files</div>
+                            <div class="text-xl md:text-2xl font-mono text-white">{{ dashboard.stats.total_media || 0 }}</div>
+                        </div>
+                         <div class="glass-panel p-4 rounded-2xl border-l-4 border-amber-500 cursor-pointer hover:bg-slate-800/50 transition-colors group" @click="openModal('add-subject')">
+                            <div class="text-slate-400 text-[10px] md:text-xs font-bold uppercase mb-1">Quick Action</div>
+                            <div class="text-sm font-bold text-amber-400 flex items-center mt-1 group-hover:translate-x-1 transition-transform"><i class="fa-solid fa-plus mr-2"></i> Add Subject</div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Feed -->
+                    <div class="glass-panel rounded-2xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800/50 flex justify-between items-center bg-slate-900/40">
+                            <h3 class="font-bold text-white text-sm md:text-base"><i class="fa-solid fa-satellite-dish mr-2 text-indigo-500"></i>Intel Feed</h3>
+                            <button @click="fetchDashboard" class="hidden md:block text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded-full transition-colors"><i class="fa-solid fa-rotate-right"></i></button>
+                        </div>
+                        <div class="divide-y divide-slate-800/50">
+                            <div v-if="dashboard.feed.length === 0" class="p-8 text-center text-slate-500 text-sm">No recent activity recorded.</div>
+                            <div v-for="(item, idx) in dashboard.feed" :key="idx" class="p-4 hover:bg-white/5 transition-colors flex gap-4 items-start">
+                                <div class="mt-1 w-8 h-8 rounded-full flex items-center justify-center shrink-0" 
+                                    :class="{'bg-indigo-500/20 text-indigo-400': item.type === 'subject', 'bg-emerald-500/20 text-emerald-400': item.type === 'media', 'bg-amber-500/20 text-amber-400': item.type === 'event'}">
+                                    <i class="fa-solid text-xs" :class="{'fa-user': item.type === 'subject', 'fa-image': item.type === 'media', 'fa-calendar': item.type === 'event'}"></i>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex justify-between items-baseline">
+                                        <p class="text-sm font-bold text-white truncate">{{ item.title || 'Unknown' }}</p>
+                                        <span class="text-[10px] font-mono text-slate-500 ml-2 whitespace-nowrap">{{ new Date(item.date).toLocaleDateString() }}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 mt-0.5 line-clamp-2">{{ item.desc }}</p>
+                                    <button v-if="item.type !== 'event'" @click="viewSubject(item.ref_id)" class="touch-target text-[10px] text-indigo-400 hover:text-indigo-300 font-bold mt-1 inline-flex items-center">VIEW DOSSIER <i class="fa-solid fa-arrow-right ml-1"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Subject Directory -->
+            <div v-if="currentTab === 'subjects'" class="flex-1 flex flex-col overflow-hidden">
+                <div class="p-4 border-b border-slate-800 bg-charcoal/80 backdrop-blur-md sticky top-0 z-10">
+                    <div class="flex flex-col md:flex-row gap-4 justify-between md:items-center max-w-6xl mx-auto w-full">
+                        <div class="flex justify-between items-center">
+                             <h2 class="text-xl font-bold text-white">Subject Database</h2>
+                             <button @click="openModal('add-subject')" class="md:hidden bg-indigo-600 text-white w-8 h-8 rounded-lg shadow-lg flex items-center justify-center"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                        <div class="flex gap-2 w-full md:w-auto">
+                            <div class="relative flex-1 md:w-64 group">
+                                <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500 text-sm group-focus-within:text-indigo-400 transition-colors"></i>
+                                <input id="searchInput" v-model="searchQuery" placeholder="Search (Cmd+K)" class="glass-input w-full pl-9 pr-4 py-3 md:py-2.5 rounded-xl text-sm">
+                            </div>
+                            <button @click="openModal('add-subject')" class="hidden md:inline-flex bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 whitespace-nowrap items-center active:scale-95 transition-transform">
+                                <i class="fa-solid fa-plus mr-2"></i> New
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-4">
+                    <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-fade-in">
+                        <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" 
+                             class="glass-panel rounded-2xl overflow-hidden hover:bg-slate-800/50 transition-all cursor-pointer group relative active:scale-[0.98] border border-transparent hover:border-slate-700">
+                             <div class="absolute top-3 right-3 z-10">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border" 
+                                      :class="s.status === 'Active' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-slate-700/50 border-slate-600 text-slate-400'">
+                                      {{ s.status }}
+                                </span>
+                             </div>
+                             <div class="flex items-center p-4 gap-4">
+                                <div class="w-16 h-16 rounded-xl bg-slate-800 flex-shrink-0 overflow-hidden border border-slate-700 relative">
+                                    <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-2xl font-bold">{{ s.full_name.charAt(0) }}</div>
+                                </div>
+                                <div class="min-w-0">
+                                    <h3 class="font-bold text-white truncate text-lg group-hover:text-indigo-400 transition-colors">{{ s.full_name }}</h3>
+                                    <p class="text-xs text-slate-400 truncate font-mono">{{ s.occupation || 'Unidentified' }}</p>
+                                    <p class="text-[10px] text-slate-500 mt-1"><i class="fa-solid fa-map-pin mr-1"></i>{{ s.location || 'Unknown' }}</p>
+                                </div>
+                             </div>
+                             <div class="px-4 pb-4 mt-2 grid grid-cols-3 gap-2 text-center">
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Age</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.age || '?' }}</div>
+                                </div>
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Sex</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.gender || '?' }}</div>
+                                </div>
+                                <div class="bg-slate-800/50 rounded-lg py-1.5">
+                                    <div class="text-[10px] text-slate-500 font-bold uppercase">Rel</div>
+                                    <div class="text-xs font-mono text-indigo-300">{{ s.religion || '?' }}</div>
+                                </div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detail View -->
+            <div v-if="currentTab === 'detail' && selectedSubject" class="flex-1 flex flex-col h-full bg-obsidian">
+                <!-- Detail Header -->
+                <header class="bg-charcoal/90 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xl">
+                    <div class="flex items-center gap-3">
+                        <button @click="changeTab('subjects')" class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-slate-700 transition-colors touch-target">
+                            <i class="fa-solid fa-arrow-left text-slate-400"></i>
+                        </button>
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="triggerAvatar">
+                                <img v-if="selectedSubject.avatar_path" :src="'/api/media/' + selectedSubject.avatar_path" class="w-full h-full object-cover">
+                                <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <i class="fa-solid fa-camera text-xs"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <h2 class="font-bold text-white text-sm leading-tight max-w-[150px] sm:max-w-xs truncate">{{ selectedSubject.full_name }}</h2>
+                                <p class="text-[10px] font-mono text-slate-400">ID-{{ String(selectedSubject.id).padStart(4,'0') }} • <span class="text-emerald-400">{{ selectedSubject.status }}</span></p>
+                            </div>
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('add-interaction')" class="bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-200 transition-colors"><i class="fa-solid fa-comment-dots mr-1.5"></i>Log</button>
-                        <button @click="openModal('share-secure')" class="text-gray-400 hover:text-blue-600 px-3 transition-colors" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
-                        <button @click="exportData" class="text-gray-400 hover:text-gray-700 px-3 transition-colors"><i class="fa-solid fa-download"></i></button>
+                        <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target" title="Quick Note"><i class="fa-solid fa-pen-nib text-sm"></i></button>
+                        <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target" title="Export JSON"><i class="fa-solid fa-download text-sm"></i></button>
                     </div>
-                </div>
+                </header>
 
-                <!-- Sub Tabs -->
-                <div class="flex border-b border-gray-200 overflow-x-auto bg-white shrink-0">
-                    <button v-for="t in ['profile','routine','meetings','locations','network','files']" 
-                        @click="changeSubTab(t)" 
-                        :class="subTab === t ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'"
-                        class="px-5 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap transition-colors">
+                <!-- Detail Tabs -->
+                <div class="flex bg-charcoal border-b border-slate-800 overflow-x-auto custom-scrollbar">
+                    <button v-for="t in ['overview', 'routine', 'intel', 'physical', 'timeline', 'media', 'relations']" 
+                            @click="subTab = t"
+                            :class="subTab === t ? 'text-indigo-400 border-indigo-500 bg-slate-800/30' : 'text-slate-500 border-transparent hover:text-slate-300'"
+                            class="px-5 py-4 text-xs font-bold uppercase tracking-wider border-b-2 transition-all whitespace-nowrap flex-shrink-0 touch-target">
                         {{ t }}
                     </button>
                 </div>
 
-                <!-- Detail Body -->
-                <div class="flex-1 overflow-y-auto p-4 md:p-8">
-                    
-                    <!-- Profile Tab -->
-                    <div v-if="subTab === 'profile'" class="space-y-6 max-w-5xl mx-auto">
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="space-y-4">
-                                <div class="aspect-square bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden relative group">
-                                    <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    <button @click="openModal('edit-profile')" class="absolute inset-0 bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-sm font-bold text-gray-800 cursor-pointer">Edit Profile</button>
-                                </div>
-                                
-                                <div class="glass p-4 space-y-2">
-                                    <div class="text-xs text-gray-500 uppercase font-bold">Priority Status</div>
-                                    <select v-model="selected.threat_level" @change="updateSubject" class="w-full bg-white border border-gray-300 rounded-lg text-sm p-2 text-gray-900 font-medium">
-                                        <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="md:col-span-2 space-y-4">
-                                <div class="glass p-6 relative">
-                                    <button @click="openModal('edit-profile')" class="absolute top-6 right-6 text-blue-500 hover:text-blue-700"><i class="fa-solid fa-pen-to-square"></i></button>
-                                    <h3 class="text-sm text-gray-900 font-bold uppercase mb-6 flex items-center"><i class="fa-solid fa-id-card mr-2 text-blue-500"></i>Core Information</h3>
-                                    <div class="grid grid-cols-2 gap-x-8 gap-y-6 text-sm">
-                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Full Name</span> <span class="font-medium text-gray-900">{{selected.full_name}}</span></div>
-                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Nationality</span> <span class="font-medium text-gray-900">{{selected.nationality || '—'}}</span></div>
-                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Job Title</span> <span class="font-medium text-gray-900">{{selected.occupation || '—'}}</span></div>
-                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Affiliations</span> <span class="font-medium text-gray-900">{{selected.ideology || '—'}}</span></div>
-                                        <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Religion</span> <span class="font-medium text-gray-900">{{selected.religion || '—'}}</span></div>
-                                        <div class="col-span-2 border-t border-gray-100 pt-4">
-                                            <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Routine & Habits</span>
-                                            <p class="text-gray-600 leading-relaxed">{{selected.modus_operandi || 'No routine information logged.'}}</p>
+                <!-- Detail Content -->
+                <div class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar pb-24 md:pb-6">
+                    <div class="max-w-4xl mx-auto space-y-6">
+                        
+                        <!-- Overview Tab -->
+                        <div v-if="subTab === 'overview'" class="space-y-6 animate-fade-in">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Core Card -->
+                                <div class="glass-panel p-5 rounded-2xl relative">
+                                    <button @click="openModal('edit-profile')" class="absolute top-4 right-4 text-slate-500 hover:text-indigo-400 touch-target p-2"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4"><i class="fa-regular fa-id-card mr-1"></i> Core Identity</h3>
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Full Name</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.full_name }}</span>
                                         </div>
-                                        <div class="col-span-2">
-                                            <span class="text-gray-400 text-xs font-bold block mb-2 uppercase">Pain Points / Challenges</span>
-                                            <p class="text-red-500 leading-relaxed">{{selected.weakness || 'None identified.'}}</p>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Occupation</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.occupation || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Location</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.location || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">DOB / Age</span>
+                                            <span class="text-white font-medium text-sm text-right">
+                                                {{ selectedSubject.dob || '—' }} 
+                                                <span v-if="selectedSubject.dob" class="text-indigo-400 font-bold">({{ calculateRealAge(selectedSubject.dob) }} yrs)</span>
+                                                <span v-else-if="selectedSubject.age">({{ selectedSubject.age }} yrs)</span>
+                                            </span>
+                                        </div>
+                                         <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Last Sighted</span>
+                                            <span class="text-amber-400 font-medium text-sm font-mono text-right">{{ selectedSubject.last_sighted || 'Unknown' }}</span>
                                         </div>
                                     </div>
                                 </div>
-                                  <div class="glass p-6">
-                                      <h3 class="text-sm text-gray-900 font-bold uppercase mb-4">Physical Attributes</h3>
-                                      <div class="grid grid-cols-4 gap-4 text-center text-sm mb-4">
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Height</div>{{selected.height || '--'}}</div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Weight</div>{{selected.weight || '--'}}</div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Sex</div>{{selected.sex || selected.gender || '--'}}</div>
-                                          <div class="bg-gray-50 p-3 rounded-lg border border-gray-100"><div class="text-gray-400 text-xs font-bold mb-1 uppercase">Age</div>{{selected.age || '--'}}</div>
-                                      </div>
-                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                                        <div class="text-gray-400 text-xs font-bold mb-1 uppercase">Distinguishing Features</div>
-                                        <div class="text-gray-700 text-sm">{{selected.identifying_marks || 'None listed'}}</div>
+                                <!-- Psych Card -->
+                                <div class="glass-panel p-5 rounded-2xl">
+                                    <div class="flex justify-between items-center mb-4">
+                                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-brain mr-1"></i> Psychology</h3>
+                                        <button @click="openModal('edit-profile')" class="text-xs text-indigo-400 hover:text-indigo-300 p-2">Edit</button>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="flex gap-4">
+                                            <div class="bg-slate-800/50 p-2 rounded text-center flex-1">
+                                                <div class="text-[10px] text-slate-500 uppercase font-bold">MBTI</div>
+                                                <div class="text-indigo-300 font-mono text-sm">{{ selectedSubject.mbti || 'N/A' }}</div>
+                                            </div>
+                                            <div class="bg-slate-800/50 p-2 rounded text-center flex-1">
+                                                <div class="text-[10px] text-slate-500 uppercase font-bold">Align</div>
+                                                <div class="text-indigo-300 font-mono text-sm">{{ selectedSubject.alignment || 'N/A' }}</div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Habits & Routine</div>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ selectedSubject.habits || 'No observations recorded.' }}</p>
+                                        </div>
+                                        <div>
+                                            <div class="text-[10px] text-slate-600 uppercase font-bold mb-1">Notes</div>
+                                            <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ selectedSubject.notes || '—' }}</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
+                            <div class="glass-panel p-5 rounded-2xl">
+                                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4"><i class="fa-solid fa-address-book mr-1"></i> Contact & Digital</h3>
+                                <div class="space-y-2">
+                                     <div class="flex justify-between items-center bg-slate-800/30 p-2 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase">Contact</span>
+                                        <span class="text-sm font-mono text-white">{{ selectedSubject.contact || 'N/A' }}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center bg-slate-800/30 p-2 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase">Nationality</span>
+                                        <span class="text-sm text-white">{{ selectedSubject.nationality || 'N/A' }}</span>
+                                    </div>
 
-                    <!-- Other Tabs... (Similar to before but abbreviated for brevity, they are preserved) -->
-                    <!-- Meetings Tab -->
-                    <div v-if="subTab === 'meetings'" class="space-y-4 max-w-3xl mx-auto">
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase">Interaction History</h3>
-                            <button @click="openModal('add-interaction')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md transition-all">Log New Meeting</button>
+                                    <!-- Social Links Auto-Detection -->
+                                    <div v-if="selectedSubject.social_links && parseSocials(selectedSubject.social_links).length" class="bg-slate-800/30 p-3 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase block mb-2">Social Footprint</span>
+                                        <div class="flex flex-wrap gap-2">
+                                            <a v-for="(link, idx) in parseSocials(selectedSubject.social_links)" :key="idx" :href="link.url" target="_blank" 
+                                               class="w-8 h-8 rounded bg-slate-900 border border-slate-700 hover:bg-indigo-600 hover:border-indigo-500 text-slate-300 hover:text-white flex items-center justify-center transition-colors shadow-lg"
+                                               :title="link.url">
+                                                <i :class="link.icon"></i>
+                                            </a>
+                                        </div>
+                                    </div>
+
+                                    <div class="bg-slate-800/30 p-3 rounded">
+                                        <span class="text-xs text-slate-400 font-bold uppercase block mb-1">Digital Identifiers</span>
+                                        <p class="text-xs text-indigo-300 font-mono whitespace-pre-wrap">{{ selectedSubject.digital_identifiers || 'None' }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex justify-center pt-4">
+                                <button @click="deleteItem('subjects', selectedSubject.id)" class="text-red-500 text-xs font-bold hover:text-red-400 border border-red-500/30 px-6 py-3 rounded-lg hover:bg-red-500/10 transition-colors w-full md:w-auto">
+                                    <i class="fa-solid fa-triangle-exclamation mr-2"></i> ARCHIVE SUBJECT
+                                </button>
+                            </div>
                         </div>
-                        <div v-if="!selected.interactions?.length" class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300">No interaction history found.</div>
-                        <div v-for="ix in selected.interactions" :key="ix.id" class="glass border-l-4 border-amber-400 p-5 space-y-3 relative group transition-all hover:shadow-md">
-                            <div class="flex justify-between items-start">
+
+                        <!-- Routine Tab (NEW) -->
+                        <div v-if="subTab === 'routine'" class="space-y-4 animate-fade-in">
+                            <div class="flex justify-between items-center">
+                                <h3 class="font-bold text-white">Daily Activities & Schedule</h3>
+                                <button @click="openModal('add-routine')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-bold shadow shadow-indigo-500/20 touch-target">
+                                    <i class="fa-solid fa-plus mr-1"></i> Add Activity
+                                </button>
+                            </div>
+
+                            <div v-if="!selectedSubject.routine || selectedSubject.routine.length === 0" class="glass-panel p-12 text-center rounded-2xl">
+                                <i class="fa-solid fa-clock text-4xl text-slate-700 mb-3"></i>
+                                <p class="text-slate-500 text-sm">No specific routine activities recorded.</p>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-3">
+                                <div v-for="r in selectedSubject.routine" :key="r.id" class="glass-panel p-4 rounded-xl flex items-start gap-4 group">
+                                    <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-indigo-400 shrink-0">
+                                        <i class="fa-solid" :class="r.activity.toLowerCase().includes('gym') ? 'fa-dumbbell' : r.activity.toLowerCase().includes('school') ? 'fa-school' : r.activity.toLowerCase().includes('work') ? 'fa-briefcase' : 'fa-clipboard-list'"></i>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex justify-between items-start">
+                                            <h4 class="font-bold text-white text-sm">{{ r.activity }}</h4>
+                                            <span class="text-[10px] font-mono bg-slate-800 px-2 py-1 rounded text-slate-400">{{ r.schedule }}</span>
+                                        </div>
+                                        <div class="text-xs text-indigo-300 mt-0.5"><i class="fa-solid fa-location-dot mr-1"></i> {{ r.location }} <span class="text-slate-500 mx-1">•</span> {{ r.duration }}</div>
+                                        <p v-if="r.notes" class="text-xs text-slate-400 mt-2 bg-slate-800/30 p-2 rounded">{{ r.notes }}</p>
+                                    </div>
+                                    <button @click="deleteItem('subject_routine', r.id)" class="text-slate-600 hover:text-red-500 p-2 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Physical Attributes Tab -->
+                        <div v-if="subTab === 'physical'" class="space-y-6 animate-fade-in">
+                            <div class="glass-panel p-5 rounded-2xl">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-ruler-combined mr-1"></i> Physical Profile</h3>
+                                    <button @click="openModal('edit-profile')" class="text-xs text-indigo-400 hover:text-indigo-300 p-2">Edit</button>
+                                </div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Height</div>
+                                        <div class="text-white">{{ selectedSubject.height || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Weight</div>
+                                        <div class="text-white">{{ selectedSubject.weight || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Eyes</div>
+                                        <div class="text-white">{{ selectedSubject.eye_color || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Hair</div>
+                                        <div class="text-white">{{ selectedSubject.hair_color || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Sex</div>
+                                        <div class="text-white">{{ selectedSubject.gender || '—' }}</div>
+                                    </div>
+                                    <div class="p-3 bg-slate-800/40 rounded-xl">
+                                        <div class="text-[10px] text-slate-500 uppercase font-bold">Blood</div>
+                                        <div class="text-white">{{ selectedSubject.blood_type || '—' }}</div>
+                                    </div>
+                                </div>
                                 <div>
-                                    <span class="bg-amber-100 text-amber-700 px-2 py-1 text-[10px] font-bold uppercase rounded-md border border-amber-200">{{ix.type}}</span>
-                                    <span class="text-gray-400 text-xs ml-2 font-medium">{{ new Date(ix.date).toLocaleString() }}</span>
+                                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Identifying Marks</h4>
+                                    <p class="text-sm text-slate-300 bg-slate-800/30 p-4 rounded-xl min-h-[80px]">{{ selectedSubject.identifying_marks || 'No scars, tattoos, or birthmarks listed.' }}</p>
                                 </div>
-                                <button @click="deleteItem('subject_interactions', ix.id)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
-                            </div>
-                            <div class="text-sm text-gray-800 whitespace-pre-wrap pl-4 border-l-2 border-gray-100">{{ix.transcript}}</div>
-                            <div class="bg-gray-50 p-3 rounded-lg text-xs border border-gray-100 text-gray-600">
-                                <span class="text-blue-600 font-bold uppercase text-[10px] block mb-1">Summary / Next Steps</span>
-                                {{ix.conclusion}}
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Locations Tab (Map) -->
-                    <div v-show="subTab === 'locations'" class="h-full flex flex-col">
-                        <div class="flex justify-between items-center mb-4 shrink-0">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase">Geographic Data</h3>
-                            <button @click="openModal('add-location')" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-50 shadow-sm">Pin New Location</button>
-                        </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="md:col-span-2 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm relative h-64 md:h-full md:min-h-[400px]">
-                                <div id="subjectMap" class="w-full h-full z-0"></div>
+                        <!-- Intel Tab (Deep Research Tree) -->
+                        <div v-if="subTab === 'intel'" class="space-y-4 animate-fade-in">
+                            <div class="flex justify-between items-center mb-2">
+                                <h3 class="font-bold text-white">Deep Research Dossier</h3>
+                                <button @click="openModal('add-intel', null)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-xs font-bold shadow shadow-indigo-500/20 touch-target">
+                                    <i class="fa-solid fa-plus mr-1"></i> Add Point
+                                </button>
                             </div>
-                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
-                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 flex flex-col gap-2 cursor-pointer hover:border-blue-400 transition-all border-l-4 border-transparent hover:border-l-blue-500" @click="flyTo(loc)">
-                                    <div class="flex justify-between items-center">
-                                        <div class="text-sm font-bold text-gray-900">{{loc.name}}</div>
-                                        <span class="text-[10px] uppercase bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{{loc.type}}</span>
+
+                            <div v-if="dataTree.length === 0" class="glass-panel p-12 text-center rounded-2xl">
+                                <i class="fa-solid fa-folder-open text-4xl text-slate-700 mb-3"></i>
+                                <p class="text-slate-500 text-sm">No intelligence data collected yet.</p>
+                            </div>
+
+                            <div v-for="node in dataTree" :key="node.id" class="glass-panel rounded-xl overflow-hidden border border-slate-700/50">
+                                <div class="p-4 flex gap-3 cursor-pointer hover:bg-white/5 transition-colors select-none active:bg-white/10" @click="toggleNode(node.id)">
+                                    <div class="mt-1">
+                                        <i class="fa-solid fa-chevron-right text-[10px] text-slate-500 transition-transform duration-200" :class="{'rotate-90': expandedState[node.id] !== false}"></i>
                                     </div>
-                                    <div class="text-xs text-gray-500 flex items-start"><i class="fa-solid fa-location-dot mt-0.5 mr-2 text-gray-400"></i>{{loc.address}}</div>
-                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-[10px] text-red-400 text-right hover:text-red-600 font-bold mt-1">REMOVE PIN</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Network/Graph -->
-                    <div v-show="subTab === 'network'" class="h-full flex flex-col">
-                         <div class="flex justify-between items-center mb-4 shrink-0">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase">Relationship Matrix</h3>
-                            <button @click="openModal('add-rel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">Add Connection</button>
-                        </div>
-                        <div class="flex-1 flex gap-4 overflow-hidden">
-                            <div class="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm relative overflow-hidden min-h-[400px]">
-                                <div id="relNetwork" class="absolute inset-0"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Routine / Logs -->
-                    <div v-if="subTab === 'routine'" class="space-y-4 max-w-4xl mx-auto">
-                        <div class="flex justify-between items-center">
-                            <h3 class="text-sm font-bold text-gray-900 uppercase">Detailed Observations</h3>
-                            <button @click="openModal('add-intel')" class="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-bold text-gray-600">New Entry</button>
-                        </div>
-                        <div class="grid gap-3">
-                            <div v-for="log in selected.intel" :key="log.id" class="glass p-4 flex items-start gap-4">
-                                <div class="text-[10px] font-medium text-gray-400 w-24 shrink-0 text-right pt-1">{{new Date(log.created_at).toLocaleDateString()}}</div>
-                                <div class="flex-1">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <span class="text-xs font-bold text-gray-900 uppercase">{{log.label}}</span>
-                                        <span class="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded border border-gray-200">{{log.category}}</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex flex-wrap items-center gap-2 mb-1.5">
+                                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 uppercase border border-slate-700">{{ node.category }}</span>
+                                            <h4 class="font-bold text-slate-200 text-sm truncate">{{ node.label }}</h4>
+                                            <div class="flex-1 hidden md:block"></div>
+                                            <div class="w-16 confidence-meter bg-slate-800 ml-auto md:ml-0" title="Confidence Score">
+                                                <div class="confidence-fill" :class="getConfidenceColor(node.confidence)" :style="{width: (node.confidence || 100) + '%'}"></div>
+                                            </div>
+                                        </div>
+                                        <p class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ node.value }}</p>
+                                        <div v-if="node.analysis" class="mt-3 p-3 bg-indigo-900/10 border-l-2 border-indigo-500 text-xs text-indigo-300 rounded-r">
+                                            <i class="fa-solid fa-magnifying-glass mr-1"></i> {{ node.analysis }}
+                                        </div>
                                     </div>
-                                    <p class="text-sm text-gray-600">{{log.value}}</p>
+                                    <div class="flex flex-col gap-2 justify-center">
+                                        <button @click.stop="openModal('add-intel', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-plus text-xs"></i></button>
+                                        <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                    </div>
                                 </div>
-                                <button @click="deleteItem('subject_intel', log.id)" class="text-gray-400 hover:text-red-500"><i class="fa-solid fa-trash-can"></i></button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Files -->
-                    <div v-if="subTab === 'files'" class="space-y-6">
-                        <div class="flex flex-col md:flex-row gap-6">
-                            <div @click="triggerUpload('media')" class="h-32 w-full md:w-48 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-all bg-white">
-                                <i class="fa-solid fa-cloud-arrow-up text-2xl mb-2"></i>
-                                <span class="text-xs uppercase font-bold">Upload Document</span>
-                            </div>
-                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-lg transition-all">
-                                    <img v-if="m.content_type.startsWith('image')" :src="resolveImg(m.object_key)" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50"><i class="fa-solid fa-file-lines text-4xl"></i></div>
-                                    <div class="absolute inset-0 bg-gray-900/80 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-4 text-center">
-                                        <p class="text-[10px] text-white font-medium mb-3 line-clamp-2">{{m.description || 'Attachment'}}</p>
-                                        <a :href="resolveImg(m.object_key)" download class="bg-white text-gray-900 px-3 py-1.5 rounded text-xs font-bold mb-2 hover:bg-blue-50">Download</a>
-                                        <button @click="deleteItem('subject_media', m.id)" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
+                                <!-- Nested Children -->
+                                <div v-if="node.children && node.children.length && expandedState[node.id] !== false" class="bg-black/20 border-t border-slate-800 p-2 pl-4 space-y-2">
+                                    <div v-for="child in node.children" :key="child.id" class="relative pl-4">
+                                         <div class="absolute left-0 top-0 bottom-0 w-px bg-slate-700"></div>
+                                         <div class="absolute left-0 top-3 w-3 h-px bg-slate-700"></div>
+                                         <div class="glass-panel p-3 rounded-lg bg-slate-900/50 flex justify-between group items-start">
+                                            <div class="flex-1">
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="text-xs font-bold text-indigo-400">{{ child.label }}</span>
+                                                    <span class="text-[10px] text-slate-600 border border-slate-700 px-1 rounded">{{child.confidence}}% Conf.</span>
+                                                </div>
+                                                <p class="text-xs text-slate-300 leading-relaxed">{{ child.value }}</p>
+                                                <p v-if="child.source" class="text-[10px] text-slate-500 mt-1 italic">Source: {{ child.source }}</p>
+                                            </div>
+                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                         </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Media Gallery -->
+                        <div v-if="subTab === 'media'" class="space-y-4 animate-fade-in">
+                            <div class="flex gap-4">
+                                <div class="flex-1 border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target flex flex-col items-center justify-center" @click="triggerMediaUpload">
+                                    <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-500 group-hover:text-indigo-400 mb-3"></i>
+                                    <p class="text-sm text-slate-400 font-bold">Upload Evidence</p>
+                                    <p class="text-[10px] text-slate-600 mt-1">Images, Scans</p>
+                                </div>
+                                <div class="flex-1 border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:bg-slate-800/30 transition-colors cursor-pointer group touch-target flex flex-col items-center justify-center" @click="openModal('add-media-link')">
+                                    <i class="fa-solid fa-link text-3xl text-slate-500 group-hover:text-emerald-400 mb-3"></i>
+                                    <p class="text-sm text-slate-400 font-bold">Add Link</p>
+                                    <p class="text-[10px] text-slate-600 mt-1">Articles, Videos</p>
+                                </div>
+                            </div>
+                            
+                             <div class="columns-2 md:columns-3 lg:columns-4 gap-3 space-y-3">
+                                <div v-for="m in selectedSubject.media" :key="m.id" class="break-inside-avoid relative group rounded-lg overflow-hidden bg-slate-800 shadow-lg cursor-pointer">
+                                    <!-- Video Special Case -->
+                                    <a v-if="m.media_type === 'link' && (m.external_url.includes('youtube') || m.external_url.includes('youtu.be'))" :href="m.external_url" target="_blank" class="block w-full aspect-video bg-slate-900 flex flex-col items-center justify-center p-4 hover:bg-slate-850">
+                                        <i class="fa-brands fa-youtube text-4xl text-red-500 mb-2"></i>
+                                        <p class="text-[10px] text-slate-400 break-all line-clamp-2 text-center">{{ m.external_url }}</p>
+                                    </a>
+                                    
+                                    <!-- Image (Uploaded or External) -->
+                                    <img v-else 
+                                            :src="m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key" 
+                                            class="w-full" 
+                                            loading="lazy" 
+                                            @click="lightbox = {active: true, url: m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key, desc: m.description}"
+                                            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                                            
+                                    <!-- Fallback for broken image links -->
+                                    <a v-if="m.media_type === 'link'" :href="m.external_url" target="_blank" class="hidden w-full aspect-video bg-slate-900 flex-col items-center justify-center p-4 hover:bg-slate-850" style="display: none;">
+                                        <i class="fa-solid fa-link text-3xl text-emerald-500 mb-2"></i>
+                                        <p class="text-[10px] text-slate-400 break-all line-clamp-2 text-center">{{ m.external_url }}</p>
+                                    </a>
+
+                                    <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <p class="text-[10px] text-white truncate flex-1 mr-2">{{ m.description || 'No Description' }}</p>
+                                        <button @click.stop="deleteItem('subject_media', m.id)" class="text-red-400 hover:text-white"><i class="fa-solid fa-trash text-xs"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                         <!-- Timeline -->
+                        <div v-if="subTab === 'timeline'" class="space-y-4 animate-fade-in">
+                            <button @click="openModal('add-event')" class="w-full py-3 border border-slate-700 border-dashed rounded-lg text-xs text-slate-400 hover:text-amber-400 hover:border-amber-400/50 transition-colors font-bold uppercase tracking-wider touch-target">
+                                + Log New Event
+                            </button>
+                            <div class="relative border-l-2 border-slate-800 ml-4 space-y-8 py-4">
+                                <div v-for="e in selectedSubject.events" :key="e.id" class="relative pl-8">
+                                    <div class="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-obsidian border-4 border-amber-500"></div>
+                                    <div class="group">
+                                        <div class="flex items-baseline gap-2 mb-1 flex-wrap">
+                                            <span class="text-xs font-mono font-bold text-amber-500 bg-amber-900/20 px-2 py-0.5 rounded">{{ e.event_date }}</span>
+                                            <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
+                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                        </div>
+                                        <div v-if="e.description" class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
+                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{ e.description }}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Relations -->
+                        <div v-if="subTab === 'relations'" class="space-y-4 animate-fade-in">
+                            <button @click="openModal('add-rel')" class="w-full py-3 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg text-xs font-bold transition-colors touch-target">
+                                <i class="fa-solid fa-link mr-1"></i> Connect Subject
+                            </button>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-4 rounded-xl flex items-center justify-between">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden">
+                                            <img v-if="r.target_avatar" :src="'/api/media/'+r.target_avatar" class="w-full h-full object-cover">
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
+                                            <div class="text-xs text-indigo-400 font-mono">{{ r.relationship_type }}</div>
+                                        </div>
+                                    </div>
+                                    <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-link-slash"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>
 
-            <!-- Global Map Tab -->
-            <div v-if="currentTab === 'map'" class="flex-1 relative bg-gray-100">
-                <div id="warRoomMap" class="w-full h-full z-0"></div>
-                <div class="absolute top-4 right-4 z-[400] w-72 glass shadow-lg p-1">
-                    <div class="relative">
-                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-gray-400 text-xs"></i>
-                        <input v-model="warMapSearch" placeholder="Find contact on map..." class="bg-transparent w-full text-base md:text-sm p-2 pl-8 text-gray-800 outline-none font-medium placeholder-gray-400">
+            <!-- Graph View -->
+             <div v-show="currentTab === 'graph'" class="flex-1 relative bg-obsidian overflow-hidden">
+                <div id="network-graph" class="opacity-80"></div>
+                <div class="absolute top-4 left-4 right-4 md:w-64 glass-panel p-3 rounded-xl flex flex-col gap-2">
+                    <input v-model="graphSearch" placeholder="Locate node..." class="bg-black/20 text-white text-xs p-2 rounded border border-slate-700 focus:border-indigo-500 outline-none">
+                    <div class="flex gap-2">
+                        <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-2 rounded">Reset View</button>
+                        <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-2 rounded">Refresh Data</button>
                     </div>
                 </div>
-            </div>
+             </div>
+
         </main>
 
-        <!-- Mobile Nav -->
-        <nav class="md:hidden h-16 bg-white border-t border-gray-200 flex justify-around items-center shrink-0 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-600 bg-blue-50 rounded-lg' : 'text-gray-400'" class="flex flex-col items-center justify-center p-2 w-16 transition-all">
-                <i :class="t.icon" class="text-xl mb-1"></i>
-                <span class="text-[10px] font-bold" v-if="currentTab === t.id">{{t.label}}</span>
-            </button>
+        <!-- Mobile Navigation Bar -->
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-charcoal/90 backdrop-blur-xl border-t border-slate-800 z-40 pb-safe shadow-2xl">
+            <div class="flex justify-around items-center h-16">
+                <a v-for="item in navItems" :key="item.id" @click="changeTab(item.id)"
+                   :class="currentTab === item.id ? 'text-indigo-400' : 'text-slate-500'" 
+                   class="flex flex-col items-center justify-center w-full h-full space-y-1 active:scale-95 transition-transform touch-target">
+                    <i :class="item.icon" class="text-lg"></i>
+                    <span class="text-[10px] font-medium">{{ item.label }}</span>
+                </a>
+            </div>
         </nav>
     </div>
 
-    <!-- Modals -->
-    <div v-if="modal.active" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg glass bg-white shadow-2xl border border-white/50 animate-fade-in transform transition-all flex flex-col max-h-[85vh]" :class="{'shake': modal.shake}">
-            <div class="flex justify-between items-center p-6 border-b border-gray-100 shrink-0">
-                <h3 class="text-sm font-extrabold text-gray-900 uppercase tracking-wide">{{ modalTitle }}</h3>
-                <button @click="closeModal" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
-            </div>
-            
-            <div class="overflow-y-auto p-6">
-                <!-- Add/Edit Subject -->
-                <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
-                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                        <label class="text-[10px] text-gray-500 font-bold uppercase block mb-1">Avatar / Image</label>
-                        <div class="flex gap-2">
-                             <input v-model="forms.subject.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
-                             <button type="button" @click="triggerUpload('avatar')" class="bg-white border border-gray-300 px-3 rounded text-xs font-bold hover:bg-gray-100">Upload</button>
-                        </div>
-                    </div>
-                    <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
-                    <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
-                    <div class="grid grid-cols-3 gap-4">
-                        <select v-model="forms.subject.sex" class="glass-input p-3 text-sm bg-white">
-                            <option disabled value="">Sex</option>
-                            <option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option>
-                        </select>
-                        <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
-                            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                        </select>
-                        <input v-model="forms.subject.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
-                        <input v-model="forms.subject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
-                    </div>
-                    <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
-                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
-                    <input v-model="forms.subject.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <input v-model="forms.subject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
-                        <input v-model="forms.subject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
-                        <input v-model="forms.subject.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
-                    </div>
-                    <textarea v-model="forms.subject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
-
-                    <datalist id="nationalityOptions">
-                        <option v-for="nat in fieldSuggestions.nationality" :value="nat"></option>
-                    </datalist>
-                    <datalist id="ideologyOptions">
-                        <option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option>
-                    </datalist>
-                    <datalist id="religionOptions">
-                        <option v-for="rel in fieldSuggestions.religion" :value="rel"></option>
-                    </datalist>
-
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20">Save Contact</button>
-                </form>
-
-                <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm bg-white text-gray-900" required>
-                        <select v-model="forms.interaction.type" class="glass-input p-3 text-sm bg-white">
-                            <option>Meeting</option><option>Call</option><option>Email</option><option>Observation</option><option>Other</option>
-                        </select>
-                    </div>
-                    <textarea v-model="forms.interaction.transcript" placeholder="Notes / Discussion *" rows="6" class="glass-input w-full p-3 text-sm font-mono" :class="{'error': errors.transcript}"></textarea>
-                    <textarea v-model="forms.interaction.conclusion" placeholder="Summary / Next Steps" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-amber-500/20">Save Log</button>
-                </form>
-
-                <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
-                    <div class="relative z-[100]">
-                        <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search for a place (Press Enter)" class="glass-input w-full p-3 pl-10 text-sm border-blue-200" :disabled="locationSearchLoading">
-                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-400"></i>
-                        <div v-if="locationSearchLoading" class="absolute right-3 top-3 text-blue-500 text-xs font-bold flex items-center gap-1">
-                            <i class="fa-solid fa-spinner animate-spin"></i> Searching...
-                        </div>
-                        <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-gray-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-[101]">
-                            <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-blue-50 cursor-pointer text-xs border-b border-gray-100 last:border-0 text-gray-700">
-                                {{ res.display_name }}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="h-48 w-full bg-gray-100 rounded-lg border-2 border-white shadow-inner relative overflow-hidden z-0">
-                        <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
-                        <div class="absolute bottom-2 right-2 bg-white/90 text-[10px] text-gray-600 p-1.5 px-3 rounded-full font-bold pointer-events-none z-[500] shadow-sm border border-gray-200">Tap or Click to Pin</div>
-                    </div>
-                    <div class="text-[11px] text-gray-500 bg-blue-50 border border-blue-100 p-2 rounded-lg" :class="{'border-red-200 bg-red-50 text-red-600': errors.loc_coords}">
-                        <i class="fa-solid" :class="forms.location.lat ? 'fa-location-crosshairs text-blue-500' : 'fa-hand-pointer text-gray-400'"></i>
-                        <span class="ml-2 font-medium">{{ forms.location.lat ? ('Pinned at ' + forms.location.lat.toFixed(4) + ', ' + forms.location.lng.toFixed(4)) : 'Select a point on the map to place the pin.' }}</span>
-                    </div>
-                    <input v-model="forms.location.name" placeholder="Location Name *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.loc_name}">
-                    <input v-model="forms.location.address" placeholder="Full Address" class="glass-input w-full p-3 text-sm">
-                    <button type="submit" :disabled="actionLoading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 disabled:opacity-60">{{ actionLoading ? 'Saving...' : 'Pin Location' }}</button>
-                </form>
-
-                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                    <input v-model="forms.intel.label" placeholder="Topic *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_label}">
-                    <textarea v-model="forms.intel.value" placeholder="Observation *" rows="4" class="glass-input w-full p-3 text-sm" :class="{'error': errors.intel_val}"></textarea>
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Save Entry</button>
-                 </form>
-
-                 <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                    <div class="flex items-center gap-2 mb-2">
-                        <input type="checkbox" v-model="forms.rel.isExternal" id="extCheck" class="w-4 h-4 text-blue-600 rounded">
-                        <label for="extCheck" class="text-xs font-bold text-gray-600 uppercase cursor-pointer">External Contact</label>
-                    </div>
-                    <div v-if="!forms.rel.isExternal">
-                        <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm bg-white">
-                            <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.alias}})</option>
-                        </select>
-                    </div>
-                    <div v-else class="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                        <input v-model="forms.rel.customName" placeholder="External Name *" class="glass-input w-full p-2 text-sm">
-                    </div>
-                    <input v-model="forms.rel.type" placeholder="Relationship Type *" class="glass-input w-full p-3 text-sm" :class="{'error': errors.rel_type}">
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
-                 </form>
-
-                 <!-- UPDATED SHARE MODAL -->
-                 <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                    <div class="text-center">
-                        <div class="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-white text-xl shadow-lg shadow-blue-500/30"><i class="fa-solid fa-paper-plane"></i></div>
-                        <h4 class="font-bold text-gray-900">Secure Profile Transmission</h4>
-                        <p class="text-xs text-gray-500 mt-1 px-8">Generate a one-time link. Timer starts when the recipient opens it.</p>
-                    </div>
+    <!-- Universal Modal System -->
+    <transition name="slide-up">
+        <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4" @click.self="closeModal">
+            <div class="bg-slate-900 w-full max-w-2xl md:rounded-2xl rounded-t-2xl shadow-2xl border border-slate-800 flex flex-col max-h-[90vh] h-full md:h-auto animate-slide-up">
+                <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 sticky top-0 z-10">
+                    <h3 class="font-bold text-white text-lg">{{ modalTitle }}</h3>
+                    <button @click="closeModal" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                
+                <div class="p-4 md:p-6 overflow-y-auto custom-scrollbar space-y-5 flex-1">
                     
-                    <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
-                        <div class="flex gap-2">
-                            <div class="relative w-32 shrink-0">
-                                <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2.5 w-full text-center text-sm font-bold pl-2 pr-10 text-blue-700 bg-white" placeholder="30" min="1" max="10080">
-                                <span class="absolute right-3 top-2.5 text-xs text-blue-300 font-bold pointer-events-none">MIN</span>
-                            </div>
-                            <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md transition-all flex items-center justify-center gap-2">
-                                <i class="fa-solid fa-bolt"></i> Generate Link
+                    <!-- Form: New Subject / Edit Subject (Multi-step) -->
+                    <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="modal.active === 'add-subject' ? createSubject() : updateSubjectCore()" class="space-y-6">
+                        
+                        <!-- Tabs for Form -->
+                        <div class="flex gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
+                            <button type="button" v-for="step in ['Identity', 'Physical', 'Social & Data', 'Notes']" 
+                                @click="modalStep = step"
+                                :class="modalStep === step ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'"
+                                class="px-4 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap">
+                                {{ step }}
                             </button>
                         </div>
-                        
-                        <div v-if="forms.share.result" class="relative group">
-                            <div class="absolute inset-0 bg-blue-200 blur opacity-20 rounded-lg"></div>
-                            <input readonly :value="forms.share.result" class="relative w-full bg-white border border-blue-300 text-blue-600 text-xs p-3 rounded-lg pr-12 font-mono font-medium shadow-sm">
-                            <button @click="copyToClipboard(forms.share.result)" class="absolute right-1 top-1 bottom-1 px-3 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><i class="fa-regular fa-copy"></i></button>
-                        </div>
 
-                        <div v-if="forms.share.error" class="text-xs text-red-600 font-semibold bg-red-50 border border-red-100 rounded-lg p-3">
-                            {{ forms.share.error }}
-                        </div>
-                    </div>
-
-                    <div class="border-t border-gray-100 pt-4">
-                        <div class="flex justify-between items-center mb-3">
-                            <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">Active Transmissions</h5>
-                            <button @click="fetchShareLinks" class="text-blue-500 hover:text-blue-700 text-xs"><i class="fa-solid fa-rotate-right"></i></button>
-                        </div>
-                        <div class="max-h-48 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                            <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-200 rounded-lg shadow-sm hover:border-blue-300 transition-colors">
-                                <div class="min-w-0">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <div class="w-2 h-2 rounded-full shrink-0" :class="link.views > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"></div>
-                                        <span class="text-xs font-bold text-gray-700 truncate font-mono">...{{ link.token.slice(-6) }}</span>
-                                    </div>
-                                    <div class="text-[10px] text-gray-400 font-medium">
-                                        {{ (link.duration_seconds/60).toFixed(0) }}m Limit &bull; {{ link.views }} Views
-                                    </div>
+                        <div v-show="modalStep === 'Identity'" class="space-y-4">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Full Name *</label>
+                                <input v-model="forms.subject.full_name" required class="glass-input w-full p-3 rounded-lg" placeholder="John Doe">
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Sex / Gender</label>
+                                    <select v-model="forms.subject.gender" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                        <option value="">Unknown</option>
+                                        <option>Male</option>
+                                        <option>Female</option>
+                                        <option>Non-Binary</option>
+                                        <option>Other</option>
+                                    </select>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <button @click="copyShare(link.url)" class="text-[10px] font-bold text-blue-500 hover:bg-blue-50 px-3 py-1.5 rounded border border-transparent hover:border-blue-100 transition-all flex items-center gap-1">
-                                        <i class="fa-regular fa-copy"></i>
-                                        COPY
-                                    </button>
-                                    <button @click="revokeLink(link.token)" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded border border-transparent hover:border-red-100 transition-all">REVOKE</button>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Occupation</label>
+                                    <input v-model="forms.subject.occupation" list="list-occupations" class="glass-input w-full p-3 rounded-lg">
                                 </div>
                             </div>
-                            <div v-if="activeShareLinks.length === 0" class="text-center py-6">
-                                <i class="fa-solid fa-inbox text-gray-200 text-2xl mb-2"></i>
-                                <div class="text-xs text-gray-400">No active links</div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Nationality</label>
+                                    <input v-model="forms.subject.nationality" list="list-nationalities" class="glass-input w-full p-3 rounded-lg">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Religion</label>
+                                    <input v-model="forms.subject.religion" list="list-religions" class="glass-input w-full p-3 rounded-lg">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">DOB</label>
+                                    <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 rounded-lg text-white appearance-none relative" placeholder="YYYY-MM-DD">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Status</label>
+                                    <select v-model="forms.subject.status" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                        <option>Active</option>
+                                        <option>Dormant</option>
+                                        <option>Missing</option>
+                                        <option>Deceased</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                 </div>
 
-                 <!-- Settings Modal -->
-                <form v-if="modal.active === 'settings'" @submit.prevent class="space-y-6 text-center">
-                    <div class="p-6 bg-red-50 border border-red-100 rounded-xl">
-                        <h4 class="text-red-600 font-bold uppercase text-xs mb-2">Danger Zone</h4>
-                        <p class="text-gray-500 text-xs mb-4">Factory Reset wipes ALL data. System will reboot. Cannot be undone.</p>
-                        <button @click="burnProtocol" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg text-xs uppercase tracking-widest w-full shadow-lg shadow-red-500/20">Factory Reset System</button>
-                    </div>
-                    <button @click="logout" class="text-gray-400 text-xs hover:text-gray-800 font-bold uppercase tracking-wider">Log Out</button>
-                </form>
+                        <div v-show="modalStep === 'Physical'" class="space-y-4">
+                             <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Age (Auto-calc if DOB set)</label>
+                                    <input v-model="forms.subject.age" type="number" class="glass-input w-full p-3 rounded-lg" placeholder="Age">
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase">Height</label>
+                                    <input v-model="forms.subject.height" class="glass-input w-full p-3 rounded-lg" placeholder="cm/ft">
+                                </div>
+                                <input v-model="forms.subject.weight" class="glass-input p-3 rounded-lg" placeholder="Weight (kg/lbs)">
+                                <input v-model="forms.subject.blood_type" class="glass-input p-3 rounded-lg" placeholder="Blood Type">
+                                <input v-model="forms.subject.eye_color" class="glass-input p-3 rounded-lg" placeholder="Eye Color">
+                                <input v-model="forms.subject.hair_color" class="glass-input p-3 rounded-lg" placeholder="Hair Color">
+                            </div>
+                            <textarea v-model="forms.subject.identifying_marks" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="Scars, Tattoos, Birthmarks..."></textarea>
+                        </div>
+
+                        <div v-show="modalStep === 'Social & Data'" class="space-y-4">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Information</label>
+                                <input v-model="forms.subject.contact" class="glass-input w-full p-3 rounded-lg" placeholder="Phone, Email, PGP Keys...">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Education</label>
+                                <input v-model="forms.subject.education" class="glass-input w-full p-3 rounded-lg" placeholder="Degrees, Schools...">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
+                                <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Social Media Links</label>
+                                <textarea v-model="forms.subject.social_links" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="URLs, Usernames..."></textarea>
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Digital Identifiers</label>
+                                <textarea v-model="forms.subject.digital_identifiers" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="IPs, MAC Addresses, Crypto Wallets..."></textarea>
+                            </div>
+                        </div>
+
+                        <div v-show="modalStep === 'Notes'" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <input v-model="forms.subject.mbti" class="glass-input p-3 rounded-lg" placeholder="MBTI (e.g. INTJ)">
+                                <input v-model="forms.subject.alignment" class="glass-input p-3 rounded-lg" placeholder="Alignment (e.g. Chaotic Neutral)">
+                            </div>
+                            <textarea v-model="forms.subject.habits" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="Habits, Routines, Behaviors..."></textarea>
+                            <textarea v-model="forms.subject.notes" class="glass-input w-full p-3 rounded-lg" rows="3" placeholder="General Notes..."></textarea>
+                            <input v-model="forms.subject.last_sighted" class="glass-input w-full p-3 rounded-lg" placeholder="Last Sighted Info">
+                        </div>
+
+                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-500/20 touch-target flex justify-center items-center">
+                            <span v-if="loading" class="loader border-white/30 border-t-white mr-2"></span>
+                            {{ modal.active === 'add-subject' ? 'Initialize Dossier' : 'Save Changes' }}
+                        </button>
+                    </form>
+
+                     <!-- Form: Add Routine -->
+                     <form v-if="modal.active === 'add-routine'" @submit.prevent="submitRoutine" class="space-y-4">
+                         <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Activity *</label>
+                             <input v-model="forms.routine.activity" placeholder="e.g. Gym, School, Work" class="glass-input w-full p-3 rounded-lg" required>
+                         </div>
+                         <div class="grid grid-cols-2 gap-4">
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Location *</label>
+                                <input v-model="forms.routine.location" placeholder="e.g. Gold's Gym" class="glass-input w-full p-3 rounded-lg" required>
+                             </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Duration</label>
+                                <input v-model="forms.routine.duration" placeholder="e.g. 1.5 Hours" class="glass-input w-full p-3 rounded-lg">
+                             </div>
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Schedule</label>
+                            <input v-model="forms.routine.schedule" placeholder="e.g. Mon/Wed/Fri 6:00 PM" class="glass-input w-full p-3 rounded-lg">
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Notes</label>
+                            <textarea v-model="forms.routine.notes" placeholder="Additional details..." class="glass-input w-full p-3 rounded-lg" rows="2"></textarea>
+                         </div>
+                         <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Add Routine Activity</button>
+                     </form>
+
+                     <!-- Form: Add Media Link -->
+                     <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
+                        <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Link URL *</label>
+                             <input v-model="forms.mediaLink.url" type="url" placeholder="https://..." class="glass-input w-full p-3 rounded-lg" required>
+                        </div>
+                        <div class="space-y-1">
+                             <label class="text-[10px] font-bold text-slate-500 uppercase">Description</label>
+                             <input v-model="forms.mediaLink.description" placeholder="e.g. News Article, YouTube Video" class="glass-input w-full p-3 rounded-lg">
+                        </div>
+                         <button type="submit" class="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold touch-target">Attach Link</button>
+                     </form>
+
+                     <!-- Form: Add Intel -->
+                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note'" @submit.prevent="submitIntel" class="space-y-4">
+                        <div v-if="modal.parentId" class="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
+                            <i class="fa-solid fa-level-up-alt rotate-90 mr-2"></i> Appending to thread
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Category</label>
+                                <select v-model="forms.intel.category" class="glass-input w-full p-3 rounded-lg bg-slate-800 mt-1">
+                                    <option>General</option>
+                                    <option>Biometrics</option>
+                                    <option>Psychology</option>
+                                    <option>Social</option>
+                                    <option>Digital</option>
+                                    <option>Financial</option>
+                                    <option>Legal</option>
+                                    <option>Assets</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Topic</label>
+                                <input v-model="forms.intel.label" placeholder="e.g. Scar, Phobia" class="glass-input w-full p-3 rounded-lg mt-1" required>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Observation / Fact</label>
+                            <textarea v-model="forms.intel.value" rows="4" class="glass-input w-full p-3 rounded-lg mt-1" placeholder="Detailed observation..." required></textarea>
+                        </div>
+                        <div v-if="modal.active !== 'quick-note'">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Analysis (Optional)</label>
+                            <input v-model="forms.intel.analysis" placeholder="Researcher interpretation..." class="glass-input w-full p-3 rounded-lg mt-1">
+                        </div>
+                        <div v-if="modal.active !== 'quick-note'" class="grid grid-cols-2 gap-4">
+                             <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Source</label>
+                                <input v-model="forms.intel.source" placeholder="e.g. Surveillance, Interview" class="glass-input w-full p-3 rounded-lg mt-1">
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase flex justify-between">
+                                    <span>Confidence</span>
+                                    <span class="text-indigo-400">{{ forms.intel.confidence }}%</span>
+                                </label>
+                                <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-3 accent-indigo-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">Commit Intelligence</button>
+                     </form>
+
+                     <!-- Event Form -->
+                     <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
+                         <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
+                         <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
+                         <textarea v-model="forms.event.description" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
+                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">Log Timeline Event</button>
+                     </form>
+
+                     <!-- Rel Form -->
+                     <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
+                        <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                            <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                        </select>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Relationship Label (Displays on Graph)</label>
+                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1">
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
+                     </form>
+                </div>
             </div>
         </div>
-    </div>
-    <input type="file" ref="fileInput" class="hidden" @change="handleFile" accept="image/*,application/pdf">
-  </div>
-  <script>
-    const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+    </transition>
 
-    function calculateAge(dob) {
-      if (!dob) return null;
-      const birthDate = new Date(dob);
-      if (isNaN(birthDate.getTime())) return null;
-      const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const monthDiff = today.getMonth() - birthDate.getMonth();
-      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
-      return age >= 0 ? age : null;
-    }
+    <!-- Suggestion Datalists -->
+    <datalist id="list-occupations">
+        <option v-for="item in suggestions.occupations" :value="item"></option>
+    </datalist>
+    <datalist id="list-nationalities">
+        <option v-for="item in suggestions.nationalities" :value="item"></option>
+    </datalist>
+    <datalist id="list-religions">
+        <option v-for="item in suggestions.religions" :value="item"></option>
+    </datalist>
+
+    <!-- Hidden File Inputs -->
+    <input type="file" ref="mediaInput" @change="handleMediaUpload" class="hidden" accept="image/*">
+    <input type="file" ref="avatarInput" @change="handleAvatarUpload" class="hidden" accept="image/*">
+
+  </div>
+
+  <script>
+    const { createApp, ref, reactive, computed, onMounted, watch, onUnmounted } = Vue;
 
     createApp({
       setup() {
+        // State
         const view = ref('auth');
-        const loading = ref(false);
-        const actionLoading = ref(false);
-        const locationSearchLoading = ref(false);
-        const auth = reactive({ email: '', password: '' });
-        const tabs = [{ id: 'dashboard', label: 'Home', icon: 'fa-solid fa-house' }, { id: 'targets', label: 'Contacts', icon: 'fa-solid fa-address-book' }, { id: 'map', label: 'Global Map', icon: 'fa-solid fa-earth-americas' }];
-
+        const setupMode = ref(false);
         const currentTab = ref('dashboard');
-        const subTab = ref('profile');
-
-        const stats = ref({});
-        const feed = ref([]);
+        const subTab = ref('overview');
+        const loading = ref(false);
+        const searchQuery = ref('');
+        const graphSearch = ref('');
+        const modalStep = ref('Identity');
+        
+        const auth = reactive({ email: '', password: '' });
+        const dashboard = reactive({ stats: {}, feed: [] });
         const subjects = ref([]);
-        const selected = ref(null);
-        const activeShareLinks = ref([]);
-        const search = ref('');
-        const modal = reactive({ active: null, shake: false });
-        const errors = reactive({});
-
-        const locationSearchQuery = ref('');
-        const locationSearchResults = ref([]);
-        const warMapSearch = ref('');
-
-        const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
-        const defaultSubjectValues = {
-            admin_id: '',
-            full_name: '',
-            alias: '',
-            status: 'Active',
-            threat_level: 'Low',
-            sex: '',
-            gender: '',
-            occupation: '',
-            nationality: '',
-            ideology: '',
-            religion: '',
-            dob: '',
-            age: null,
-            modus_operandi: '',
-            weakness: '',
-            avatar_path: '',
-            last_sighted: '',
-            height: '',
-            weight: '',
-            identifying_marks: '',
-            location: '',
-            contact: '',
-            hometown: '',
-            previous_locations: '',
-            notes: '',
-            social_links: '',
-            digital_identifiers: '',
-            eye_color: '',
-            hair_color: '',
-            blood_type: ''
-        };
-
-        const buildSubjectForm = (source = {}, adminId = '') => {
-            const form = {};
-            SUBJECT_FORM_FIELDS.forEach((key) => {
-                form[key] = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
-            });
-            return form;
-        };
-
-        const buildSubjectPayload = (form) => {
-            const payload = {};
-            SUBJECT_FORM_FIELDS.forEach((key) => {
-                if (form[key] !== undefined) payload[key] = form[key];
-            });
-            return payload;
-        };
-
+        const suggestions = reactive({ occupations: [], nationalities: [], religions: [] });
+        const selectedSubject = ref(null);
+        const toasts = ref([]);
+        
+        const lightbox = reactive({ active: null, url: '', desc: '' });
+        const modal = reactive({ active: null, parentId: null });
+        const expandedState = reactive({});
+        
+        // Forms
         const forms = reactive({
-            subject: buildSubjectForm({}, localStorage.getItem('admin_id') || ''),
-            interaction: {},
-            location: {},
-            intel: {},
-            rel: {},
-            share: { minutes: 30, result: '', error: '' }
+            subject: {},
+            intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
+            event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
+            rel: { subjectB: '', type: '' },
+            routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
+            mediaLink: { url: '', description: '' }
         });
 
-        const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
+        const navItems = [
+            { id: 'dashboard', label: 'Home', icon: 'fa-solid fa-chart-pie' },
+            { id: 'subjects', label: 'Subjects', icon: 'fa-solid fa-users' },
+            { id: 'graph', label: 'Graph', icon: 'fa-solid fa-share-nodes', action: 'loadGraph' }
+        ];
 
+        // API Helper with Timeout
         const api = async (ep, opts = {}) => {
-            const finalOpts = { ...opts };
-            if (finalOpts.body && !finalOpts.headers?.['Content-Type']) {
-                finalOpts.headers = { ...(finalOpts.headers || {}), 'Content-Type': 'application/json' };
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 15000); // 15s timeout
+            try {
+                const res = await fetch('/api' + ep, { ...opts, signal: controller.signal });
+                clearTimeout(id);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Operation failed');
+                return data;
+            } catch (e) {
+                notify(e.name === 'AbortError' ? 'Request timed out' : e.message, 'error');
+                throw e;
+            } finally {
+                clearTimeout(id);
             }
-            const res = await fetch('/api' + ep, finalOpts);
-            if (!res.ok) {
-                 const text = await res.text();
-                 try { const json = JSON.parse(text); throw new Error(json.error || "Server Error"); }
-                 catch(e) { throw new Error(text || res.statusText); }
-            }
-            return res.json();
         };
 
-        let actionDepth = 0;
-        const withAction = async (fn) => {
-            actionDepth++; actionLoading.value = true;
-            try { await fn(); } finally { actionDepth = Math.max(0, actionDepth - 1); if (actionDepth === 0) actionLoading.value = false; }
+        const notify = (msg, type = 'success') => {
+            const id = Date.now();
+            toasts.value.push({ id, msg, type, title: type === 'error' ? 'Error' : 'Success' });
+            setTimeout(() => {
+                toasts.value = toasts.value.filter(t => t.id !== id);
+            }, 3000);
         };
 
+        // Social Link Parser
+        const parseSocials = (text) => {
+            if(!text) return [];
+            // Match URLs starting with http/https, allowing for various separators
+            const urls = text.match(/\\bhttps?:\\/\\/[^\\s,]+/gi) || [];
+            return urls.map(url => {
+                const lower = url.toLowerCase();
+                let icon = 'fa-solid fa-link';
+                
+                if(lower.includes('twitter.com') || lower.includes('x.com')) icon = 'fa-brands fa-x-twitter';
+                else if(lower.includes('facebook.com') || lower.includes('fb.com')) icon = 'fa-brands fa-facebook';
+                else if(lower.includes('linkedin.com')) icon = 'fa-brands fa-linkedin';
+                else if(lower.includes('instagram.com')) icon = 'fa-brands fa-instagram';
+                else if(lower.includes('github.com')) icon = 'fa-brands fa-github';
+                else if(lower.includes('youtube.com')) icon = 'fa-brands fa-youtube';
+                else if(lower.includes('tiktok.com')) icon = 'fa-brands fa-tiktok';
+                else if(lower.includes('reddit.com')) icon = 'fa-brands fa-reddit';
+                else if(lower.includes('discord')) icon = 'fa-brands fa-discord';
+                else if(lower.includes('telegram.org') || lower.includes('t.me')) icon = 'fa-brands fa-telegram';
+                else if(lower.includes('whatsapp.com') || lower.includes('wa.me')) icon = 'fa-brands fa-whatsapp';
+                else if(lower.includes('medium.com')) icon = 'fa-brands fa-medium';
+                else if(lower.includes('pinterest.com')) icon = 'fa-brands fa-pinterest';
+                else if(lower.includes('snapchat.com')) icon = 'fa-brands fa-snapchat';
+                
+                return { url, icon };
+            });
+        };
+
+        const calculateRealAge = (dob) => {
+            if (!dob) return null;
+            const birthDate = new Date(dob);
+            const today = new Date();
+            let age = today.getFullYear() - birthDate.getFullYear();
+            const m = today.getMonth() - birthDate.getMonth();
+            if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                age--;
+            }
+            return age;
+        };
+
+        // Watchers for Forms
+        watch(() => forms.subject.dob, (newVal) => {
+            if (newVal) {
+                forms.subject.age = calculateRealAge(newVal);
+            }
+        });
+
+        // Computeds
+        const filteredSubjects = computed(() => {
+            if(!searchQuery.value) return subjects.value;
+            const q = searchQuery.value.toLowerCase();
+            return subjects.value.filter(s => 
+                (s.full_name || '').toLowerCase().includes(q) || 
+                (s.occupation || '').toLowerCase().includes(q) ||
+                (s.status || '').toLowerCase().includes(q)
+            );
+        });
+
+        const dataTree = computed(() => {
+            if (!selectedSubject.value?.dataPoints) return [];
+            const raw = selectedSubject.value.dataPoints;
+            const map = {};
+            const roots = [];
+            raw.forEach(item => map[item.id] = { ...item, children: [] });
+            raw.forEach(item => {
+                if (item.parent_id && map[item.parent_id]) map[item.parent_id].children.push(map[item.id]);
+                else roots.push(map[item.id]);
+            });
+            return roots;
+        });
+
+        const modalTitle = computed(() => {
+            const map = { 
+                'add-subject': 'New Subject Profile', 
+                'edit-profile': 'Edit Profile',
+                'add-intel': 'Add Intelligence',
+                'quick-note': 'Quick Field Note',
+                'add-event': 'Log Timeline Event',
+                'add-rel': 'Connect Subjects',
+                'add-routine': 'Add Routine Activity',
+                'add-media-link': 'Add External Link'
+            };
+            return map[modal.active] || 'System Dialog';
+        });
+
+        // Methods
         const handleAuth = async () => {
             loading.value = true;
             try {
-                const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
+                const ep = setupMode.value ? '/setup-admin' : '/login';
+                const res = await api(ep, { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
-                fetchData();
-            } catch(e) { alert(e.message); } finally { loading.value = false; }
+                notify("System Access Granted");
+                initApp();
+            } catch(e) {} finally { loading.value = false; }
         };
 
-        const fetchData = async () => withAction(async () => {
-            const adminId = localStorage.getItem('admin_id');
-            const [d, s, sugg] = await Promise.all([
-                api('/dashboard?adminId='+adminId),
-                api('/subjects?adminId='+adminId),
-                api('/subject-suggestions?adminId='+adminId)
-            ]);
-            stats.value = d.stats; feed.value = d.feed; subjects.value = s;
-            fieldSuggestions.nationality = sugg.nationality || [];
-            fieldSuggestions.ideology = sugg.ideology || [];
-            fieldSuggestions.religion = sugg.religion || [];
-            if(!selected.value && subjects.value.length) await viewSubject(subjects.value[0].id);
-        });
+        const initApp = async () => {
+            // Restore state from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const tab = urlParams.get('tab');
+            const id = urlParams.get('id');
 
-        const viewSubject = async (id) => withAction(async () => {
-            selected.value = await api('/subjects/'+id);
-            if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob);
-            currentTab.value = 'detail'; subTab.value = 'profile';
-        });
-
-        const changeTab = (t) => { currentTab.value = t; };
-        const changeSubTab = (t) => { subTab.value = t; };
-
-        const updateSubject = async () => {
-             if(!selected.value) return;
-             await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
+            if(tab && ['dashboard', 'subjects', 'graph', 'detail'].includes(tab)) {
+                currentTab.value = tab;
+            }
+            
+            await Promise.all([fetchDashboard(), fetchSubjects(), fetchSuggestions()]);
+            
+            if(tab === 'detail' && id) {
+                 await viewSubject(id);
+            }
         };
 
-        const submitSubject = async () => withAction(async () => {
+        const changeTab = (tab) => {
+            currentTab.value = tab;
+            const url = new URL(window.location);
+            url.searchParams.set('tab', tab);
+            url.searchParams.delete('id');
+            window.history.pushState({}, '', url);
+        };
+
+        const fetchDashboard = async () => {
+            const data = await api('/dashboard?adminId=' + localStorage.getItem('admin_id'));
+            dashboard.stats = data.stats;
+            dashboard.feed = data.feed;
+        };
+
+        const fetchSubjects = async () => {
+            subjects.value = await api('/subjects?adminId=' + localStorage.getItem('admin_id'));
+        };
+
+        const fetchSuggestions = async () => {
+            const data = await api('/suggestions?adminId=' + localStorage.getItem('admin_id'));
+            suggestions.occupations = data.occupations;
+            suggestions.nationalities = data.nationalities;
+            suggestions.religions = data.religions;
+        };
+
+        const viewSubject = async (id) => {
+            selectedSubject.value = await api('/subjects/' + id);
+            currentTab.value = 'detail';
+            subTab.value = 'overview';
+            
+            // Sync URL
+            const url = new URL(window.location);
+            url.searchParams.set('tab', 'detail');
+            url.searchParams.set('id', id);
+            window.history.pushState({}, '', url);
+        };
+
+        const createSubject = async () => {
+            loading.value = true;
             try {
-                const isEdit = modal.active === 'edit-profile';
-                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
-                const method = isEdit ? 'PATCH' : 'POST';
-                const payload = buildSubjectPayload(forms.subject);
-                payload.age = payload.dob ? calculateAge(payload.dob) : null;
-
-                await api(ep, { method, body: JSON.stringify(payload) });
-                if(isEdit) selected.value = { ...selected.value, ...payload }; else fetchData();
+                await api('/subjects', { method: 'POST', body: JSON.stringify({ ...forms.subject, adminId: localStorage.getItem('admin_id') }) });
                 closeModal();
-            } catch(e) {
-                errors.form = e.message;
-                alert(e.message);
-            }
-        });
-
-        const submitInteraction = async () => withAction(async () => {
-            await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
-            viewSubject(selected.value.id); closeModal();
-        });
-
-        const submitLocation = async () => withAction(async () => {
-            Object.keys(errors).forEach(k => delete errors[k]);
-            if(!forms.location.name) errors.loc_name = 'Required';
-            if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map';
-            if(errors.loc_name || errors.loc_coords) return;
-            await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
-            viewSubject(selected.value.id); closeModal();
-        });
-        
-        const submitIntel = async () => withAction(async () => {
-             await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
-             viewSubject(selected.value.id); closeModal();
-        });
-
-        const submitRel = async () => withAction(async () => {
-             await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
-             viewSubject(selected.value.id); closeModal();
-        });
-
-        const fetchShareLinks = async () => {
-            if(!selected.value) return;
-            const links = await api('/share-links?subjectId=' + selected.value.id);
-            activeShareLinks.value = Array.isArray(links) ? links.filter(l => l.is_active) : [];
+                fetchSubjects();
+                fetchDashboard();
+                fetchSuggestions();
+                notify("Subject Created Successfully");
+            } finally { loading.value = false; }
         };
 
-        const revokeLink = async (token) => {
-            if (!token) return;
-            const confirmMsg = 'Revoke this share link? Recipients will immediately lose access.';
-            if (!confirm(confirmMsg)) return;
-            await withAction(async () => {
-                await api('/share-links?token=' + token, { method: 'DELETE' });
-                fetchShareLinks();
-            });
+        const updateSubjectCore = async () => {
+             loading.value = true;
+             try {
+                const payload = { ...forms.subject };
+                await api('/subjects/' + selectedSubject.value.id, { method: 'PATCH', body: JSON.stringify(payload) });
+                selectedSubject.value = { ...selectedSubject.value, ...payload };
+                closeModal();
+                fetchSuggestions();
+                notify("Profile Updated");
+             } finally { loading.value = false; }
         };
 
-        const copyShare = (url) => {
-            if (!url) return;
-            copyToClipboard(url);
+        const downloadCSV = () => {
+            const adminId = localStorage.getItem('admin_id');
+            window.location.href = '/api/export-all?adminId=' + adminId;
         };
 
-        const createShareLink = async () => {
-            try {
-                if (!selected.value) return;
-                forms.share.error = '';
-                forms.share.result = '';
-                await withAction(async () => {
-                    const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
-                    forms.share.result = res.url;
-                });
-                fetchShareLinks();
-            } catch(e) { forms.share.error = e.message; }
+        // Intel Ops
+        const submitIntel = async () => {
+            const payload = { ...forms.intel, subjectId: selectedSubject.value.id, parentId: modal.parentId };
+            await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
+            closeModal();
+            viewSubject(selectedSubject.value.id);
+            fetchDashboard();
+            notify("Intelligence added");
         };
 
-        // Improved Copy Logic for Iframes
-        const copyToClipboard = (text) => { 
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => fallbackCopy(text));
-            } else {
-                fallbackCopy(text);
-            }
+        const toggleNode = (id) => {
+            if (expandedState[id] === undefined) expandedState[id] = false;
+            else expandedState[id] = !expandedState[id];
         };
 
-        const fallbackCopy = (text) => {
-            const textArea = document.createElement("textarea");
-            textArea.value = text;
-            textArea.style.position = "fixed"; 
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                document.execCommand('copy');
-                alert("Copied to clipboard!");
-            } catch (err) {
-                alert("Could not copy text.");
-            }
-            document.body.removeChild(textArea);
+        const getConfidenceColor = (val) => {
+            if(val >= 80) return 'bg-emerald-500';
+            if(val >= 50) return 'bg-amber-500';
+            return 'bg-red-500';
         };
 
-        watch(() => forms.subject.dob, (val) => { forms.subject.age = calculateAge(val); });
+        // Media Ops
+        const triggerMediaUpload = () => document.querySelector('input[type="file"]').click();
+        const triggerAvatar = () => document.querySelectorAll('input[type="file"]')[1].click();
 
-        let mapInstance = null, pickerMapInstance = null, pickerMarker = null;
-
-        const initMap = (elementId, locations, isGlobal = false, isPicker = false) => {
-            const el = document.getElementById(elementId);
-            if(!el) return;
-            if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
-            if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
-
-            const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-
-            if(isPicker) {
-                pickerMapInstance = map;
-                map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng));
-                setTimeout(() => map.invalidateSize(), 100);
-            } else {
-                mapInstance = map;
-                const markers = [];
-                locations.forEach(loc => {
-                    if(loc.lat && loc.lng) {
-                        const m = L.marker([loc.lat, loc.lng]).addTo(map);
-                        if(!isGlobal) m.bindPopup(\`<b>\${loc.name}</b>\`);
-                        markers.push(m);
-                    }
-                });
-                if(markers.length > 0) {
-                     const group = L.featureGroup(markers);
-                     map.fitBounds(group.getBounds().pad(0.1));
-                }
-            }
-        };
-
-        watch(() => subTab.value, (val) => {
-            if(val === 'locations' && selected.value) nextTick(() => initMap('subjectMap', selected.value.locations || []));
-            if(val === 'network' && selected.value) nextTick(initNetwork);
-        });
-
-        watch(() => currentTab.value, (val) => {
-            if(val === 'map') nextTick(async () => { const allLocs = await api('/map-data?adminId=' + localStorage.getItem('admin_id')); initMap('warRoomMap', allLocs, true); });
-        });
-
-        const placePickerMarker = (map, lat, lng) => {
-            forms.location.lat = lat; forms.location.lng = lng;
-            if (pickerMarker) map.removeLayer(pickerMarker);
-            pickerMarker = L.marker([lat, lng]).addTo(map);
-        };
-
-        const searchLocations = async () => {
-            if(!locationSearchQuery.value) return;
-            locationSearchLoading.value = true;
-            locationSearchResults.value = [];
-            try {
-                const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } });
-                locationSearchResults.value = await res.json();
-            } catch(e) {
-                locationSearchResults.value = [];
-                errors.loc_coords = 'Unable to search locations right now';
-            } finally { locationSearchLoading.value = false; }
-        };
-
-        const selectLocation = (res) => {
-            forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name;
-            locationSearchResults.value = [];
-            if(pickerMapInstance) {
-                pickerMapInstance.setView([res.lat, res.lon], 15);
-                placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng);
-            }
-        };
-
-        const openModal = (type) => {
-            modal.active = type;
-            const aid = localStorage.getItem('admin_id');
-            Object.keys(errors).forEach(k => delete errors[k]);
-              if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
-            if(type === 'edit-profile') forms.subject = buildSubjectForm(selected.value || {}, aid);
-            if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
-            if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
-            if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
-            if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false };
-            if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); }
-        };
-        const closeModal = () => modal.active = null;
-
-        const initNetwork = () => {
-            const container = document.getElementById('relNetwork');
-            if(!container || !selected.value) return;
-            const nodes = [{ id: selected.value.id, label: selected.value.full_name, shape: 'circularImage', image: resolveImg(selected.value.avatar_path), size: 30 }];
-            const edges = [];
-            selected.value.relationships.forEach((r, i) => {
-                const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
-                nodes.push({ id: targetId || 'ext-'+i, label: r.target_name, shape: 'circularImage', image: resolveImg(r.target_avatar) });
-                edges.push({ from: selected.value.id, to: targetId || 'ext-'+i });
-            });
-            new vis.Network(container, { nodes, edges }, { nodes: { font: { color: '#374151' }, borderWidth: 2 }, edges: { color: '#cbd5e1' } });
-        };
-
-        const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
-        const getThreatColor = (l, isBg = false) => { const c = { 'Low': isBg ? 'bg-green-100 text-green-700' : 'text-green-600', 'Medium': isBg ? 'bg-amber-100 text-amber-700' : 'text-amber-600', 'High': isBg ? 'bg-orange-100 text-orange-700' : 'text-orange-600', 'Critical': isBg ? 'bg-red-100 text-red-700' : 'text-red-600' }; return c[l] || (isBg ? 'bg-gray-100 text-gray-700' : 'text-gray-500'); };
-        const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
-        const openSettings = () => openModal('settings');
-        const logout = () => {
-            if (!confirm('Log out of PEOPLE OS? Any unsaved changes will be lost.')) return;
-            localStorage.clear();
-            location.reload();
-        };
-        const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
-        const exportData = () => { const blob = new Blob([JSON.stringify(selected.value, null, 2)], {type : 'application/json'}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = (selected.value.alias || 'contact') + '.json'; link.click(); };
-        const fileInput = ref(null); const uploadType = ref(null);
-        const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
-        const handleFile = async (e) => {
-            const f = e.target.files[0]; if(!f) return;
-            const reader = new FileReader(); reader.readAsDataURL(f);
-            reader.onload = async (ev) => {
-                const b64 = ev.target.result.split(',')[1];
-                const endpoint = uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media';
-                await api(endpoint, { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: b64, filename: f.name, contentType: f.type })});
-                viewSubject(selected.value.id);
+        const compressAndUpload = async (file, endpoint) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX = 1200;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+                    else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+                    
+                    notify("Uploading...", "info");
+                    await api(endpoint, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            subjectId: selectedSubject.value.id,
+                            data: b64,
+                            filename: file.name,
+                            contentType: 'image/jpeg',
+                            description: prompt("Evidence description (optional):") || ''
+                        })
+                    });
+                    viewSubject(selectedSubject.value.id);
+                    fetchDashboard();
+                    notify("Upload Complete");
+                };
             };
         };
-          const deleteItem = async (table, id) => { if(confirm('Delete this item?')) { await withAction(async () => { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); await viewSubject(selected.value.id); }); } };
-        const burnProtocol = async () => { if(prompt("Type 'BURN' to confirm factory reset.") === 'BURN') { await api('/nuke', { method: 'POST' }); localStorage.clear(); location.reload(); } };
-        const modalTitle = computed(() => { const m = { 'add-subject': 'Add Contact', 'edit-profile': 'Edit Contact', 'add-interaction': 'Log Meeting', 'add-location': 'Pin Location', 'add-intel': 'Add Observation', 'add-rel': 'Add Connection', 'share-secure': 'Share Access', 'settings': 'Settings' }; return m[modal.active] || 'System Dialog'; });
 
-        onMounted(() => { if(localStorage.getItem('admin_id')) { view.value = 'app'; fetchData(); } });
+        const handleMediaUpload = (e) => {
+             if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-photo');
+        };
+        const handleAvatarUpload = (e) => {
+             if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-avatar');
+        };
 
-        return { 
-            view, auth, loading, actionLoading, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms, fileInput,
-            activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
-            handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
-            createShareLink, fetchShareLinks, revokeLink, copyShare, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
-            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
+        // Events, Rels, Routine, Links
+        const submitEvent = async () => {
+            await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Event Logged");
+        };
+        const submitRel = async () => {
+            await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Connection Established");
+        };
+        const submitRoutine = async () => {
+            await api('/routine', { method: 'POST', body: JSON.stringify({ ...forms.routine, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); notify("Routine Added");
+        };
+        const submitMediaLink = async () => {
+            await api('/media-link', { method: 'POST', body: JSON.stringify({ ...forms.mediaLink, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Link Attached");
+        };
+
+
+        // Graph
+        let network = null;
+        const loadGraph = async () => {
+            const data = await api('/graph?adminId=' + localStorage.getItem('admin_id'));
+            const container = document.getElementById('network-graph');
+            if(!container) return;
+            
+            const nodes = data.nodes.map(n => ({
+                id: n.id,
+                label: n.full_name,
+                shape: 'circularImage',
+                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random',
+                size: 30, borderWidth: 3, 
+                color: { border: n.status === 'Active' ? '#10b981' : '#64748b', background: '#1e293b' }
+            }));
+            
+            const edges = data.edges.map(e => ({
+                from: e.from_id, to: e.to_id, label: e.label, arrows: 'to',
+                color: { color: '#475569' }, 
+                font: { size: 10, color: '#94a3b8', strokeWidth: 0, align: 'middle', background: '#1e293b' }
+            }));
+            
+            network = new vis.Network(container, { nodes, edges }, {
+                nodes: { font: { color: '#e2e8f0' } },
+                physics: { stabilization: true, barnesHut: { gravitationalConstant: -4000 } },
+                interaction: { hover: true }
+            });
+            network.on('click', (p) => { if(p.nodes.length) viewSubject(p.nodes[0]); });
+        };
+
+        const fitGraph = () => network?.fit();
+        const refreshGraph = () => loadGraph();
+        watch(graphSearch, (v) => {
+            if(!network) return;
+            const nodes = network.body.data.nodes.get();
+            const matches = nodes.filter(n => n.label.toLowerCase().includes(v.toLowerCase())).map(n => n.id);
+            network.selectNodes(matches);
+        });
+
+        watch(currentTab, (v) => { if(v === 'graph') setTimeout(loadGraph, 100); });
+
+        // Utils
+        const openModal = (type, parentId = null) => {
+            modal.active = type;
+            modal.parentId = parentId;
+            modalStep.value = 'Identity';
+            
+            if(type === 'quick-note') {
+                forms.intel.category = 'General';
+                forms.intel.label = 'Field Note ' + new Date().toLocaleTimeString();
+                forms.intel.confidence = 100;
+            } else if (type === 'add-intel') {
+                forms.intel = { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' };
+            } else if (type === 'add-subject') {
+                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
+            } else if (type === 'edit-profile') {
+                forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
+            } else if (type === 'add-routine') {
+                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '' };
+            } else if (type === 'add-media-link') {
+                forms.mediaLink = { url: '', description: '' };
+            }
+        };
+        const closeModal = () => modal.active = null;
+        
+        const deleteItem = async (table, id) => {
+            if(confirm("Permanently delete this item?")) {
+                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
+                if(table === 'subjects') { currentTab.value = 'subjects'; fetchSubjects(); }
+                else viewSubject(selectedSubject.value.id);
+                notify("Item Deleted");
+            }
+        };
+
+        const exportData = () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selectedSubject.value, null, 2));
+            const node = document.createElement('a');
+            node.setAttribute("href", dataStr);
+            node.setAttribute("download", \`dossier_\${selectedSubject.value.full_name.replace(/\s/g,'_')}.json\`);
+            node.click();
+        };
+
+        // Keyboard Shortcuts
+        const handleKeydown = (e) => {
+            // Cmd+K or Ctrl+K for search
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                currentTab.value = 'subjects';
+                setTimeout(() => document.getElementById('searchInput')?.focus(), 100);
+            }
+            // Escape to close modals
+            if (e.key === 'Escape') {
+                if (lightbox.active) lightbox.active = null;
+                else if (modal.active) closeModal();
+            }
+        };
+
+        onMounted(async () => {
+             document.addEventListener('keydown', handleKeydown);
+             const status = await api('/status');
+             if(!status.adminExists) setupMode.value = true;
+             else if(localStorage.getItem('admin_id')) {
+                 view.value = 'app';
+                 initApp();
+             }
+        });
+
+        onUnmounted(() => {
+            document.removeEventListener('keydown', handleKeydown);
+        });
+
+        return {
+            view, setupMode, auth, loading, dashboard, subjects, suggestions, currentTab, subTab, navItems,
+            searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
+            expandedState, graphSearch, modalStep, toasts,
+            handleAuth, logout: () => { localStorage.clear(); location.reload(); },
+            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink,
+            handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
+            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge
         };
       }
     }).mount('#app');
@@ -1625,264 +1652,191 @@ function serveHtml() {
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
 
-// --- 6. ROUTER & EXPORT ---
+// --- Routes & Handlers ---
+
+async function handleLogin(req, db) {
+    const { email, password } = await req.json();
+    const admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+    if (!admin) return errorResponse('Invalid credentials', 401);
+    
+    const hashed = await hashPassword(password);
+    if (hashed !== admin.password_hash) return errorResponse('Invalid credentials', 401);
+    
+    return response({ id: admin.id, email: admin.email });
+}
+
+async function handleSetup(req, db) {
+    const { email, password } = await req.json();
+    const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
+    if (count.c > 0) return errorResponse('Admin already exists', 403);
+    
+    // Setup runs ensureschema
+    await ensureSchema(db);
+
+    const hash = await hashPassword(password);
+    const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+    return response({ id: res.meta.last_row_id });
+}
+
+async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
+    const { subjectId, data, filename, contentType, description } = await req.json();
+    const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+    const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    
+    await bucket.put(key, binary, { httpMetadata: { contentType } });
+    
+    if (isAvatar) {
+        await db.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+    } else {
+        await db.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?, ?, ?, ?, ?)')
+            .bind(subjectId, key, contentType, description, isoTimestamp()).run();
+    }
+    return response({ success: true, key });
+}
+
+// --- Main Worker Entrypoint ---
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
-    const path = url.pathname.endsWith('/') && url.pathname.length > 1 ? url.pathname.slice(0, -1) : url.pathname;
-
-    if (req.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: CORS_HEADERS,
-      });
-    }
+    const path = url.pathname;
 
     try {
-      ensureEnv(env);
-      const db = new Database(env.DB);
-      await db.ensureSchema();
-
-      if (path === '/api/health' && req.method === 'GET') {
-        const now = isoTimestamp();
-        return jsonResponse({
-          status: 'ok',
-          service: APP_TITLE,
-          timestamp: now,
-        });
-      }
-
-      // PUBLIC ROUTES
-      const shareHtmlMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-      if (req.method === 'GET' && shareHtmlMatch) return serveSharedHtml(shareHtmlMatch[1]);
-
-      if (req.method === 'GET' && (path === '/' || path === '/index.html')) return serveHtml();
-
-      if (req.method === 'GET' && path.startsWith('/api/media/')) {
-        const key = path.replace('/api/media/', '');
-        const obj = await env.BUCKET.get(key);
-        if (!obj) return new Response('Not found', { status: 404 });
-        return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg', ...CORS_HEADERS } });
-      }
-
-      // API ROUTES
-      const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-      if (req.method === 'GET' && shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-      if (path === '/api/login' && req.method === 'POST') return handleLogin(req, env.DB);
-      if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-      if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-      if (path === '/api/subject-suggestions') return handleGetSubjectSuggestions(env.DB, url.searchParams.get('adminId'));
-
-      // Subjects
-      if (path === '/api/subjects') {
-        if (req.method === 'GET') {
-          const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-          return jsonResponse(res.results);
+        if (req.method === 'GET' && path === '/') return serveHtml();
+        
+        // REMOVED: await ensureSchema(env.DB); from every single request.
+        // It now runs only once per worker instance via caching or setup.
+        // However, for first runs on existing instances, we should run it lightly.
+        if (path.startsWith('/api/') && !schemaInitialized) {
+             await ensureSchema(env.DB);
         }
-        if (req.method === 'POST') {
-          const p = sanitizeSubjectPayload(await safeJson(req));
-          await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, religion, modus_operandi, weakness, dob, age, avatar_path, last_sighted, height, weight, identifying_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .bind(
-              safeVal(p.admin_id),
-              safeVal(p.full_name),
-              safeVal(p.alias),
-              safeVal(p.threat_level),
-              safeVal(p.status),
-              safeVal(p.sex),
-              safeVal(p.occupation),
-              safeVal(p.nationality),
-              safeVal(p.ideology),
-              safeVal(p.religion),
-              safeVal(p.modus_operandi),
-              safeVal(p.weakness),
-              safeVal(p.dob),
-              safeVal(p.age),
-              safeVal(p.avatar_path),
-              safeVal(p.last_sighted),
-              safeVal(p.height),
-              safeVal(p.weight),
-              safeVal(p.identifying_marks),
-              isoTimestamp()
-            )
-            .run();
-          return jsonResponse({ success: true });
+        
+        // Auth & Setup
+        if (path === '/api/status') {
+            const c = await env.DB.prepare('SELECT COUNT(*) as c FROM admins').first();
+            return response({ adminExists: c.c > 0 });
         }
-      }
+        if (path === '/api/setup-admin') return handleSetup(req, env.DB);
+        if (path === '/api/login') return handleLogin(req, env.DB);
+        
+        // Data Operations
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
 
-      const subjectIdMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-      if (subjectIdMatch) {
-        const id = subjectIdMatch[1];
-        if (req.method === 'GET') return handleGetSubjectFull(env.DB, id);
-        if (req.method === 'PATCH') {
-          const body = await safeJson(req);
-          const payload = sanitizeSubjectPayload(body);
-          delete payload.id;
-          delete payload.created_at;
-
-          const keys = Object.keys(payload);
-          if (!keys.length) return errorResponse('No valid subject fields provided', 400);
-
-          const set = keys.map((k) => `${k} = ?`).join(', ');
-          const vals = keys.map((k) => payload[k]);
-          await env.DB.prepare(`UPDATE subjects SET ${set}, updated_at = ? WHERE id = ?`).bind(...vals, isoTimestamp(), id).run();
-
-          return jsonResponse({ success: true });
-        }
-      }
-
-      // Share Links Management
-      if (path === '/api/share-links') {
-        if (req.method === 'POST') return handleShareCreate(req, env.DB, url.origin);
-        if (req.method === 'GET') return handleShareList(env.DB, url.searchParams.get('subjectId'), url.origin);
-        if (req.method === 'DELETE') return handleShareRevoke(env.DB, url.searchParams.get('token'));
-      }
-
-      // Generic Writes
-      if (req.method === 'POST') {
-        const p = await safeJson(req);
-
-        if (path === '/api/interaction') {
-          await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, created_at) VALUES (?,?,?,?,?,?)')
-            .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), isoTimestamp()).run();
-          return jsonResponse({ success: true });
+        // Subject Operations
+        if (path === '/api/subjects') {
+            if (req.method === 'POST') {
+                const p = await req.json();
+                await env.DB.prepare(`INSERT INTO subjects (
+                    admin_id, full_name, occupation, location, dob, status, created_at, 
+                    height, weight, eye_color, hair_color, blood_type, identifying_marks, 
+                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality, 
+                    education, religion, contact, social_links, digital_identifiers
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                    .bind(
+                        p.adminId, 
+                        p.full_name || 'Unknown Subject', 
+                        p.occupation || null, 
+                        p.location || null,
+                        p.dob || null,
+                        p.status || 'Active',
+                        isoTimestamp(),
+                        p.height || null,
+                        p.weight || null,
+                        p.eye_color || null,
+                        p.hair_color || null,
+                        p.blood_type || null,
+                        p.identifying_marks || null,
+                        p.mbti || null,
+                        p.alignment || null,
+                        p.habits || null,
+                        p.notes || null,
+                        p.last_sighted || null,
+                        p.age || null,
+                        p.gender || null,
+                        p.nationality || null,
+                        p.education || null,
+                        p.religion || null,
+                        p.contact || null,
+                        p.social_links || null,
+                        p.digital_identifiers || null
+                    ).run();
+                return response({ success: true });
+            }
+            const adminId = url.searchParams.get('adminId');
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(adminId).all();
+            return response(res.results);
         }
 
-        if (path === '/api/location') {
-          return handleCreateLocation(env.DB, p);
+        // Single Subject Get/Update
+        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (idMatch) {
+             const id = idMatch[1];
+             if (req.method === 'PATCH') return handleUpdateSubject(req, env.DB, id);
+             return handleGetSubjectFull(env.DB, id);
         }
 
-        if (path === '/api/intel') {
-          await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-            .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-          return jsonResponse({ success: true });
+        // Sub-Resources
+        if (path === '/api/data-point') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, confidence, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        if (path === '/api/event') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?,?,?,?,?)')
+                .bind(p.subjectId, p.title, p.description || '', p.date || isoTimestamp(), isoTimestamp()).run();
+            return response({ success: true });
         }
 
         if (path === '/api/relationship') {
-          await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, custom_name, custom_avatar, created_at) VALUES (?,?,?,?,?,?)')
-            .bind(p.subjectA, safeVal(p.targetId), p.type, safeVal(p.customName), safeVal(p.customAvatar), isoTimestamp()).run();
-          return jsonResponse({ success: true });
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
+                .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
+            return response({ success: true });
         }
 
+        // Routine
+        if (path === '/api/routine') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, created_at) VALUES (?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        // Media Links
+        if (path === '/api/media-link') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, media_type, external_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                .bind(p.subjectId, 'link-' + Date.now(), 'link', p.description || 'External Link', 'link', p.url, isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        // Delete Handler
         if (path === '/api/delete') {
-          const { table, id } = p;
-          const safeTables = ['subjects', 'subject_interactions', 'subject_locations', 'subject_intel', 'subject_relationships', 'subject_media'];
-          if (safeTables.includes(table)) {
-            if (table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-            else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-            return jsonResponse({ success: true });
-          }
+            const { table, id } = await req.json();
+            return handleDeleteItem(req, env.DB, table, id);
         }
 
-        if (path === '/api/nuke') {
-          await db.nuke();
-          return jsonResponse({ success: true });
+        // Media
+        if (path === '/api/upload-photo') return handleUploadPhoto(req, env.DB, env.BUCKET, false);
+        if (path === '/api/upload-avatar') return handleUploadPhoto(req, env.DB, env.BUCKET, true);
+
+        if (path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
         }
+        
+        if (path === '/api/graph') return handleGetGraph(env.DB, url.searchParams.get('adminId'));
 
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-          const { subjectId, data, filename, contentType } = p;
-          const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-          // Fix: Use generic buffer handling instead of browser-specific atob if possible, 
-          // but strictly sticking to user environment: this is standard JS in V8
-          const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-          await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-
-          if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-          else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-          return jsonResponse({ success: true });
-        }
-      }
-
-      return errorResponse("Route Not Found", 404);
-
-    } catch (e) {
-      const status = e instanceof BadRequestError ? e.status : 500;
-      const payload = status === 500
-        ? { error: "Internal Server Error", message: e.message, stack: e.stack }
-        : { error: e.message };
-      return jsonResponse(payload, status);
+        return new Response('Not found', { status: 404 });
+    } catch(e) {
+        return errorResponse(e.message);
     }
   }
 };
-
-// --- DATA FETCHERS ---
-
-async function handleGetDashboard(db, adminId) {
-  const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Contact Added' as desc, created_at as date FROM subjects WHERE admin_id = ?
-        UNION ALL
-        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
-        UNION ALL
-        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
-        ORDER BY date DESC LIMIT 20
-    `).bind(adminId, adminId, adminId).all();
-
-  const stats = await db.prepare(`
-        SELECT 
-            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
-            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
-            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
-    `).bind(adminId, adminId, adminId).first();
-
-  return jsonResponse({ feed: recent.results, stats });
-}
-
-async function handleGetSubjectFull(db, id) {
-  const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-  if (!subject) return errorResponse("Subject not found", 404);
-
-  const [media, intel, relationships, interactions, locations] = await Promise.all([
-    db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-    db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
-    db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.id as target_real_id
-            FROM subject_relationships r
-            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
-            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(id, id, id).all(),
-    db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(id).all(),
-    db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
-  ]);
-
-  return jsonResponse({
-    ...subject,
-    media: media.results,
-    intel: intel.results,
-    relationships: relationships.results,
-    interactions: interactions.results,
-    locations: (locations.results || []).map(coerceLatLng)
-  });
-}
-
-async function handleGetMapData(db, adminId) {
-  const query = `
-        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level
-        FROM subject_locations l
-        JOIN subjects s ON l.subject_id = s.id
-        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
-    `;
-  const res = await db.prepare(query).bind(adminId).all();
-  return jsonResponse((res.results || []).map(coerceLatLng));
-}
-
-async function handleGetSubjectSuggestions(db, adminId) {
-  if (!adminId) return errorResponse('Admin ID required', 400);
-
-  const fetchDistinct = async (column) => {
-    const res = await db.prepare(`
-      SELECT DISTINCT ${column} as value
-      FROM subjects
-      WHERE admin_id = ? AND ${column} IS NOT NULL AND TRIM(${column}) != ''
-      ORDER BY ${column} COLLATE NOCASE
-    `).bind(adminId).all();
-    return (res.results || []).map((r) => r.value);
-  };
-
-  const [nationality, ideology, religion] = await Promise.all([
-    fetchDistinct('nationality'),
-    fetchDistinct('ideology'),
-    fetchDistinct('religion')
-  ]);
-
-  return jsonResponse({ nationality, ideology, religion });
-}
