@@ -721,10 +721,10 @@ function serveSharedHtml(token) {
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-50 dark:bg-slate-900">
+<html lang="en" class="h-full bg-slate-950">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>PEOPLE OS // INTELLIGENCE</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
@@ -737,52 +737,69 @@ function serveHtml() {
   <link href="https://unpkg.com/vis-timeline/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
   
   <style>
-    :root { --primary: #3b82f6; --bg-dark: #0f172a; }
-    body { font-family: 'Inter', sans-serif; }
+    :root { --primary: #3b82f6; --bg-dark: #020617; }
+    body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
-    .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-    .glass-input { background: white; border: 1px solid #cbd5e1; color: #1e293b; transition: all 0.2s; border-radius: 0.5rem; }
+    /* Improved Glassmorphism for Dark Mode */
+    .glass { 
+        background: rgba(30, 41, 59, 0.7); 
+        backdrop-filter: blur(12px); 
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08); 
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); 
+        border-radius: 0.75rem; 
+    }
+    
+    .glass-input { 
+        background: #0f172a; 
+        border: 1px solid #334155; 
+        color: white; 
+        transition: all 0.2s; 
+        border-radius: 0.5rem; 
+    }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
-    .dark body { background: var(--bg-dark); color: #cbd5e1; }
-    .dark .glass { background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.05); }
-    .dark .glass-input { background: #020617; border-color: #334155; color: white; }
-    .dark .glass-input:focus { border-color: var(--primary); }
-
     /* Custom Scrollbar */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    .dark ::-webkit-scrollbar-thumb { background: #475569; }
 
-    /* Map & Timeline overrides */
-    .vis-timeline { border: none; font-family: 'Inter'; font-size: 12px; }
-    .vis-item { border-color: #3b82f6; background-color: #eff6ff; color: #1e40af; border-radius: 4px; }
-    .vis-item.vis-selected { border-color: #2563eb; background-color: #3b82f6; color: white; }
-    .dark .vis-item { background-color: rgba(59, 130, 246, 0.2); color: white; }
+    /* Mobile Safe Area Padding */
+    .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
+
+    /* Vis.js Dark Mode Overrides */
+    .vis-timeline { border: none; font-family: 'Inter'; font-size: 12px; color: #cbd5e1; }
+    .vis-item { border-color: #3b82f6; background-color: rgba(59, 130, 246, 0.2); color: white; border-radius: 4px; }
+    .vis-item.vis-selected { border-color: #60a5fa; background-color: #2563eb; }
+    .vis-time-axis .vis-text { color: #94a3b8; }
     
     /* Animation */
-    @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
   </style>
 </head>
-<body class="h-full overflow-hidden dark">
+<body class="h-full overflow-hidden text-slate-200">
   <div id="app" class="h-full flex flex-col">
 
     <!-- AUTH SCREEN -->
-    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-50 dark:bg-slate-950">
-        <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10">
+    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
+        <div class="absolute inset-0 overflow-hidden">
+            <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+            <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        </div>
+        <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10 border border-slate-800">
             <div class="text-center mb-8">
-                <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg">
+                <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg shadow-blue-500/20">
                     <i class="fa-solid fa-layer-group"></i>
                 </div>
-                <h1 class="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">People OS</h1>
-                <p class="text-slate-500 text-sm mt-1">Intelligence System</p>
+                <h1 class="text-2xl font-bold text-white tracking-tight">People OS</h1>
+                <p class="text-slate-400 text-sm mt-1">Intelligence System</p>
             </div>
             <form @submit.prevent="handleAuth" class="space-y-4">
-                <input v-model="auth.email" type="email" placeholder="Email / ID" class="glass-input w-full p-3 text-sm" required>
-                <input v-model="auth.password" type="password" placeholder="Password" class="glass-input w-full p-3 text-sm" required>
-                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg shadow-blue-900/20">
+                <input v-model="auth.email" type="email" placeholder="Email / ID" class="glass-input w-full p-3.5 text-sm placeholder-slate-500" required>
+                <input v-model="auth.password" type="password" placeholder="Password" class="glass-input w-full p-3.5 text-sm placeholder-slate-500" required>
+                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg shadow-blue-900/30 flex items-center justify-center">
+                    <i v-if="loading" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
                     {{ loading ? 'Verifying...' : 'Access System' }}
                 </button>
             </form>
@@ -790,77 +807,80 @@ function serveHtml() {
     </div>
 
     <!-- MAIN APP -->
-    <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
+    <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative bg-slate-950">
         
-        <!-- SIDEBAR -->
-        <nav class="hidden md:flex flex-col w-20 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 items-center py-6 z-20 shadow-xl">
-            <div class="mb-8 text-blue-600 dark:text-blue-500 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
+        <!-- DESKTOP SIDEBAR -->
+        <nav class="hidden md:flex flex-col w-20 bg-slate-900 border-r border-slate-800 items-center py-6 z-20 shadow-xl">
+            <div class="mb-8 text-blue-500 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all" :title="t.label">
-                    <i :class="t.icon" class="text-xl"></i>
-                    <span class="text-[10px] font-medium">{{t.label}}</span>
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'text-slate-400 hover:text-white hover:bg-slate-800'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all group" :title="t.label">
+                    <i :class="t.icon" class="text-xl group-hover:scale-110 transition-transform"></i>
+                    <span class="text-[9px] font-bold uppercase tracking-wider">{{t.label}}</span>
                 </button>
             </div>
-            <button @click="openModal('cmd')" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-4" title="Search (Cmd+K)"><i class="fa-solid fa-magnifying-glass"></i></button>
-            <button @click="openSettings" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-4"><i class="fa-solid fa-gear"></i></button>
+            <button @click="openModal('cmd')" class="text-slate-400 hover:text-white p-4 transition-colors" title="Search (Cmd+K)"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <button @click="openSettings" class="text-slate-400 hover:text-white p-4 transition-colors"><i class="fa-solid fa-gear"></i></button>
         </nav>
 
-        <!-- HEADER (Mobile) - UPDATED COLOR SCHEME -->
-        <header class="md:hidden h-16 glass z-20 shrink-0 flex items-center justify-between px-4 mb-4 rounded-none border-x-0 border-t-0 sticky top-0">
-            <div class="flex items-center gap-2">
-                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm shadow-lg shadow-blue-500/30">
+        <!-- MOBILE TOP BAR (Brand + Actions) -->
+        <header class="md:hidden h-14 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 sticky top-0">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm shadow-md">
                     <i class="fa-solid fa-layer-group"></i>
                 </div>
-                <span class="font-bold text-lg text-slate-900 dark:text-white tracking-tight">People OS</span>
+                <span class="font-bold text-base text-white tracking-tight">People OS</span>
             </div>
-            <div class="flex items-center gap-2">
-                 <button @click="openModal('cmd')" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><i class="fa-solid fa-magnifying-glass"></i></button>
-                 <button @click="changeTab('dashboard')" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><i class="fa-solid fa-house"></i></button>
+            <div class="flex items-center gap-1">
+                 <button @click="openModal('cmd')" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-white active:bg-slate-800 transition-colors"><i class="fa-solid fa-magnifying-glass"></i></button>
+                 <button @click="openSettings" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-white active:bg-slate-800 transition-colors"><i class="fa-solid fa-gear"></i></button>
             </div>
         </header>
 
         <!-- CONTENT -->
-        <main class="flex-1 relative overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col">
+        <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-20 md:pb-0 safe-area-pb">
 
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div class="max-w-6xl mx-auto space-y-6">
                     <!-- Stats Grid -->
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div class="glass p-5 border-l-4 border-blue-500">
-                            <div class="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Profiles</div>
-                            <div class="text-3xl font-bold text-slate-900 dark:text-white mt-1">{{ stats.targets || 0 }}</div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                        <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
+                            <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
+                            <div class="text-2xl md:text-3xl font-bold text-white mt-1">{{ stats.targets || 0 }}</div>
+                            <i class="fa-solid fa-users absolute -bottom-2 -right-2 text-4xl text-white/5"></i>
                         </div>
-                        <div class="glass p-5 border-l-4 border-amber-500">
-                            <div class="text-xs text-slate-500 font-bold uppercase tracking-wider">Interactions</div>
-                            <div class="text-3xl font-bold text-slate-900 dark:text-white mt-1">{{ stats.encounters || 0 }}</div>
+                        <div class="glass p-4 md:p-5 border-l-4 border-amber-500 relative overflow-hidden">
+                            <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Events</div>
+                            <div class="text-2xl md:text-3xl font-bold text-white mt-1">{{ stats.encounters || 0 }}</div>
+                            <i class="fa-solid fa-comments absolute -bottom-2 -right-2 text-4xl text-white/5"></i>
                         </div>
-                        <div class="glass p-5 border-l-4 border-emerald-500">
-                            <div class="text-xs text-slate-500 font-bold uppercase tracking-wider">Files & Media</div>
-                            <div class="text-3xl font-bold text-slate-900 dark:text-white mt-1">{{ stats.evidence || 0 }}</div>
+                        <div class="glass p-4 md:p-5 border-l-4 border-emerald-500 relative overflow-hidden">
+                            <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Files</div>
+                            <div class="text-2xl md:text-3xl font-bold text-white mt-1">{{ stats.evidence || 0 }}</div>
+                            <i class="fa-solid fa-file absolute -bottom-2 -right-2 text-4xl text-white/5"></i>
                         </div>
-                        <button @click="openModal('add-subject')" class="bg-blue-600 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all hover:bg-blue-700 shadow-lg shadow-blue-500/20">
+                        <button @click="openModal('add-subject')" class="bg-blue-600 active:bg-blue-700 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20 md:hover:scale-[1.02]">
                             <i class="fa-solid fa-plus text-xl"></i>
                             <span class="text-xs font-bold uppercase tracking-wider">Add Profile</span>
                         </button>
                     </div>
 
                     <!-- Activity Feed -->
-                    <div class="glass overflow-hidden">
-                        <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
-                            <h3 class="text-sm font-bold text-slate-700 dark:text-slate-300">Recent Updates</h3>
-                            <button @click="fetchData" class="text-slate-400 hover:text-blue-500"><i class="fa-solid fa-arrows-rotate"></i></button>
+                    <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
+                        <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                            <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
+                            <button @click="fetchData" class="text-slate-500 hover:text-blue-400"><i class="fa-solid fa-arrows-rotate"></i></button>
                         </div>
-                        <div class="divide-y divide-slate-200 dark:divide-slate-700 max-h-[60vh] overflow-y-auto">
-                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex gap-4 items-start transition-colors">
-                                <div class="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 shrink-0">
+                        <div class="divide-y divide-slate-800 overflow-y-auto flex-1">
+                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-slate-800/50 active:bg-slate-800 cursor-pointer flex gap-4 items-start transition-colors">
+                                <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-blue-500 shrink-0 border border-slate-700">
                                     <i class="fa-solid" :class="item.type === 'interaction' ? 'fa-comments' : (item.type === 'location' ? 'fa-location-dot' : 'fa-user')"></i>
                                 </div>
-                                <div>
-                                    <div class="text-sm font-bold text-slate-900 dark:text-white">
+                                <div class="min-w-0">
+                                    <div class="text-sm font-bold text-slate-200 truncate">
                                         {{ item.title }}
                                     </div>
-                                    <div class="text-xs text-slate-500 mt-1">{{ item.desc }} &bull; {{ new Date(item.date).toLocaleDateString() }}</div>
+                                    <div class="text-xs text-slate-500 mt-0.5 truncate">{{ item.desc }} &bull; {{ new Date(item.date).toLocaleDateString() }}</div>
                                 </div>
                             </div>
                         </div>
@@ -869,80 +889,81 @@ function serveHtml() {
             </div>
 
             <!-- TARGETS LIST -->
-            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col">
-                <div class="p-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex gap-3 shadow-sm z-10">
-                    <div class="relative flex-1">
-                        <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
-                        <input v-model="search" placeholder="Search profiles..." class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg py-3 pl-10 text-sm focus:ring-2 focus:ring-blue-500">
+            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
+                <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
+                    <div class="relative">
+                        <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500"></i>
+                        <input v-model="search" placeholder="Search profiles..." class="w-full bg-slate-950 border border-slate-800 rounded-lg py-3 pl-10 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-white placeholder-slate-600 transition-colors">
                     </div>
                 </div>
                 <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all group relative overflow-hidden flex gap-4">
-                         <div class="w-16 h-16 bg-slate-200 dark:bg-slate-800 rounded-lg overflow-hidden shrink-0">
+                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:border-blue-500/50 transition-all group relative overflow-hidden flex gap-4 items-center">
+                         <div class="w-14 h-14 bg-slate-800 rounded-lg overflow-hidden shrink-0 border border-slate-700">
                             <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
-                            <div v-else class="w-full h-full flex items-center justify-center text-slate-400 text-xl font-bold">{{ s.full_name.charAt(0) }}</div>
+                            <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-lg font-bold">{{ s.full_name.charAt(0) }}</div>
                         </div>
                         <div class="min-w-0 flex-1">
-                            <div class="font-bold text-slate-900 dark:text-white text-sm truncate">{{ s.full_name }}</div>
-                            <div class="text-xs text-slate-500 truncate mb-2">{{ s.occupation || 'No Occupation' }}</div>
-                            <span class="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold" :class="getThreatColor(s.threat_level, true)">{{ s.threat_level === 'Critical' ? 'High Priority' : s.threat_level }}</span>
+                            <div class="font-bold text-white text-sm truncate">{{ s.full_name }}</div>
+                            <div class="text-xs text-slate-500 truncate mb-1.5">{{ s.occupation || 'No Occupation' }}</div>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold bg-slate-800 border border-slate-700" :class="getThreatColor(s.threat_level)">{{ s.threat_level }}</span>
                         </div>
+                        <i class="fa-solid fa-chevron-right text-slate-700 absolute right-4"></i>
                     </div>
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB (Revised) -->
-            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-100 dark:bg-slate-900">
+            <!-- GLOBAL MAP TAB -->
+            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <!-- Map Sidebar Overlay -->
-                <div class="absolute top-4 left-4 bottom-4 w-80 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform" :class="{'translate-x-0': showMapSidebar, '-translate-x-[110%]': !showMapSidebar}">
-                    <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-white/50 dark:bg-slate-900/50 backdrop-blur">
-                        <h3 class="font-bold text-slate-900 dark:text-white">Locations</h3>
-                        <div class="text-xs text-slate-500">{{mapData.length}} Points</div>
+                <div class="absolute top-4 left-4 bottom-4 w-80 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 border-slate-700/50" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
+                    <div class="p-4 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/80 backdrop-blur">
+                        <h3 class="font-bold text-white">Locations</h3>
+                        <div class="text-xs text-slate-400">{{mapData.length}} Points</div>
                     </div>
-                    <div class="flex-1 overflow-y-auto p-2 space-y-2">
-                        <div v-for="loc in mapData" @click="flyToGlobal(loc)" class="p-3 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer border border-transparent hover:border-blue-200 transition-all">
-                             <div class="font-bold text-sm text-slate-800 dark:text-slate-200">{{loc.full_name}}</div>
-                             <div class="text-xs text-slate-500">{{loc.name}} ({{loc.type}})</div>
+                    <div class="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-900/50">
+                        <div v-for="loc in mapData" @click="flyToGlobal(loc)" class="p-3 rounded-lg hover:bg-white/5 cursor-pointer border border-transparent hover:border-slate-700 transition-all">
+                             <div class="font-bold text-sm text-slate-200">{{loc.full_name}}</div>
+                             <div class="text-xs text-slate-500 mt-0.5">{{loc.name}} <span class="text-slate-600">•</span> {{loc.type}}</div>
                         </div>
                     </div>
                 </div>
-                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-4 left-4 z-[401] bg-white dark:bg-slate-800 p-2 rounded shadow text-slate-500" v-if="!showMapSidebar"><i class="fa-solid fa-list"></i></button>
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-4 left-4 z-[401] bg-slate-800 p-3 rounded-lg shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
             </div>
 
             <!-- GLOBAL NETWORK TAB -->
-            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-900 relative">
-                <div class="absolute top-4 left-4 z-10 glass px-4 py-2">
-                    <h3 class="font-bold text-slate-900 dark:text-white">Global Relations</h3>
-                    <p class="text-xs text-slate-500">Entity Interconnections</p>
+            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-950 relative">
+                <div class="absolute top-4 left-4 z-10 glass px-4 py-2 border-slate-700/50">
+                    <h3 class="font-bold text-white text-sm">Global Relations</h3>
+                    <p class="text-xs text-slate-500">Entity Graph</p>
                 </div>
-                <div id="globalNetworkGraph" class="w-full h-full"></div>
+                <div id="globalNetworkGraph" class="w-full h-full bg-slate-950"></div>
             </div>
 
             <!-- SUBJECT DETAIL (The Profile) -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-950">
                 
                 <!-- TOP BAR -->
-                <div class="h-16 border-b border-slate-200 dark:border-slate-700 flex items-center px-4 justify-between bg-white dark:bg-slate-900 shrink-0 z-10">
-                    <div class="flex items-center gap-4">
-                        <button @click="changeTab('targets')" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
-                        <div>
-                            <div class="font-bold text-slate-900 dark:text-white text-sm">{{ selected.full_name }}</div>
-                            <div class="text-xs text-slate-500">{{ selected.alias || 'Profile View' }}</div>
+                <div class="h-16 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/80 backdrop-blur z-10 sticky top-0">
+                    <div class="flex items-center gap-3">
+                        <button @click="changeTab('targets')" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
+                        <div class="min-w-0">
+                            <div class="font-bold text-white text-sm truncate max-w-[150px] md:max-w-none">{{ selected.full_name }}</div>
+                            <div class="text-xs text-slate-500 truncate">{{ selected.alias || 'Profile View' }}</div>
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('edit-profile')" class="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold"><i class="fa-solid fa-pen mr-2"></i>Edit</button>
-                        <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-blue-500/20"><i class="fa-solid fa-share-nodes mr-2"></i>Share</button>
+                        <button @click="openModal('edit-profile')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700"><i class="fa-solid fa-pen md:mr-2"></i><span class="hidden md:inline">Edit</span></button>
+                        <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-blue-500/20"><i class="fa-solid fa-share-nodes md:mr-2"></i><span class="hidden md:inline">Share</span></button>
                     </div>
                 </div>
 
                 <!-- SUB TABS -->
-                <div class="flex border-b border-slate-200 dark:border-slate-700 overflow-x-auto bg-white dark:bg-slate-900 shrink-0">
+                <div class="flex border-b border-slate-800 overflow-x-auto bg-slate-900/50 shrink-0 no-scrollbar">
                     <button v-for="t in ['Overview', 'Attributes', 'Timeline', 'Map', 'Network', 'Files']" 
                         @click="changeSubTab(t.toLowerCase())" 
-                        :class="subTab === t.toLowerCase() ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
-                        class="px-6 py-3 text-sm font-medium whitespace-nowrap transition-colors">
+                        :class="subTab === t.toLowerCase() ? 'text-blue-400 border-blue-500 bg-blue-500/5' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border-transparent'"
+                        class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex-1 md:flex-none text-center">
                         {{ t }}
                     </button>
                 </div>
@@ -955,12 +976,12 @@ function serveHtml() {
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <!-- Left Col -->
                             <div class="space-y-4">
-                                <div class="aspect-[4/5] bg-slate-200 dark:bg-slate-800 rounded-xl relative overflow-hidden group">
+                                <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    <button @click="triggerUpload('avatar')" class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-all"><i class="fa-solid fa-camera mr-2"></i> Change Photo</button>
+                                    <button @click="triggerUpload('avatar')" class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-all backdrop-blur-sm"><i class="fa-solid fa-camera mr-2"></i> Change Photo</button>
                                 </div>
-                                <div class="glass p-4">
-                                    <div class="text-xs text-slate-500 uppercase font-bold mb-2">Priority Level</div>
+                                <div class="glass p-4 border-slate-700/50">
+                                    <div class="text-xs text-slate-500 font-bold uppercase mb-2">Priority Level</div>
                                     <div class="flex justify-between items-center">
                                         <span class="text-lg font-bold" :class="getThreatColor(selected.threat_level)">{{selected.threat_level}}</span>
                                     </div>
@@ -970,29 +991,29 @@ function serveHtml() {
                             <!-- Right Col -->
                             <div class="md:col-span-2 space-y-6">
                                 <!-- Summary Box -->
-                                <div class="glass p-6 border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-900/10">
-                                    <h3 class="text-sm font-bold text-blue-600 dark:text-blue-400 mb-2">Profile Summary</h3>
-                                    <p class="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">{{ analysisResult?.summary || 'Insufficient data for summary.' }}</p>
-                                    <div class="flex gap-2 mt-3">
-                                        <span v-for="tag in analysisResult?.tags" class="text-[10px] px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 rounded-full font-bold">{{tag}}</span>
+                                <div class="glass p-5 border-l-4 border-blue-500 bg-blue-900/10">
+                                    <h3 class="text-sm font-bold text-blue-400 mb-2">Profile Summary</h3>
+                                    <p class="text-sm text-slate-300 leading-relaxed">{{ analysisResult?.summary || 'Insufficient data for summary.' }}</p>
+                                    <div class="flex gap-2 mt-3 flex-wrap">
+                                        <span v-for="tag in analysisResult?.tags" class="text-[10px] px-2 py-1 bg-blue-900/40 text-blue-300 rounded border border-blue-800 font-bold">{{tag}}</span>
                                     </div>
                                 </div>
 
-                                <div class="glass p-8">
-                                    <div class="grid grid-cols-2 gap-y-6 gap-x-12">
-                                        <div><label class="text-xs text-slate-400 uppercase font-bold block mb-1">Full Name</label><div class="text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-1">{{selected.full_name}}</div></div>
-                                        <div><label class="text-xs text-slate-400 uppercase font-bold block mb-1">Nationality</label><div class="text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-1">{{selected.nationality || 'Unspecified'}}</div></div>
-                                        <div><label class="text-xs text-slate-400 uppercase font-bold block mb-1">Occupation</label><div class="text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-1">{{selected.occupation || 'Unspecified'}}</div></div>
-                                        <div><label class="text-xs text-slate-400 uppercase font-bold block mb-1">Affiliation</label><div class="text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-1">{{selected.ideology || 'Unspecified'}}</div></div>
+                                <div class="glass p-6 md:p-8 border-slate-700/50">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-12">
+                                        <div><label class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Full Name</label><div class="text-white border-b border-slate-700 pb-2">{{selected.full_name}}</div></div>
+                                        <div><label class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Nationality</label><div class="text-white border-b border-slate-700 pb-2">{{selected.nationality || 'Unspecified'}}</div></div>
+                                        <div><label class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Occupation</label><div class="text-white border-b border-slate-700 pb-2">{{selected.occupation || 'Unspecified'}}</div></div>
+                                        <div><label class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Affiliation</label><div class="text-white border-b border-slate-700 pb-2">{{selected.ideology || 'Unspecified'}}</div></div>
                                     </div>
                                     <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div>
-                                            <label class="text-xs text-slate-400 uppercase font-bold block mb-2">Routine & Habits</label>
-                                            <div class="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-3 rounded h-32 overflow-y-auto whitespace-pre-wrap">{{selected.modus_operandi || 'No routine notes.'}}</div>
+                                            <label class="text-[10px] text-slate-500 uppercase font-bold block mb-2">Routine & Habits</label>
+                                            <div class="text-sm text-slate-400 bg-slate-900/50 p-3 rounded-lg h-32 overflow-y-auto whitespace-pre-wrap border border-slate-800">{{selected.modus_operandi || 'No routine notes.'}}</div>
                                         </div>
                                         <div>
-                                            <label class="text-xs text-slate-400 uppercase font-bold block mb-2">Sensitivities / Notes</label>
-                                            <div class="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-3 rounded h-32 overflow-y-auto whitespace-pre-wrap">{{selected.weakness || 'No private notes.'}}</div>
+                                            <label class="text-[10px] text-slate-500 uppercase font-bold block mb-2">Sensitivities / Notes</label>
+                                            <div class="text-sm text-slate-400 bg-slate-900/50 p-3 rounded-lg h-32 overflow-y-auto whitespace-pre-wrap border border-slate-800">{{selected.weakness || 'No private notes.'}}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -1000,38 +1021,37 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <!-- ATTRIBUTES TAB (The Ultimate Collection) -->
+                    <!-- ATTRIBUTES TAB -->
                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
-                            <h3 class="font-bold text-lg">Detailed Attributes</h3>
-                            <button @click="openModal('add-intel')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20">
+                            <h3 class="font-bold text-lg text-white">Detailed Attributes</h3>
+                            <button @click="openModal('add-intel')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-transform">
                                 <i class="fa-solid fa-plus mr-2"></i>Add Attribute
                             </button>
                         </div>
                         
-                        <!-- Categorized Grid -->
                         <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
-                            <h4 class="text-xs font-bold uppercase text-slate-400 border-b border-slate-200 dark:border-slate-700 pb-1">{{ category }}</h4>
-                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                <div v-for="item in items" :key="item.id" class="glass p-4 relative group hover:border-blue-500 transition-colors">
-                                    <div class="text-xs text-slate-500 uppercase font-bold mb-1">{{item.label}}</div>
-                                    <div class="text-slate-900 dark:text-white font-medium break-words">{{item.value}}</div>
-                                    <button @click="deleteItem('subject_intel', item.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                            <h4 class="text-xs font-bold uppercase text-slate-500 border-b border-slate-800 pb-1">{{ category }}</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <div v-for="item in items" :key="item.id" class="glass p-4 relative group hover:border-blue-500/50 transition-colors border-slate-700/50">
+                                    <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">{{item.label}}</div>
+                                    <div class="text-slate-200 font-medium break-words text-sm">{{item.value}}</div>
+                                    <button @click="deleteItem('subject_intel', item.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
                         </div>
-                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-500 bg-slate-100 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
-                            No detailed attributes logged yet. Add things like "Education", "Social Media", "Dietary Needs", etc.
+                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-dashed border-slate-800">
+                            No detailed attributes logged yet.
                         </div>
                     </div>
 
                     <!-- TIMELINE TAB -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="flex justify-between items-center">
-                             <h3 class="font-bold text-lg">Chronological History</h3>
-                             <button @click="openModal('add-interaction')" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-900 dark:text-white px-4 py-2 rounded-lg text-sm font-bold">Log Event</button>
+                             <h3 class="font-bold text-lg text-white">History</h3>
+                             <button @click="openModal('add-interaction')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Log Event</button>
                         </div>
-                        <div class="flex-1 glass p-4 relative">
+                        <div class="flex-1 glass p-4 relative border-slate-700/50">
                             <div id="visTimeline" class="w-full h-full"></div>
                         </div>
                     </div>
@@ -1039,21 +1059,21 @@ function serveHtml() {
                     <!-- MAP TAB -->
                     <div v-show="subTab === 'map'" class="h-full flex flex-col">
                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="font-bold text-lg">Known Locations</h3>
-                            <button @click="openModal('add-location')" class="bg-slate-200 dark:bg-slate-700 px-4 py-2 rounded-lg text-sm font-bold">Add Location</button>
+                            <h3 class="font-bold text-lg text-white">Known Locations</h3>
+                            <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
                         </div>
                         <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="md:col-span-2 bg-slate-200 rounded-xl overflow-hidden relative h-64 md:h-full min-h-[400px]">
+                            <div class="md:col-span-2 bg-slate-900 rounded-xl overflow-hidden relative h-64 md:h-full min-h-[300px] border border-slate-800">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
                             </div>
                             <div class="space-y-3 overflow-y-auto max-h-[600px]">
-                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 cursor-pointer hover:border-blue-500 transition-all" @click="flyTo(loc)">
+                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 cursor-pointer hover:border-blue-500/50 transition-all border-slate-700/50" @click="flyTo(loc)">
                                     <div class="flex justify-between items-center mb-1">
-                                        <div class="font-bold">{{loc.name}}</div>
-                                        <span class="text-[10px] uppercase bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded">{{loc.type}}</span>
+                                        <div class="font-bold text-white text-sm">{{loc.name}}</div>
+                                        <span class="text-[10px] uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{{loc.type}}</span>
                                     </div>
                                     <div class="text-xs text-slate-500 mb-2">{{loc.address}}</div>
-                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs text-red-500 hover:underline">Remove</button>
+                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs text-red-500 hover:text-red-400">Remove</button>
                                 </div>
                             </div>
                         </div>
@@ -1062,10 +1082,10 @@ function serveHtml() {
                     <!-- NETWORK TAB -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
                          <div class="flex justify-between items-center mb-4">
-                            <h3 class="font-bold text-lg">Connections Graph</h3>
-                            <button @click="openModal('add-rel')" class="bg-slate-200 dark:bg-slate-700 px-4 py-2 rounded-lg text-sm font-bold">Add Connection</button>
+                            <h3 class="font-bold text-lg text-white">Connections Graph</h3>
+                            <button @click="openModal('add-rel')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Connection</button>
                         </div>
-                        <div class="flex-1 glass border border-slate-200 dark:border-slate-700 relative overflow-hidden min-h-[400px]">
+                        <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
@@ -1073,17 +1093,17 @@ function serveHtml() {
                     <!-- FILES TAB -->
                     <div v-if="subTab === 'files'" class="space-y-6">
                         <div class="flex flex-col md:flex-row gap-6">
-                            <div @click="triggerUpload('media')" class="h-40 w-full md:w-56 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all text-slate-400 hover:text-blue-500">
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl mb-2"></i>
+                            <div @click="triggerUpload('media')" class="h-32 md:h-40 w-full md:w-56 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
+                                <i class="fa-solid fa-cloud-arrow-up text-3xl mb-2 group-hover:scale-110 transition-transform"></i>
                                 <span class="text-xs font-bold uppercase">Upload File</span>
                             </div>
                             <div class="flex-1 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-4">
-                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl">
+                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
                                     <img v-if="m.content_type.startsWith('image')" :src="'/api/media/' + m.object_key" class="w-full h-full object-cover">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-400 bg-slate-100 dark:bg-slate-800"><i class="fa-solid fa-file text-4xl"></i></div>
+                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
                                     <a :href="'/api/media/' + m.object_key" download class="absolute inset-0 z-10"></a>
-                                    <div class="absolute bottom-0 inset-x-0 bg-white/90 dark:bg-slate-900/90 p-2 text-xs font-medium truncate backdrop-blur-sm">{{m.description}}</div>
-                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20"><i class="fa-solid fa-times text-xs"></i></button>
+                                    <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
+                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -1093,35 +1113,44 @@ function serveHtml() {
             </div>
 
         </main>
+
+        <!-- MOBILE BOTTOM NAV -->
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 flex justify-around items-center z-50 safe-area-pb">
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-blue-500' : 'text-slate-500'" class="flex flex-col items-center justify-center w-full h-full active:scale-95 transition-transform">
+                <i :class="t.icon" class="text-xl mb-1"></i>
+                <span class="text-[10px] font-medium">{{t.label}}</span>
+            </button>
+        </nav>
+
     </div>
 
     <!-- GENERIC MODAL -->
-    <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-2xl glass bg-white dark:bg-slate-900 shadow-2xl flex flex-col max-h-[90vh] animate-fade-in">
-            <div class="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
-                <h3 class="font-bold text-slate-900 dark:text-white">{{ modalTitle }}</h3>
-                <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+    <div v-if="modal.active" class="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
+        <div class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
+            <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
+                <h3 class="font-bold text-white">{{ modalTitle }}</h3>
+                <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
             </div>
             
-            <div class="overflow-y-auto p-6 space-y-6">
+            <div class="overflow-y-auto p-4 md:p-6 space-y-6">
                 
-                <!-- COMMAND PALETTE / SEARCH -->
+                <!-- COMMAND PALETTE -->
                 <div v-if="modal.active === 'cmd'">
-                    <input ref="cmdInput" v-model="cmdQuery" placeholder="Type to search..." class="glass-input w-full p-4 text-lg mb-4">
+                    <input ref="cmdInput" v-model="cmdQuery" placeholder="Type to search..." class="glass-input w-full p-4 text-lg mb-4 bg-slate-950 border-slate-700 focus:border-blue-500">
                     <div class="space-y-2">
-                        <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30 cursor-pointer flex justify-between items-center border border-transparent hover:border-blue-200 dark:hover:border-blue-800">
+                        <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-lg hover:bg-blue-500/10 cursor-pointer flex justify-between items-center border border-transparent hover:border-blue-500/30 transition-colors">
                              <div>
-                                <div class="font-bold text-sm">{{res.title}}</div>
-                                <div class="text-xs text-slate-500">{{res.desc}}</div>
+                                <div class="font-bold text-sm text-white">{{res.title}}</div>
+                                <div class="text-xs text-slate-400">{{res.desc}}</div>
                              </div>
-                             <i class="fa-solid fa-arrow-right text-slate-300 text-xs"></i>
+                             <i class="fa-solid fa-arrow-right text-slate-600 text-xs"></i>
                         </div>
                     </div>
                 </div>
 
-                <!-- ADD/EDIT FORMS (Improved Layout) -->
+                <!-- ADD/EDIT FORMS -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
                             <label class="block text-xs font-bold uppercase text-slate-500">Identity</label>
                             <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
@@ -1137,18 +1166,18 @@ function serveHtml() {
                                 <option value="High">High Priority</option>
                                 <option value="Critical">Critical</option>
                             </select>
-                            <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-500">
+                            <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-400">
                              <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
                         </div>
                     </div>
                     
                     <div class="space-y-4">
                         <label class="block text-xs font-bold uppercase text-slate-500">Details</label>
-                        <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits (Daily schedule, frequented places...)" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                        <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Private Notes" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                        <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                        <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Notes..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     </div>
 
-                    <div class="pt-4 border-t border-slate-200 dark:border-slate-700">
+                    <div class="pt-4 border-t border-slate-800">
                         <h4 class="text-xs font-bold uppercase text-slate-500 mb-4">Physical Stats</h4>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs">
@@ -1158,10 +1187,10 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20">Save Profile</button>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform">Save Profile</button>
                 </form>
 
-                <!-- ADD ATTRIBUTE (Deep Info) -->
+                <!-- ADD ATTRIBUTE -->
                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
                         <option>General</option>
@@ -1174,12 +1203,12 @@ function serveHtml() {
                     </select>
                     <input v-model="forms.intel.label" placeholder="Label (e.g., 'Instagram', 'University')" class="glass-input w-full p-3 text-sm" required>
                     <textarea v-model="forms.intel.value" placeholder="Value / Detail" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg text-sm">Add Attribute</button>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Add Attribute</button>
                  </form>
 
-                 <!-- SECURE SHARE (Corrected Time Units) -->
+                 <!-- SECURE SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                    <p class="text-sm text-slate-500">Create a temporary, secure link to share this profile dossier. The recipient will see a read-only view.</p>
+                    <p class="text-sm text-slate-400">Create a temporary, secure link to share this profile dossier. The recipient will see a read-only view.</p>
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="glass-input w-32 p-2 text-sm">
                             <option :value="30">30 Mins</option>
@@ -1187,42 +1216,42 @@ function serveHtml() {
                             <option :value="1440">24 Hours</option>
                             <option :value="10080">7 Days</option>
                         </select>
-                        <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm">Generate Link</button>
+                        <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-lg shadow-blue-500/20">Generate Link</button>
                     </div>
-                    <div class="space-y-2 max-h-60 overflow-y-auto">
-                        <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
+                    <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                        <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
                             <div>
-                                <div class="text-xs font-mono text-slate-500">...{{link.token.slice(-8)}}</div>
-                                <div class="text-[10px] text-slate-400">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div>
+                                <div class="text-xs font-mono text-slate-400">...{{link.token.slice(-8)}}</div>
+                                <div class="text-[10px] text-slate-500">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div>
                             </div>
                             <div class="flex gap-2">
-                                <button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-600 p-2"><i class="fa-regular fa-copy"></i></button>
-                                <button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-600 p-2"><i class="fa-solid fa-ban"></i></button>
+                                <button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-400 p-2"><i class="fa-regular fa-copy"></i></button>
+                                <button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 p-2"><i class="fa-solid fa-ban"></i></button>
                             </div>
                         </div>
                     </div>
                  </div>
                  
-                 <!-- Location Picker (Live Search Improved) -->
+                 <!-- LOCATION PICKER -->
                  <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
                          <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
                          <div v-if="isSearching" class="absolute right-3 top-3.5 text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-                         <div v-if="locationSearchResults.length" class="absolute w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-h-48 overflow-y-auto mt-1 shadow-xl rounded z-50">
-                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-100 dark:border-slate-700">
+                         <div v-if="locationSearchResults.length" class="absolute w-full bg-slate-800 border border-slate-700 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-50">
+                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-700 text-slate-300">
                                  {{ res.display_name }}
                              </div>
                          </div>
                     </div>
-                    <div class="h-40 w-full bg-slate-100 rounded border border-slate-200 relative overflow-hidden">
+                    <div class="h-48 w-full bg-slate-800 rounded-lg border border-slate-700 relative overflow-hidden">
                         <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
                     </div>
                     <input v-model="forms.location.name" placeholder="Name (e.g. Home)" class="glass-input w-full p-3 text-sm">
                     <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm">
                         <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option>
                     </select>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg text-sm">Add Pin</button>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Add Pin</button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
@@ -1233,7 +1262,7 @@ function serveHtml() {
                         </select>
                     </div>
                     <textarea v-model="forms.interaction.transcript" placeholder="Details & Notes" rows="5" class="glass-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg text-sm">Log Event</button>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Log Event</button>
                 </form>
 
                  <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
@@ -1241,7 +1270,7 @@ function serveHtml() {
                         <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.occupation}})</option>
                     </select>
                     <input v-model="forms.rel.type" placeholder="Relationship (e.g., Colleague, Spouse)" class="glass-input w-full p-3 text-sm">
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg text-sm">Link Profiles</button>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Link Profiles</button>
                  </form>
 
             </div>
@@ -1607,149 +1636,3 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
-
-// --- Route Handling ---
-
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
-
-        // Share Page
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
-
-        // Main App
-        if (req.method === 'GET' && path === '/') return serveHtml();
-
-        // Auth
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
-            }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
-        }
-
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
-        
-        // Subject CRUD
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), isoTimestamp()).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-            return response(res.results);
-        }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                
-                // FIXED: Use whitelist to prevent "no such column" error
-                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
-                
-                if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ');
-                    const vals = keys.map(k => safeVal(p[k]));
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        // Sharing
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
-        }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        // File Ops
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
-            return response({success:true});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        return errorResponse(e.message);
-    }
-  }
-};
