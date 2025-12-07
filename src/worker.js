@@ -676,14 +676,16 @@ function serveHtml() {
         </nav>
 
         <!-- HEADER (Mobile) - UPDATED COLOR SCHEME -->
-        <header class="md:hidden h-16 bg-slate-900 text-white flex items-center justify-between px-4 z-20 shrink-0 shadow-md">
+        <header class="md:hidden h-16 glass z-20 shrink-0 flex items-center justify-between px-4 mb-4 rounded-none border-x-0 border-t-0 sticky top-0">
             <div class="flex items-center gap-2">
-                <i class="fa-solid fa-layer-group text-blue-500"></i>
-                <span class="font-bold text-lg">People OS</span>
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm shadow-lg shadow-blue-500/30">
+                    <i class="fa-solid fa-layer-group"></i>
+                </div>
+                <span class="font-bold text-lg text-slate-900 dark:text-white tracking-tight">People OS</span>
             </div>
-            <div class="flex items-center gap-4">
-                 <button @click="openModal('cmd')" class="p-2"><i class="fa-solid fa-magnifying-glass text-slate-300"></i></button>
-                 <button @click="changeTab('dashboard')" class="p-2"><i class="fa-solid fa-house text-slate-300"></i></button>
+            <div class="flex items-center gap-2">
+                 <button @click="openModal('cmd')" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><i class="fa-solid fa-magnifying-glass"></i></button>
+                 <button @click="changeTab('dashboard')" class="w-10 h-10 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><i class="fa-solid fa-house"></i></button>
             </div>
         </header>
 
@@ -1247,10 +1249,10 @@ function serveHtml() {
             Object.assign(suggestions, sugg);
         };
 
-        const viewSubject = async (id) => {
+        const viewSubject = async (id, isRestoring = false) => {
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
-            subTab.value = 'overview'; 
+            if(!isRestoring) subTab.value = 'overview'; 
             analysisResult.value = analyzeLocal(selected.value);
             updateUrl();
         };
@@ -1445,7 +1447,7 @@ function serveHtml() {
             if(confirm("FULL SYSTEM RESET: This will wipe all subjects, data, and admin accounts. You will be logged out.")) {
                 api('/nuke', {method:'POST'}).then(() => {
                     localStorage.clear(); // Clear all tokens/tabs
-                    location.href = '/'; // Force hard reload to root
+                    window.location.href = '/'; // Force hard reload to root
                 });
             }
         };
@@ -1455,7 +1457,7 @@ function serveHtml() {
                 view.value = 'app';
                 fetchData();
                 const id = params.get('id');
-                if(id) viewSubject(id);
+                if(id) viewSubject(id, true);
             }
         });
 
