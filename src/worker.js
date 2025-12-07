@@ -11,6 +11,41 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+// Only allow scalar columns that exist on the subjects table to be written.
+const SUBJECT_COLUMNS = [
+  'admin_id',
+  'full_name',
+  'alias',
+  'dob',
+  'age',
+  'gender',
+  'sex',
+  'occupation',
+  'nationality',
+  'ideology',
+  'religion',
+  'location',
+  'contact',
+  'hometown',
+  'previous_locations',
+  'modus_operandi',
+  'notes',
+  'weakness',
+  'avatar_path',
+  'is_archived',
+  'status',
+  'threat_level',
+  'last_sighted',
+  'height',
+  'weight',
+  'eye_color',
+  'hair_color',
+  'blood_type',
+  'identifying_marks',
+  'social_links',
+  'digital_identifiers',
+];
+
 class BadRequestError extends Error {
   constructor(message) {
     super(message);
@@ -70,6 +105,14 @@ function sanitizeFileName(name) {
 
 function safeVal(v) {
   return v === undefined || v === '' ? null : v;
+}
+
+function sanitizeSubjectPayload(data = {}) {
+  const payload = {};
+  SUBJECT_COLUMNS.forEach((key) => {
+    if (data[key] !== undefined) payload[key] = safeVal(data[key]);
+  });
+  return payload;
 }
 
 function coerceLatLng(record) {
@@ -1204,10 +1247,10 @@ function serveHtml() {
         const locationSearchLoading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [{ id: 'dashboard', label: 'Home', icon: 'fa-solid fa-house' }, { id: 'targets', label: 'Contacts', icon: 'fa-solid fa-address-book' }, { id: 'map', label: 'Global Map', icon: 'fa-solid fa-earth-americas' }];
-        
+
         const currentTab = ref('dashboard');
         const subTab = ref('profile');
-        
+
         const stats = ref({});
         const feed = ref([]);
         const subjects = ref([]);
@@ -1216,13 +1259,63 @@ function serveHtml() {
         const search = ref('');
         const modal = reactive({ active: null, shake: false });
         const errors = reactive({});
-        
+
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
         const warMapSearch = ref('');
 
+        const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
+        const defaultSubjectValues = {
+            admin_id: '',
+            full_name: '',
+            alias: '',
+            status: 'Active',
+            threat_level: 'Low',
+            sex: '',
+            gender: '',
+            occupation: '',
+            nationality: '',
+            ideology: '',
+            religion: '',
+            dob: '',
+            age: null,
+            modus_operandi: '',
+            weakness: '',
+            avatar_path: '',
+            last_sighted: '',
+            height: '',
+            weight: '',
+            identifying_marks: '',
+            location: '',
+            contact: '',
+            hometown: '',
+            previous_locations: '',
+            notes: '',
+            social_links: '',
+            digital_identifiers: '',
+            eye_color: '',
+            hair_color: '',
+            blood_type: ''
+        };
+
+        const buildSubjectForm = (source = {}, adminId = '') => {
+            const form = {};
+            SUBJECT_FORM_FIELDS.forEach((key) => {
+                form[key] = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
+            });
+            return form;
+        };
+
+        const buildSubjectPayload = (form) => {
+            const payload = {};
+            SUBJECT_FORM_FIELDS.forEach((key) => {
+                if (form[key] !== undefined) payload[key] = form[key];
+            });
+            return payload;
+        };
+
         const forms = reactive({
-            subject: { sex: '', religion: '' },
+            subject: buildSubjectForm({}, localStorage.getItem('admin_id') || ''),
             interaction: {},
             location: {},
             intel: {},
@@ -1291,13 +1384,20 @@ function serveHtml() {
         };
 
         const submitSubject = async () => withAction(async () => {
-            const isEdit = modal.active === 'edit-profile';
-            const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
-            const method = isEdit ? 'PATCH' : 'POST';
-            if (forms.subject.dob) forms.subject.age = calculateAge(forms.subject.dob);
-            await api(ep, { method, body: JSON.stringify(forms.subject) });
-            if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData();
-            closeModal();
+            try {
+                const isEdit = modal.active === 'edit-profile';
+                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
+                const method = isEdit ? 'PATCH' : 'POST';
+                const payload = buildSubjectPayload(forms.subject);
+                payload.age = payload.dob ? calculateAge(payload.dob) : null;
+
+                await api(ep, { method, body: JSON.stringify(payload) });
+                if(isEdit) selected.value = { ...selected.value, ...payload }; else fetchData();
+                closeModal();
+            } catch(e) {
+                errors.form = e.message;
+                alert(e.message);
+            }
         });
 
         const submitInteraction = async () => withAction(async () => {
@@ -1458,28 +1558,8 @@ function serveHtml() {
             modal.active = type;
             const aid = localStorage.getItem('admin_id');
             Object.keys(errors).forEach(k => delete errors[k]);
-              if(type === 'add-subject') forms.subject = {
-                admin_id: aid,
-                status: 'Active',
-                threat_level: 'Low',
-                full_name: '',
-                alias: '',
-                sex: '',
-                occupation: '',
-                nationality: '',
-                ideology: '',
-                religion: '',
-                dob: '',
-                age: null,
-                modus_operandi: '',
-                weakness: '',
-                avatar_path: '',
-                last_sighted: '',
-                height: '',
-                weight: '',
-                identifying_marks: ''
-              };
-            if(type === 'edit-profile') forms.subject = { ...selected.value };
+              if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
+            if(type === 'edit-profile') forms.subject = buildSubjectForm(selected.value || {}, aid);
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); }
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
@@ -1601,7 +1681,7 @@ export default {
           return jsonResponse(res.results);
         }
         if (req.method === 'POST') {
-          const p = await safeJson(req);
+          const p = sanitizeSubjectPayload(await safeJson(req));
           await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, sex, occupation, nationality, ideology, religion, modus_operandi, weakness, dob, age, avatar_path, last_sighted, height, weight, identifying_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
             .bind(
               safeVal(p.admin_id),
@@ -1635,13 +1715,18 @@ export default {
         const id = subjectIdMatch[1];
         if (req.method === 'GET') return handleGetSubjectFull(env.DB, id);
         if (req.method === 'PATCH') {
-          const p = await safeJson(req);
-          const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
-          if (keys.length > 0) {
-            const set = keys.map(k => `${k} = ?`).join(', ');
-            const vals = keys.map(k => safeVal(p[k]));
-            await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-          }
+          const body = await safeJson(req);
+          const payload = sanitizeSubjectPayload(body);
+          delete payload.id;
+          delete payload.created_at;
+
+          const keys = Object.keys(payload);
+          if (!keys.length) return errorResponse('No valid subject fields provided', 400);
+
+          const set = keys.map((k) => `${k} = ?`).join(', ');
+          const vals = keys.map((k) => payload[k]);
+          await env.DB.prepare(`UPDATE subjects SET ${set}, updated_at = ? WHERE id = ?`).bind(...vals, isoTimestamp(), id).run();
+
           return jsonResponse({ success: true });
         }
       }
