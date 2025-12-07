@@ -1,7 +1,6 @@
 const encoder = new TextEncoder();
 
 // --- Configuration & Constants ---
-const ALLOWED_ORIGINS = ['*']; 
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
 // --- Helper Functions ---
@@ -39,8 +38,7 @@ function safeVal(v) {
     return v === undefined || v === '' ? null : v;
 }
 
-// --- Database Layer (Schema Preserved for Compatibility) ---
-// Note: We are using existing columns for new purposes (e.g., threat_level -> priority)
+// --- Database Layer ---
 
 let schemaInitialized = false;
 
@@ -67,18 +65,18 @@ async function ensureSchema(db) {
           gender TEXT,
           occupation TEXT, 
           nationality TEXT, 
-          ideology TEXT, -- Used for Affiliation
+          ideology TEXT, 
           location TEXT, 
           contact TEXT,
           hometown TEXT, 
           previous_locations TEXT,
-          modus_operandi TEXT, -- Used for Routine/Habits
+          modus_operandi TEXT, 
           notes TEXT, 
-          weakness TEXT, -- Used for Sensitivities/Preferences
+          weakness TEXT, 
           avatar_path TEXT, 
           is_archived INTEGER DEFAULT 0,
           status TEXT DEFAULT 'Active', 
-          threat_level TEXT DEFAULT 'Low', -- Used for Priority
+          threat_level TEXT DEFAULT 'Low', 
           last_sighted TEXT,
           height TEXT, 
           weight TEXT, 
@@ -184,14 +182,13 @@ async function nukeDatabase(db) {
     return true;
 }
 
-// --- Analysis Engine (Simplified Profile Logic) ---
+// --- Analysis Engine ---
 
 function analyzeProfile(subject, interactions, intel) {
     const dataPoints = intel.length + interactions.length + (subject.modus_operandi ? 1 : 0);
     const completeness = Math.min(100, Math.floor((dataPoints / 20) * 100));
     
     const tags = [];
-    // Auto-tagging based on content (Professional/Social)
     const textBank = [
         subject.modus_operandi, 
         subject.occupation,
@@ -205,7 +202,7 @@ function analyzeProfile(subject, interactions, intel) {
     if (textBank.includes('medical') || textBank.includes('health')) tags.push('Medical');
     
     return {
-        score: completeness, // Now represents profile completeness
+        score: completeness,
         tags: tags,
         summary: `Profile is ${completeness}% complete. Contains ${interactions.length} interactions and ${intel.length} attribute points.`,
         generated_at: isoTimestamp()
@@ -273,9 +270,41 @@ async function handleGetSubjectFull(db, id) {
     });
 }
 
+async function handleGetGlobalNetwork(db, adminId) {
+    // 1. Get all subjects
+    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
+    
+    if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
+
+    const subjectIds = subjects.results.map(s => s.id).join(',');
+    
+    // 2. Get all relationships between these subjects
+    const relationships = await db.prepare(`
+        SELECT subject_a_id, subject_b_id, relationship_type 
+        FROM subject_relationships 
+        WHERE subject_a_id IN (${subjectIds}) AND subject_b_id IN (${subjectIds})
+    `).all();
+
+    return response({
+        nodes: subjects.results.map(s => ({
+            id: s.id,
+            label: s.full_name,
+            group: s.threat_level,
+            image: s.avatar_path, // Frontend will resolve this
+            shape: 'circularImage'
+        })),
+        edges: relationships.results.map(r => ({
+            from: r.subject_a_id,
+            to: r.subject_b_id,
+            label: r.relationship_type,
+            arrows: 'to'
+        }))
+    });
+}
+
 async function handleGetMapData(db, adminId) {
     const query = `
-        SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
+        SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
         FROM subject_locations l
         JOIN subjects s ON l.subject_id = s.id
         WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
@@ -289,7 +318,12 @@ async function handleGetMapData(db, adminId) {
 async function handleCreateShareLink(req, db, origin) {
     const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
-    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 60) * 60)); 
+    
+    // Fix: Ensure we are calculating based on minutes.
+    // If input is 60 (minutes), seconds = 3600.
+    const minutes = durationMinutes || 60;
+    const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
+
     const token = generateToken();
     await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
         .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
@@ -505,9 +539,10 @@ function serveSharedHtml(token) {
                 
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
                 const formatTime = (s) => {
-                    const m = Math.floor(s / 60);
+                    const h = Math.floor(s / 3600);
+                    const m = Math.floor((s % 3600) / 60);
                     const sec = Math.floor(s % 60);
-                    return \`\${m}:\${sec.toString().padStart(2, '0')}\`;
+                    return \`\${h}:\${m.toString().padStart(2, '0')}:\${sec.toString().padStart(2, '0')}\`;
                 };
 
                 onMounted(async () => {
@@ -559,7 +594,6 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #0f172a; }
     body { font-family: 'Inter', sans-serif; }
     
-    /* Modern Clean Aesthetics */
     .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
     .glass-input { background: white; border: 1px solid #cbd5e1; color: #1e293b; transition: all 0.2s; border-radius: 0.5rem; }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
@@ -580,6 +614,10 @@ function serveHtml() {
     .vis-item { border-color: #3b82f6; background-color: #eff6ff; color: #1e40af; border-radius: 4px; }
     .vis-item.vis-selected { border-color: #2563eb; background-color: #3b82f6; color: white; }
     .dark .vis-item { background-color: rgba(59, 130, 246, 0.2); color: white; }
+    
+    /* Animation */
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+    .animate-fade-in { animation: fadeIn 0.2s ease-out; }
   </style>
 </head>
 <body class="h-full overflow-hidden dark">
@@ -612,8 +650,9 @@ function serveHtml() {
         <nav class="hidden md:flex flex-col w-20 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 items-center py-6 z-20 shadow-xl">
             <div class="mb-8 text-blue-600 dark:text-blue-500 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1 transition-all" :title="t.label">
                     <i :class="t.icon" class="text-xl"></i>
+                    <span class="text-[10px] font-medium">{{t.label}}</span>
                 </button>
             </div>
             <button @click="openModal('cmd')" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-4" title="Search (Cmd+K)"><i class="fa-solid fa-magnifying-glass"></i></button>
@@ -623,7 +662,10 @@ function serveHtml() {
         <!-- HEADER (Mobile) -->
         <header class="md:hidden h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 shadow-sm">
             <span class="font-bold text-slate-900 dark:text-white">People OS</span>
-            <button @click="openModal('cmd')"><i class="fa-solid fa-magnifying-glass text-slate-400"></i></button>
+            <div class="flex items-center gap-4">
+                 <button @click="openModal('cmd')"><i class="fa-solid fa-magnifying-glass text-slate-400"></i></button>
+                 <button @click="changeTab('dashboard')"><i class="fa-solid fa-house text-slate-400"></i></button>
+            </div>
         </header>
 
         <!-- CONTENT -->
@@ -698,6 +740,34 @@ function serveHtml() {
                 </div>
             </div>
 
+            <!-- GLOBAL MAP TAB (Revised) -->
+            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-100 dark:bg-slate-900">
+                <div class="absolute inset-0 z-0" id="warRoomMap"></div>
+                <!-- Map Sidebar Overlay -->
+                <div class="absolute top-4 left-4 bottom-4 w-80 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform" :class="{'translate-x-0': showMapSidebar, '-translate-x-[110%]': !showMapSidebar}">
+                    <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-white/50 dark:bg-slate-900/50 backdrop-blur">
+                        <h3 class="font-bold text-slate-900 dark:text-white">Locations</h3>
+                        <div class="text-xs text-slate-500">{{mapData.length}} Points</div>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                        <div v-for="loc in mapData" @click="flyToGlobal(loc)" class="p-3 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer border border-transparent hover:border-blue-200 transition-all">
+                             <div class="font-bold text-sm text-slate-800 dark:text-slate-200">{{loc.full_name}}</div>
+                             <div class="text-xs text-slate-500">{{loc.name}} ({{loc.type}})</div>
+                        </div>
+                    </div>
+                </div>
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-4 left-4 z-[401] bg-white dark:bg-slate-800 p-2 rounded shadow text-slate-500" v-if="!showMapSidebar"><i class="fa-solid fa-list"></i></button>
+            </div>
+
+            <!-- GLOBAL NETWORK TAB -->
+            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-900 relative">
+                <div class="absolute top-4 left-4 z-10 glass px-4 py-2">
+                    <h3 class="font-bold text-slate-900 dark:text-white">Global Relations</h3>
+                    <p class="text-xs text-slate-500">Entity Interconnections</p>
+                </div>
+                <div id="globalNetworkGraph" class="w-full h-full"></div>
+            </div>
+
             <!-- SUBJECT DETAIL (The Profile) -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950">
                 
@@ -711,7 +781,8 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button @click="openModal('share-secure')" class="btn-secondary text-xs"><i class="fa-solid fa-share-nodes mr-2"></i>Share Profile</button>
+                        <button @click="openModal('edit-profile')" class="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold"><i class="fa-solid fa-pen mr-2"></i>Edit</button>
+                        <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-blue-500/20"><i class="fa-solid fa-share-nodes mr-2"></i>Share</button>
                     </div>
                 </div>
 
@@ -741,7 +812,6 @@ function serveHtml() {
                                     <div class="text-xs text-slate-500 uppercase font-bold mb-2">Priority Level</div>
                                     <div class="flex justify-between items-center">
                                         <span class="text-lg font-bold" :class="getThreatColor(selected.threat_level)">{{selected.threat_level}}</span>
-                                        <button @click="openModal('edit-profile')" class="text-xs text-blue-500 hover:underline">Edit Info</button>
                                     </div>
                                 </div>
                             </div>
@@ -871,27 +941,18 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB -->
-            <div v-if="currentTab === 'map'" class="flex-1 relative bg-slate-100 dark:bg-slate-900 map-container">
-                <div id="warRoomMap" class="w-full h-full z-0"></div>
-                <div class="absolute top-4 left-4 z-[400] glass px-4 py-3">
-                    <h3 class="text-sm font-bold text-slate-900 dark:text-white">Global Map</h3>
-                    <p class="text-xs text-slate-500">Location Intelligence</p>
-                </div>
-            </div>
-
         </main>
     </div>
 
     <!-- GENERIC MODAL -->
     <div v-if="modal.active" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg glass bg-white dark:bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in">
+        <div class="w-full max-w-2xl glass bg-white dark:bg-slate-900 shadow-2xl flex flex-col max-h-[90vh] animate-fade-in">
             <div class="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
                 <h3 class="font-bold text-slate-900 dark:text-white">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
             </div>
             
-            <div class="overflow-y-auto p-6 space-y-4">
+            <div class="overflow-y-auto p-6 space-y-6">
                 
                 <!-- COMMAND PALETTE / SEARCH -->
                 <div v-if="modal.active === 'cmd'">
@@ -907,32 +968,38 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- ADD/EDIT FORMS -->
-                <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
-                        <input v-model="forms.subject.alias" placeholder="Nickname / Alias" class="glass-input w-full p-3 text-sm">
+                <!-- ADD/EDIT FORMS (Improved Layout) -->
+                <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="space-y-4">
+                            <label class="block text-xs font-bold uppercase text-slate-500">Identity</label>
+                            <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
+                            <input v-model="forms.subject.alias" placeholder="Nickname / Alias" class="glass-input w-full p-3 text-sm">
+                            <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Occupation" class="glass-input w-full p-3 text-sm">
+                            <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
+                        </div>
+                        <div class="space-y-4">
+                             <label class="block text-xs font-bold uppercase text-slate-500">Status</label>
+                             <select v-model="forms.subject.threat_level" class="glass-input w-full p-3 text-sm">
+                                <option value="Low">Low Priority</option>
+                                <option value="Medium">Medium Priority</option>
+                                <option value="High">High Priority</option>
+                                <option value="Critical">Critical</option>
+                            </select>
+                            <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-500">
+                             <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
+                        </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm">
-                            <option value="Low">Low Priority</option>
-                            <option value="Medium">Medium Priority</option>
-                            <option value="High">High Priority</option>
-                            <option value="Critical">Critical</option>
-                        </select>
-                        <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Occupation" class="glass-input p-3 text-sm">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-3 text-sm text-slate-500">
-                        <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
-                    </div>
-                    <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
-                    <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits (Daily schedule, frequented places...)" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Private Notes" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     
-                    <div class="border-t border-slate-200 dark:border-slate-700 pt-4 mt-4">
-                        <h4 class="text-xs font-bold uppercase text-slate-500 mb-2">Physical Stats</h4>
-                        <div class="grid grid-cols-2 gap-4">
+                    <div class="space-y-4">
+                        <label class="block text-xs font-bold uppercase text-slate-500">Details</label>
+                        <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits (Daily schedule, frequented places...)" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                        <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Private Notes" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-200 dark:border-slate-700">
+                        <h4 class="text-xs font-bold uppercase text-slate-500 mb-4">Physical Stats</h4>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs">
                             <input v-model="forms.subject.weight" placeholder="Weight" class="glass-input p-2 text-xs">
                             <input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs">
@@ -940,7 +1007,7 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg text-sm mt-4">Save Profile</button>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20">Save Profile</button>
                 </form>
 
                 <!-- ADD ATTRIBUTE (Deep Info) -->
@@ -959,15 +1026,15 @@ function serveHtml() {
                     <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg text-sm">Add Attribute</button>
                  </form>
 
-                 <!-- SECURE SHARE -->
+                 <!-- SECURE SHARE (Corrected Time Units) -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <p class="text-sm text-slate-500">Create a temporary, secure link to share this profile dossier. The recipient will see a read-only view.</p>
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="glass-input w-32 p-2 text-sm">
-                            <option :value="0.5">30 Mins</option>
-                            <option :value="1">1 Hour</option>
-                            <option :value="24">24 Hours</option>
-                            <option :value="168">7 Days</option>
+                            <option :value="30">30 Mins</option>
+                            <option :value="60">1 Hour</option>
+                            <option :value="1440">24 Hours</option>
+                            <option :value="10080">7 Days</option>
                         </select>
                         <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm">Generate Link</button>
                     </div>
@@ -985,11 +1052,12 @@ function serveHtml() {
                     </div>
                  </div>
                  
-                 <!-- Other Modals (Location, Interaction, Network) -->
+                 <!-- Location Picker (Live Search Improved) -->
                  <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
-                         <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
+                         <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
                          <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
+                         <div v-if="isSearching" class="absolute right-3 top-3.5 text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
                          <div v-if="locationSearchResults.length" class="absolute w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-h-48 overflow-y-auto mt-1 shadow-xl rounded z-50">
                              <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-100 dark:border-slate-700">
                                  {{ res.display_name }}
@@ -1046,9 +1114,10 @@ function serveHtml() {
         const loading = ref(false);
         const auth = reactive({ email: '', password: '' });
         const tabs = [
-            { id: 'dashboard', icon: 'fa-solid fa-chart-pie' },
-            { id: 'targets', icon: 'fa-solid fa-users' },
-            { id: 'map', icon: 'fa-solid fa-earth-americas' },
+            { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Dashboard' },
+            { id: 'targets', icon: 'fa-solid fa-users', label: 'Targets' },
+            { id: 'map', icon: 'fa-solid fa-earth-americas', label: 'Map' },
+            { id: 'network', icon: 'fa-solid fa-circle-nodes', label: 'Network' },
         ];
         
         const params = new URLSearchParams(window.location.search);
@@ -1064,17 +1133,22 @@ function serveHtml() {
         const search = ref('');
         const modal = reactive({ active: null });
         const analysisResult = ref(null);
+        const mapData = ref([]);
+        const showMapSidebar = ref(true);
         
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
+        const isSearching = ref(false);
         let pickerMapInstance = null;
         let mapInstance = null;
+        let warRoomMapInstance = null;
+        let searchTimeout = null;
         
         const cmdQuery = ref('');
         const cmdInput = ref(null);
 
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 1 }
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }
         });
 
         const filteredSubjects = computed(() => subjects.value.filter(s => 
@@ -1178,8 +1252,10 @@ function serveHtml() {
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
+            // Clean up instances
             if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
-            if(!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
+            if(!isPicker && id === 'subjectMap' && mapInstance) { mapInstance.remove(); mapInstance = null; }
+            if(!isPicker && id === 'warRoomMap' && warRoomMapInstance) { warRoomMapInstance.remove(); warRoomMapInstance = null; }
 
             const map = L.map(id, { attributionControl: false }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
@@ -1194,17 +1270,27 @@ function serveHtml() {
                  });
                  setTimeout(() => map.invalidateSize(), 100);
             } else {
-                mapInstance = map;
+                if(id === 'subjectMap') mapInstance = map;
+                else warRoomMapInstance = map;
+
                 data.forEach(d => {
-                    if(d.lat) L.circleMarker([d.lat, d.lng], { radius: 6, color: '#2563eb', fillOpacity: 0.8 }).addTo(map).bindPopup(d.full_name || d.name);
+                    if(d.lat) {
+                         const marker = L.circleMarker([d.lat, d.lng], { radius: 6, color: '#2563eb', fillOpacity: 0.8 }).addTo(map);
+                         marker.bindPopup(\`<b>\${d.full_name || d.name}</b><br>\${d.type}\`);
+                    }
                 });
             }
         };
 
-        const searchLocations = async () => {
-            if(!locationSearchQuery.value) return;
-            const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
-            locationSearchResults.value = await res.json();
+        const debounceSearch = () => {
+            clearTimeout(searchTimeout);
+            isSearching.value = true;
+            searchTimeout = setTimeout(async () => {
+                if(!locationSearchQuery.value) { locationSearchResults.value = []; isSearching.value = false; return; }
+                const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
+                locationSearchResults.value = await res.json();
+                isSearching.value = false;
+            }, 500);
         };
 
         const selectLocation = (res) => {
@@ -1223,6 +1309,7 @@ function serveHtml() {
         const openModal = (t) => {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
+             if(t === 'edit-profile') forms.subject = { ...selected.value };
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
@@ -1252,10 +1339,34 @@ function serveHtml() {
                  new vis.Network(container, { nodes, edges }, { nodes: { shape: 'dot' } });
             });
         });
+
         watch(() => currentTab.value, (val) => {
              if(val === 'map') nextTick(async () => {
                  const d = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
+                 mapData.value = d;
                  initMap('warRoomMap', d);
+             });
+             if(val === 'network') nextTick(async () => {
+                const data = await api('/global-network?adminId=' + localStorage.getItem('admin_id'));
+                const container = document.getElementById('globalNetworkGraph');
+                const options = {
+                    nodes: { 
+                        shape: 'circularImage', borderWidth: 2, size: 25, 
+                        color: { border: '#e2e8f0', background: '#fff' },
+                        font: { color: '#94a3b8', size: 12 } 
+                    },
+                    edges: { color: { color: '#cbd5e1' }, width: 1 },
+                    physics: { stabilization: true }
+                };
+                
+                // Pre-process images
+                data.nodes.forEach(n => { 
+                    n.image = n.image ? (n.image.startsWith('http') ? n.image : '/api/media/'+n.image) : 'https://ui-avatars.com/api/?background=random&name='+n.label;
+                    if(n.group === 'Critical') n.color = { border: '#ef4444' };
+                    if(n.group === 'High') n.color = { border: '#f97316' };
+                });
+
+                new vis.Network(container, data, options);
              });
         });
 
@@ -1301,6 +1412,7 @@ function serveHtml() {
              return isBg ? \`bg-\${c}-100 text-\${c}-700\` : \`text-\${c}-600\`;
         };
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
+        const flyToGlobal = (loc) => warRoomMapInstance?.flyTo([loc.lat, loc.lng], 15);
         const openSettings = () => { if(confirm("Reset System?")) api('/nuke', {method:'POST'}).then(()=>location.reload()) };
 
         onMounted(() => {
@@ -1318,7 +1430,8 @@ function serveHtml() {
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
-            activeShareLinks, suggestions, flyTo, searchLocations, selectLocation, openSettings
+            activeShareLinks, suggestions, flyTo, debounceSearch, selectLocation, openSettings,
+            isSearching, mapData, showMapSidebar, flyToGlobal
         };
       }
     }).mount('#app');
@@ -1362,6 +1475,7 @@ export default {
         // Dashboard & Stats
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
         
         // Subject CRUD
         if (path === '/api/subjects') {
