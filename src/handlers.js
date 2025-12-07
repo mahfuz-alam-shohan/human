@@ -20,6 +20,10 @@ export async function handleLogin(req, db, jwtSecret, corsHeaders) {
   let admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
 
   if (!admin) {
+    // SECURITY: Only allow YOUR email to create the admin account
+    // CHANGE 'me@example.com' to your actual email address
+    if (email !== 'me@example.com') return errorResponse("Registration Closed", 403, null, corsHeaders);
+
     const hash = await hashPassword(password);
     const createdAt = isoTimestamp();
     const insert = await db.prepare(`
