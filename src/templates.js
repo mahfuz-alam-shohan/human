@@ -98,7 +98,7 @@ export function serveSharedHtml(token) {
                                     <div class="text-sm font-bold text-zinc-300">{{ loc.name }}</div>
                                     <div class="text-xs text-zinc-500">{{ loc.address }}</div>
                                 </div>
-                                <a :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="ml-auto text-zinc-600 hover:text-emerald-500"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                                <a :href="'https://maps.google.com/?q=' + loc.lat + ',' + loc.lng" target="_blank" class="ml-auto text-zinc-600 hover:text-emerald-500"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                             </div>
                         </div>
                     </div>
@@ -741,8 +741,16 @@ export function serveHtml() {
         const viewSubject = async (id) => withAction(async () => { selected.value = await api('/subjects/'+id); if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob); currentTab.value = 'detail'; subTab.value = 'profile'; });
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
-        const updateSubject = async () => { if(!selected.value) return; await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) }); };
-        const submitSubject = async () => withAction(async () => { try { const isEdit = modal.active === 'edit-profile'; const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; const method = isEdit ? 'PATCH' : 'POST'; const payload = buildSubjectPayload(forms.subject); payload.age = payload.dob ? calculateAge(payload.dob) : null; await api(ep, { method, body: JSON.stringify(payload) }); if(isEdit) selected.value = { ...selected.value, ...payload }; else fetchData(); closeModal(); } catch(e) { errors.form = e.message; alert(e.message); } });
+        const updateSubject = async () => withAction(async () => {
+            if(!selected.value) return;
+            try {
+                await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
+            } catch(e) {
+                alert("Failed to update status: " + e.message);
+                throw e;
+            }
+        });
+        const submitSubject = async () => withAction(async () => { try { const isEdit = modal.active === 'edit-profile'; const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; const method = isEdit ? 'PATCH' : 'POST'; const payload = buildSubjectPayload(forms.subject); payload.age = payload.dob ? calculateAge(payload.dob) : null; await api(ep, { method, body: JSON.stringify(payload) }); if(isEdit) { await viewSubject(selected.value.id); } else fetchData(); closeModal(); } catch(e) { errors.form = e.message; alert(e.message); } });
         const submitInteraction = async () => withAction(async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); });
         const submitLocation = async () => withAction(async () => { Object.keys(errors).forEach(k => delete errors[k]); if(!forms.location.name) errors.loc_name = 'Required'; if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map'; if(errors.loc_name || errors.loc_coords) return; await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); });
         const submitIntel = async () => withAction(async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); });
