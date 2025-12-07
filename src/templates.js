@@ -698,7 +698,21 @@ export function serveHtml() {
         const warMapSearch = ref('');
         const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
         const defaultSubjectValues = { admin_id: '', full_name: '', alias: '', status: 'Active', threat_level: 'Low', sex: '', gender: '', occupation: '', nationality: '', ideology: '', religion: '', dob: '', age: null, modus_operandi: '', weakness: '', avatar_path: '', last_sighted: '', height: '', weight: '', identifying_marks: '', location: '', contact: '', hometown: '', previous_locations: '', notes: '', social_links: '', digital_identifiers: '', eye_color: '', hair_color: '', blood_type: '' };
-        const buildSubjectForm = (source = {}, adminId = '') => { const form = {}; SUBJECT_FORM_FIELDS.forEach((key) => { form[key] = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]); }); return form; };
+        const buildSubjectForm = (source = {}, adminId = '') => {
+          const form = {};
+
+          SUBJECT_FORM_FIELDS.forEach((key) => {
+            let val = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
+
+            if (key === 'dob' && val && typeof val === 'string' && val.includes('T')) {
+              val = val.split('T')[0];
+            }
+
+            form[key] = val;
+          });
+
+          return form;
+        };
         const buildSubjectPayload = (form) => { const payload = {}; SUBJECT_FORM_FIELDS.forEach((key) => { if (form[key] !== undefined) payload[key] = form[key]; }); return payload; };
         const forms = reactive({ subject: buildSubjectForm({}, ''), interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30, result: '', error: '' } });
         const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
@@ -771,7 +785,36 @@ export function serveHtml() {
         const placePickerMarker = (map, lat, lng) => { forms.location.lat = lat; forms.location.lng = lng; if (pickerMarker) map.removeLayer(pickerMarker); pickerMarker = L.marker([lat, lng]).addTo(map); };
         const searchLocations = async () => { if(!locationSearchQuery.value) return; locationSearchLoading.value = true; locationSearchResults.value = []; try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } }); locationSearchResults.value = await res.json(); } catch(e) { locationSearchResults.value = []; errors.loc_coords = 'Unable to search locations right now'; } finally { locationSearchLoading.value = false; } };
         const selectLocation = (res) => { forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng); } };
-        const openModal = (type) => { modal.active = type; const aid = localStorage.getItem('admin_id'); Object.keys(errors).forEach(k => delete errors[k]); if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid); if(type === 'edit-profile') { const newData = buildSubjectForm(selected.value || {}, aid); Object.assign(forms.subject, newData); } if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) }; if(type === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initMap('locationPickerMap', [], false, true)); } if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' }; if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false }; if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); } };
+        const openModal = (type) => {
+          try {
+            modal.active = type;
+            const aid = localStorage.getItem('admin_id');
+            Object.keys(errors).forEach(k => delete errors[k]);
+
+            if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
+
+            if(type === 'edit-profile') {
+              if (!selected.value) throw new Error("No contact selected");
+
+              const newData = buildSubjectForm(selected.value, aid);
+              Object.assign(forms.subject, newData);
+            }
+
+            if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
+            if(type === 'add-location') {
+              forms.location = { subject_id: selected.value.id };
+              locationSearchQuery.value = '';
+              locationSearchResults.value = [];
+              nextTick(() => initMap('locationPickerMap', [], false, true));
+            }
+            if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
+            if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false };
+            if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); }
+          } catch (e) {
+            console.error("Modal Error:", e);
+            alert("Failed to open form: " + e.message);
+          }
+        };
         const closeModal = () => modal.active = null;
         const initNetwork = () => { const container = document.getElementById('relNetwork'); if(!container || !selected.value) return; const nodes = [{ id: selected.value.id, label: selected.value.full_name, shape: 'circularImage', image: resolveImg(selected.value.avatar_path), size: 30 }]; const edges = []; selected.value.relationships.forEach((r, i) => { const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id; nodes.push({ id: targetId || 'ext-'+i, label: r.target_name, shape: 'circularImage', image: resolveImg(r.target_avatar) }); edges.push({ from: selected.value.id, to: targetId || 'ext-'+i }); }); new vis.Network(container, { nodes, edges }, { nodes: { font: { color: '#374151' }, borderWidth: 2 }, edges: { color: '#cbd5e1' } }); };
         const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
