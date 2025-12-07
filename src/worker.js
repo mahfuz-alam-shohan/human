@@ -233,7 +233,7 @@ function analyzeProfile(subject, interactions, intel) {
 
 async function handleGetDashboard(db, adminId) {
     const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, updated_at as date FROM subjects WHERE admin_id = ?
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects WHERE admin_id = ?
         UNION ALL
         SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
         UNION ALL
@@ -1721,8 +1721,9 @@ export default {
         if (path === '/api/subjects') {
             if(req.method === 'POST') {
                 const p = await req.json();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), isoTimestamp()).run();
+                const now = isoTimestamp();
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
                 return response({success:true});
             }
             const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
@@ -1741,8 +1742,9 @@ export default {
                 const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
                 
                 if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ');
+                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
                     const vals = keys.map(k => safeVal(p[k]));
+                    vals.push(isoTimestamp());
                     await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
                 }
                 
