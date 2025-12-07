@@ -197,7 +197,7 @@ async function nukeDatabase(db) {
     // Re-enable FKs
     await db.prepare("PRAGMA foreign_keys = ON;").run();
     
-    // Force schema re-init on next request
+    // Force schema re-init on next request so tables are recreated
     schemaInitialized = false; 
     return true;
 }
@@ -675,12 +675,15 @@ function serveHtml() {
             <button @click="openSettings" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-4"><i class="fa-solid fa-gear"></i></button>
         </nav>
 
-        <!-- HEADER (Mobile) -->
-        <header class="md:hidden h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 shadow-sm">
-            <span class="font-bold text-slate-900 dark:text-white">People OS</span>
+        <!-- HEADER (Mobile) - UPDATED COLOR SCHEME -->
+        <header class="md:hidden h-16 bg-slate-900 text-white flex items-center justify-between px-4 z-20 shrink-0 shadow-md">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-layer-group text-blue-500"></i>
+                <span class="font-bold text-lg">People OS</span>
+            </div>
             <div class="flex items-center gap-4">
-                 <button @click="openModal('cmd')"><i class="fa-solid fa-magnifying-glass text-slate-400"></i></button>
-                 <button @click="changeTab('dashboard')"><i class="fa-solid fa-house text-slate-400"></i></button>
+                 <button @click="openModal('cmd')" class="p-2"><i class="fa-solid fa-magnifying-glass text-slate-300"></i></button>
+                 <button @click="changeTab('dashboard')" class="p-2"><i class="fa-solid fa-house text-slate-300"></i></button>
             </div>
         </header>
 
@@ -1113,8 +1116,9 @@ function serveHtml() {
         </div>
     </div>
 
-    <!-- Hidden Input -->
-    <input type="file" ref="fileInput" class="hidden" @change="handleFile">
+    <!-- Hidden Input (Fixed Visibility for robustness) -->
+    <input type="file" ref="fileInput" class="absolute opacity-0 -z-10 w-0 h-0 overflow-hidden" @change="handleFile">
+    
     <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
     <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
     <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
@@ -1137,7 +1141,9 @@ function serveHtml() {
         ];
         
         const params = new URLSearchParams(window.location.search);
-        const currentTab = ref(params.get('tab') || 'dashboard');
+        // Persist tab via localStorage if URL params are empty
+        const initialTab = params.get('tab') || localStorage.getItem('active_tab') || 'dashboard';
+        const currentTab = ref(initialTab);
         const subTab = ref(params.get('subTab') || 'overview');
         
         const stats = ref({});
@@ -1200,6 +1206,8 @@ function serveHtml() {
                 url.searchParams.set('id', selected.value.id);
             }
             window.history.replaceState({}, '', url);
+            // Save state
+            localStorage.setItem('active_tab', currentTab.value);
         };
 
         const modalTitle = computed(() => {
@@ -1357,6 +1365,7 @@ function serveHtml() {
         });
 
         watch(() => currentTab.value, (val) => {
+             updateUrl(); // Sync to localStorage
              if(val === 'map') nextTick(async () => {
                  const d = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
                  mapData.value = d;
@@ -1433,10 +1442,10 @@ function serveHtml() {
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const flyToGlobal = (loc) => warRoomMapInstance?.flyTo([loc.lat, loc.lng], 15);
         const openSettings = () => { 
-            if(confirm("Reset System? This will wipe all data and logs you out.")) {
+            if(confirm("FULL SYSTEM RESET: This will wipe all subjects, data, and admin accounts. You will be logged out.")) {
                 api('/nuke', {method:'POST'}).then(() => {
-                    localStorage.removeItem('admin_id');
-                    location.reload();
+                    localStorage.clear(); // Clear all tokens/tabs
+                    location.href = '/'; // Force hard reload to root
                 });
             }
         };
@@ -1457,7 +1466,7 @@ function serveHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, flyTo, debounceSearch, selectLocation, openSettings,
-            isSearching, mapData, showMapSidebar, flyToGlobal
+            isSearching, mapData, showMapSidebar, flyToGlobal, fileInput
         };
       }
     }).mount('#app');
