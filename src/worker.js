@@ -3,6 +3,16 @@ const encoder = new TextEncoder();
 // --- Configuration & Constants ---
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
+// Whitelist for Subject Columns to prevent "no such column" errors during updates
+const SUBJECT_COLUMNS = [
+    'full_name', 'alias', 'dob', 'age', 'gender', 'occupation', 'nationality', 
+    'ideology', 'location', 'contact', 'hometown', 'previous_locations', 
+    'modus_operandi', 'notes', 'weakness', 'avatar_path', 'is_archived', 
+    'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
+    'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
+    'digital_identifiers'
+];
+
 // --- Helper Functions ---
 
 function isoTimestamp() { return new Date().toISOString(); }
@@ -173,11 +183,21 @@ async function nukeDatabase(db) {
         'subjects', 'admins'
     ];
     
+    // Disable FKs to allow dropping tables in any order
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
+    
     for(const t of tables) {
-        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
+        try { 
+            await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); 
+        } catch(e) { 
+            console.error(`Failed to drop ${t}`, e); 
+        }
     }
+    
+    // Re-enable FKs
     await db.prepare("PRAGMA foreign_keys = ON;").run();
+    
+    // Force schema re-init on next request
     schemaInitialized = false; 
     return true;
 }
@@ -271,14 +291,12 @@ async function handleGetSubjectFull(db, id) {
 }
 
 async function handleGetGlobalNetwork(db, adminId) {
-    // 1. Get all subjects
     const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
 
     const subjectIds = subjects.results.map(s => s.id).join(',');
     
-    // 2. Get all relationships between these subjects
     const relationships = await db.prepare(`
         SELECT subject_a_id, subject_b_id, relationship_type 
         FROM subject_relationships 
@@ -290,7 +308,7 @@ async function handleGetGlobalNetwork(db, adminId) {
             id: s.id,
             label: s.full_name,
             group: s.threat_level,
-            image: s.avatar_path, // Frontend will resolve this
+            image: s.avatar_path,
             shape: 'circularImage'
         })),
         edges: relationships.results.map(r => ({
@@ -319,8 +337,6 @@ async function handleCreateShareLink(req, db, origin) {
     const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
     
-    // Fix: Ensure we are calculating based on minutes.
-    // If input is 60 (minutes), seconds = 3600.
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
 
@@ -391,7 +407,7 @@ async function handleGetSharedSubject(db, token) {
     return errorResponse('INVALID CONFIG', 500);
 }
 
-// --- Frontend: Shared Link View (Enhanced Dossier) ---
+// --- Frontend: Shared Link View ---
 function serveSharedHtml(token) {
     return `<!DOCTYPE html>
 <html lang="en">
@@ -571,7 +587,7 @@ function serveSharedHtml(token) {
 }
 
 
-// --- Frontend: Main Admin App (Professional & Ultimate) ---
+// --- Frontend: Main Admin App ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -1391,6 +1407,9 @@ function serveHtml() {
         const handleFile = async (e) => {
              const f = e.target.files[0];
              if(!f) return;
+             // Reset input immediately so change event fires again for same file
+             e.target.value = '';
+             
              const reader = new FileReader();
              reader.readAsDataURL(f);
              reader.onload = async (ev) => {
@@ -1413,7 +1432,14 @@ function serveHtml() {
         };
         const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const flyToGlobal = (loc) => warRoomMapInstance?.flyTo([loc.lat, loc.lng], 15);
-        const openSettings = () => { if(confirm("Reset System?")) api('/nuke', {method:'POST'}).then(()=>location.reload()) };
+        const openSettings = () => { 
+            if(confirm("Reset System? This will wipe all data and logs you out.")) {
+                api('/nuke', {method:'POST'}).then(() => {
+                    localStorage.removeItem('admin_id');
+                    location.reload();
+                });
+            }
+        };
 
         onMounted(() => {
             if(localStorage.getItem('admin_id')) {
@@ -1496,10 +1522,16 @@ export default {
             const id = idMatch[1];
             if(req.method === 'PATCH') {
                 const p = await req.json();
-                const keys = Object.keys(p).filter(k => k !== 'id' && k !== 'created_at');
-                const set = keys.map(k => `${k} = ?`).join(', ');
-                const vals = keys.map(k => safeVal(p[k]));
-                await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                
+                // FIXED: Use whitelist to prevent "no such column" error
+                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
+                
+                if(keys.length > 0) {
+                    const set = keys.map(k => `${k} = ?`).join(', ');
+                    const vals = keys.map(k => safeVal(p[k]));
+                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                }
+                
                 return response({success:true});
             }
             return handleGetSubjectFull(env.DB, id);
