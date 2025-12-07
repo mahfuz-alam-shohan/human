@@ -5,9 +5,6 @@ compatibility_date = "2024-07-20"
 [placement]
 mode = "smart"
 
-[vars]
-JWT_SECRET = "afasfhaofn39unqab1nd1ni12o21hno2121enoe12beo1neo2neo2neo12nde12x"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "human"

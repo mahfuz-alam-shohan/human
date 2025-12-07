@@ -12,41 +12,44 @@ import {
   signJwt
 } from './utils.js';
 
-export async function handleLogin(req, db, jwtSecret) {
+export async function handleLogin(req, db, jwtSecret, corsHeaders) {
   const { email, password } = await safeJson(req);
-  if (!email || !password) return errorResponse("Missing credentials", 400);
+  if (!jwtSecret) return errorResponse('Service misconfigured', 500, 'Missing JWT secret', corsHeaders);
+  if (!email || !password) return errorResponse("Missing credentials", 400, null, corsHeaders);
 
   let admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
 
   if (!admin) {
-    const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
-    if (count.c === 0) {
-      // First user becomes admin
-      const hash = await hashPassword(password);
-      const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-      // Fetch back to get ID reliably
+    const hash = await hashPassword(password);
+    const createdAt = isoTimestamp();
+    const insert = await db.prepare(`
+      INSERT INTO admins (email, password_hash, created_at)
+      SELECT ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM admins)
+    `).bind(email, hash, createdAt).run();
+    if (insert.meta?.changes) {
       admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
     } else {
-        return errorResponse("Admin not found", 404);
+        return errorResponse("Admin not found", 404, null, corsHeaders);
     }
   } else {
       const hashed = await hashPassword(password);
-      if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401);
+      if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401, null, corsHeaders);
   }
 
   // Generate JWT
-  const token = await signJwt({ id: admin.id, email: admin.email }, jwtSecret || 'secret');
-  return jsonResponse({ token, id: admin.id });
+  const token = await signJwt({ id: admin.id, email: admin.email }, jwtSecret);
+  return jsonResponse({ token, id: admin.id }, 200, corsHeaders);
 }
 
-export async function handleShareCreate(req, db, origin) {
+export async function handleShareCreate(req, db, origin, adminId, corsHeaders) {
   try {
     const body = await safeJson(req);
 
-    if (!body.subjectId) return errorResponse('Subject ID required', 400);
+    if (!body.subjectId) return errorResponse('Subject ID required', 400, null, corsHeaders);
     const subjectId = Number(body.subjectId);
-    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
-    if (!subject) return errorResponse('Subject not found or archived', 404);
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ? AND is_archived = 0').bind(subjectId, adminId).first();
+    if (!subject) return errorResponse('Subject not found or archived', 404, null, corsHeaders);
 
     const requestedMinutes = Number.parseInt(body.durationMinutes, 10);
     const minutes = Math.max(1, Math.min(Number.isNaN(requestedMinutes) ? 30 : requestedMinutes, 10080));
@@ -60,23 +63,23 @@ export async function handleShareCreate(req, db, origin) {
     const shareUrl = buildShareUrl(origin, token);
     const expiresAt = new Date(new Date(createdAt).getTime() + durationSeconds * 1000).toISOString();
 
-    return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201);
+    return jsonResponse({ url: shareUrl, token, expires_at: expiresAt, duration_seconds: durationSeconds }, 201, corsHeaders);
   } catch (e) {
-    return errorResponse('Failed to create share link', 500, e.message);
+    return errorResponse('Failed to create share link', 500, e.message, corsHeaders);
   }
 }
 
-export async function handleGetSharedSubject(db, token) {
+export async function handleGetSharedSubject(db, token, corsHeaders) {
   const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
 
-  if (!link) return errorResponse('INVALID LINK', 404);
+  if (!link) return errorResponse('INVALID LINK', 404, null, corsHeaders);
 
   const isActive = Number(link.is_active) === 1;
   const { expired, remainingSeconds, expiresAt: evaluatedExpiry } = evaluateShareStatus(link);
 
   if (expired || !isActive) {
     if (isActive) await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-    return errorResponse('LINK EXPIRED', 410);
+    return errorResponse('LINK EXPIRED', 410, null, corsHeaders);
   }
 
   let remaining = remainingSeconds ?? link.duration_seconds;
@@ -93,7 +96,7 @@ export async function handleGetSharedSubject(db, token) {
 
     if (remaining <= 0) {
       await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-      return errorResponse('LINK EXPIRED', 410);
+      return errorResponse('LINK EXPIRED', 410, null, corsHeaders);
     }
 
     await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
@@ -106,7 +109,7 @@ export async function handleGetSharedSubject(db, token) {
     FROM subjects WHERE id = ?
   `).bind(link.subject_id).first();
 
-  if (!subject) return errorResponse("Subject data unavailable", 404);
+  if (!subject) return errorResponse("Subject data unavailable", 404, null, corsHeaders);
 
   const [interactions, locations, media] = await Promise.all([
     db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 5').bind(link.subject_id).all(),
@@ -125,12 +128,15 @@ export async function handleGetSharedSubject(db, token) {
       expires_at: computedExpiry.toISOString(),
       views: link.views + 1
     }
-  });
+  }, 200, corsHeaders);
 }
 
-export async function handleShareList(db, subjectId, origin) {
+export async function handleShareList(db, subjectId, origin, adminId, corsHeaders) {
   try {
-    if (!subjectId) return errorResponse('Subject ID required', 400);
+    if (!subjectId) return errorResponse('Subject ID required', 400, null, corsHeaders);
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ? AND is_archived = 0').bind(subjectId, adminId).first();
+    if (!subject) return errorResponse('Subject not found or archived', 404, null, corsHeaders);
+
     const result = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
     const now = new Date();
     const links = await Promise.all((result.results || []).map(async (link) => {
@@ -149,23 +155,29 @@ export async function handleShareList(db, subjectId, origin) {
         url: buildShareUrl(origin, link.token)
       };
     }));
-    return jsonResponse(links);
+    return jsonResponse(links, 200, corsHeaders);
   } catch (e) {
-    return errorResponse('Failed to fetch share links', 500, e.message);
+    return errorResponse('Failed to fetch share links', 500, e.message, corsHeaders);
   }
 }
 
-export async function handleShareRevoke(db, token) {
-  if (!token) return errorResponse('Share token required', 400);
+export async function handleShareRevoke(db, token, adminId, corsHeaders) {
+  if (!token) return errorResponse('Share token required', 400, null, corsHeaders);
   try {
-    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
-    return jsonResponse({ success: true });
+    const res = await db.prepare('
+      UPDATE subject_shares
+      SET is_active = 0
+      WHERE token = ? AND subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+    ').bind(token, adminId).run();
+
+    if (!res.meta?.changes) return errorResponse('Share token not found', 404, null, corsHeaders);
+    return jsonResponse({ success: true }, 200, corsHeaders);
   } catch (e) {
-    return errorResponse('Failed to revoke link', 500, e.message);
+    return errorResponse('Failed to revoke link', 500, e.message, corsHeaders);
   }
 }
 
-export async function handleCreateLocation(db, payload) {
+export async function handleCreateLocation(db, payload, adminId, corsHeaders) {
   const errors = [];
   const subjectId = Number(payload.subject_id);
   if (!subjectId || Number.isNaN(subjectId)) errors.push('Valid subject_id is required');
@@ -175,10 +187,10 @@ export async function handleCreateLocation(db, payload) {
   const lng = Number(payload.lng);
   if (Number.isNaN(lat) || Number.isNaN(lng)) errors.push('Valid coordinates are required');
 
-  if (errors.length) return errorResponse(errors.join('; '), 400);
+  if (errors.length) return errorResponse(errors.join('; '), 400, null, corsHeaders);
 
-  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
-  if (!subject) return errorResponse('Subject not found or archived', 404);
+  const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ? AND is_archived = 0').bind(subjectId, adminId).first();
+  if (!subject) return errorResponse('Subject not found or archived', 404, null, corsHeaders);
 
   const createdAt = isoTimestamp();
   await db.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -197,10 +209,10 @@ export async function handleCreateLocation(db, payload) {
       notes: safeVal(payload.notes),
       created_at: createdAt,
     },
-  });
+  }, 200, corsHeaders);
 }
 
-export async function handleGetDashboard(db, adminId) {
+export async function handleGetDashboard(db, adminId, corsHeaders) {
   const recent = await db.prepare(`
         SELECT 'subject' as type, id as ref_id, full_name as title, 'Contact Added' as desc, created_at as date FROM subjects WHERE admin_id = ?
         UNION ALL
@@ -217,12 +229,12 @@ export async function handleGetDashboard(db, adminId) {
             (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
     `).bind(adminId, adminId, adminId).first();
 
-  return jsonResponse({ feed: recent.results, stats });
+  return jsonResponse({ feed: recent.results, stats }, 200, corsHeaders);
 }
 
-export async function handleGetSubjectFull(db, id) {
-  const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-  if (!subject) return errorResponse("Subject not found", 404);
+export async function handleGetSubjectFull(db, id, adminId, corsHeaders) {
+  const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND admin_id = ? AND is_archived = 0').bind(id, adminId).first();
+  if (!subject) return errorResponse("Subject not found", 404, null, corsHeaders);
 
   const [media, intel, relationships, interactions, locations] = await Promise.all([
     db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
@@ -244,10 +256,10 @@ export async function handleGetSubjectFull(db, id) {
     relationships: relationships.results,
     interactions: interactions.results,
     locations: (locations.results || []).map(coerceLatLng)
-  });
+  }, 200, corsHeaders);
 }
 
-export async function handleGetMapData(db, adminId) {
+export async function handleGetMapData(db, adminId, corsHeaders) {
   const query = `
         SELECT l.id, l.name, l.lat, l.lng, l.type, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level
         FROM subject_locations l
@@ -255,11 +267,11 @@ export async function handleGetMapData(db, adminId) {
         WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
     `;
   const res = await db.prepare(query).bind(adminId).all();
-  return jsonResponse((res.results || []).map(coerceLatLng));
+  return jsonResponse((res.results || []).map(coerceLatLng), 200, corsHeaders);
 }
 
-export async function handleGetSubjectSuggestions(db, adminId) {
-  if (!adminId) return errorResponse('Admin ID required', 400);
+export async function handleGetSubjectSuggestions(db, adminId, corsHeaders) {
+  if (!adminId) return errorResponse('Admin ID required', 400, null, corsHeaders);
 
   const fetchDistinct = async (column) => {
     const res = await db.prepare(`
@@ -277,5 +289,5 @@ export async function handleGetSubjectSuggestions(db, adminId) {
     fetchDistinct('religion')
   ]);
 
-  return jsonResponse({ nationality, ideology, religion });
+  return jsonResponse({ nationality, ideology, religion }, 200, corsHeaders);
 }

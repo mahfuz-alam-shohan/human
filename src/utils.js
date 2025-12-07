@@ -46,6 +46,30 @@ export function sanitizeFileName(name) {
     .replace(/^-+|-+$/g, '') || 'upload';
 }
 
+export function buildCorsHeaders(origin, allowedOrigins) {
+  const headers = { ...CORS_HEADERS };
+  const allowlist = (allowedOrigins || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  if (allowlist.includes('*')) {
+    headers['Access-Control-Allow-Origin'] = origin || '*';
+    return headers;
+  }
+
+  if (!allowlist.length && origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    return headers;
+  }
+
+  if (origin && allowlist.includes(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  return headers;
+}
+
 export function safeVal(v) {
   return v === undefined || v === '' ? null : v;
 }
@@ -68,19 +92,19 @@ export function coerceLatLng(record) {
   };
 }
 
-export function jsonResponse(data, status = 200) {
+export function jsonResponse(data, status = 200, headers = CORS_HEADERS) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...CORS_HEADERS,
+      ...headers,
     },
   });
 }
 
-export function errorResponse(msg, status = 500, details = null) {
+export function errorResponse(msg, status = 500, details = null, headers = CORS_HEADERS) {
   console.error(`API Error: ${msg}`, details);
-  return jsonResponse({ error: msg, details }, status);
+  return jsonResponse({ error: msg, details }, status, headers);
 }
 
 export async function safeJson(req) {
@@ -93,8 +117,8 @@ export async function safeJson(req) {
 }
 
 export function ensureEnv(env) {
-  if (!env || !env.DB || !env.BUCKET) {
-    throw new Error('Required bindings are missing (DB or BUCKET)');
+  if (!env || !env.DB || !env.BUCKET || !env.JWT_SECRET) {
+    throw new Error('Required bindings are missing (DB, BUCKET, or JWT_SECRET)');
   }
 }
 
@@ -109,6 +133,24 @@ export function evaluateShareStatus(link, now = new Date()) {
   const expiresAt = new Date(new Date(link.started_at).getTime() + durationSeconds * 1000);
   const remainingSeconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
   return { expired: remainingSeconds <= 0, remainingSeconds, expiresAt };
+}
+
+export function detectMimeType(buffer, declaredType = '') {
+  const bytes = new Uint8Array(buffer);
+  const startsWith = (signature, offset = 0) => signature.every((b, i) => bytes[offset + i] === b);
+
+  if (bytes.length >= 4 && startsWith([0x25, 0x50, 0x44, 0x46])) return 'application/pdf';
+  if (bytes.length >= 3 && startsWith([0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (bytes.length >= 8 && startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
+  if (bytes.length >= 6 && (startsWith([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) || startsWith([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))) return 'image/gif';
+  if (bytes.length >= 12 && startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
+
+  if (declaredType && /^image\//.test(declaredType)) return declaredType;
+  return declaredType || 'application/octet-stream';
+}
+
+export function isInlineSafeMime(mime) {
+  return ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'].includes(mime);
 }
 
 // --- JWT HELPERS ---

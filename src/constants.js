@@ -1,9 +1,8 @@
 export const encoder = new TextEncoder();
 export const APP_TITLE = "PEOPLE OS";
 export const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 export const SUBJECT_COLUMNS = [
