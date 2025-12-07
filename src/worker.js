@@ -47,10 +47,8 @@ let schemaInitialized = false;
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
-      // Enable Foreign Keys
       await db.prepare("PRAGMA foreign_keys = ON;").run();
 
-      // Consolidated Schema - No ALTER statements needed for fresh install
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY, 
@@ -167,27 +165,22 @@ async function ensureSchema(db) {
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
-      // If error is table exists but schema wrong, we might need a manual burn
   }
 }
 
 async function nukeDatabase(db) {
-    // The "Burn Protocol" - Drops all tables explicitly
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
         'subject_relationships', 'subject_media', 'subject_intel', 
         'subjects', 'admins'
     ];
     
-    // Disable FK constraints temporarily to allow dropping
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
-    
     for(const t of tables) {
         try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
-    
     await db.prepare("PRAGMA foreign_keys = ON;").run();
-    schemaInitialized = false; // Force ensureSchema on next run
+    schemaInitialized = false; 
     return true;
 }
 
@@ -272,7 +265,10 @@ async function handleCreateShareLink(req, db, origin) {
     const token = generateToken();
     await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
         .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
-    return response({ url: `${origin}/share/${token}` });
+    
+    // Return the full URL for convenience
+    const url = `${origin}/share/${token}`;
+    return response({ url, token, duration_seconds: durationSeconds });
 }
 
 async function handleListShareLinks(db, subjectId) {
@@ -310,8 +306,8 @@ async function handleGetSharedSubject(db, token) {
         // Increment View
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
-        // Fetch limited data
-        const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status, created_at FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        // Fetch limited data for public view
+        const subject = await db.prepare('SELECT full_name, alias, occupation, nationality, ideology, threat_level, avatar_path, status, created_at, identifying_marks, height, weight, age FROM subjects WHERE id = ?').bind(link.subject_id).first();
         const interactions = await db.prepare('SELECT date, type, conclusion FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC LIMIT 10').bind(link.subject_id).all();
         const locations = await db.prepare('SELECT name, type, address, lat, lng FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
         const media = await db.prepare('SELECT object_key, description, content_type FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
@@ -324,9 +320,186 @@ async function handleGetSharedSubject(db, token) {
             meta: { remaining_seconds: Math.floor(remaining) }
         });
     }
+    return errorResponse('INVALID CONFIG', 500);
 }
 
-// --- Frontend HTML ---
+// --- Frontend: Shared Link View (Public) ---
+function serveSharedHtml(token) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Secure Dossier View</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { font-family: 'Space Grotesk', sans-serif; background: #0f172a; color: #e2e8f0; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .secure-stamp { border: 2px solid #ef4444; color: #ef4444; transform: rotate(-15deg); display: inline-block; padding: 0.5rem 1rem; font-weight: 800; letter-spacing: 0.1em; opacity: 0.8; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4">
+    <div id="app" class="w-full max-w-4xl mx-auto my-8">
+        <!-- Loading State -->
+        <div v-if="loading" class="text-center py-20">
+            <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i>
+            <p class="mt-4 text-sm uppercase tracking-widest text-slate-400">Authenticating Token...</p>
+        </div>
+
+        <!-- Error State -->
+        <div v-else-if="error" class="text-center py-20 glass rounded-xl p-8 border-red-900/50 bg-red-900/10">
+            <i class="fa-solid fa-triangle-exclamation text-5xl text-red-500 mb-4"></i>
+            <h1 class="text-2xl font-bold text-red-400 mb-2">ACCESS DENIED</h1>
+            <p class="text-slate-400">{{error}}</p>
+        </div>
+
+        <!-- Content -->
+        <div v-else class="space-y-6">
+            <!-- Header -->
+            <div class="glass rounded-xl p-6 flex items-center justify-between">
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white">PEOPLE OS <span class="text-blue-500 text-xs align-top">INTEL</span></h1>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span class="text-xs font-mono text-green-400">SECURE CONNECTION ESTABLISHED</span>
+                    </div>
+                </div>
+                <div v-if="meta" class="text-right">
+                    <div class="text-[10px] text-slate-400 uppercase font-bold">Auto-Destruct In</div>
+                    <div class="font-mono text-xl text-red-400 font-bold">{{ formatTime(timer) }}</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Sidebar -->
+                <div class="space-y-6">
+                    <div class="glass rounded-xl p-2 relative overflow-hidden group">
+                        <img :src="resolveImg(data.avatar_path)" class="w-full aspect-square object-cover rounded-lg bg-slate-800">
+                        <div class="absolute top-4 left-4 z-10">
+                            <span :class="'bg-'+threatColor+'-500/20 text-'+threatColor+'-400 border-'+threatColor+'-500/50'" class="backdrop-blur-md border px-3 py-1 rounded text-xs font-bold uppercase">
+                                {{data.threat_level}} Priority
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="glass rounded-xl p-6 space-y-4">
+                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2">Physical Stats</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div><div class="text-slate-500 text-[10px] uppercase">Height</div>{{data.height || 'N/A'}}</div>
+                            <div><div class="text-slate-500 text-[10px] uppercase">Weight</div>{{data.weight || 'N/A'}}</div>
+                            <div><div class="text-slate-500 text-[10px] uppercase">Age</div>{{data.age || 'N/A'}}</div>
+                            <div><div class="text-slate-500 text-[10px] uppercase">Gender</div>{{data.gender || 'N/A'}}</div>
+                        </div>
+                        <div v-if="data.identifying_marks" class="pt-2">
+                            <div class="text-slate-500 text-[10px] uppercase">Marks</div>
+                            <div class="text-sm text-slate-300">{{data.identifying_marks}}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Info -->
+                <div class="md:col-span-2 space-y-6">
+                    <div class="glass rounded-xl p-8 relative overflow-hidden">
+                        <div class="absolute top-4 right-8 secure-stamp border-slate-500 text-slate-500 opacity-20 transform rotate-12">CONFIDENTIAL</div>
+                        <h2 class="text-3xl font-bold text-white mb-1">{{data.full_name}}</h2>
+                        <div class="text-blue-400 text-sm font-mono mb-6" v-if="data.alias">AKA: {{data.alias}}</div>
+                        
+                        <div class="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
+                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Occupation</span>{{data.occupation || 'Unknown'}}</div>
+                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Nationality</span>{{data.nationality || 'Unknown'}}</div>
+                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Affiliation</span>{{data.ideology || 'Unknown'}}</div>
+                            <div><span class="text-slate-500 block text-xs uppercase mb-1">Status</span>{{data.status || 'Active'}}</div>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-xl p-6">
+                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">Recent Activity</h3>
+                        <div class="space-y-4">
+                            <div v-for="ix in data.interactions" class="flex gap-4 items-start">
+                                <div class="w-16 text-[10px] font-mono text-slate-500 pt-1">{{new Date(ix.date).toLocaleDateString()}}</div>
+                                <div class="flex-1">
+                                    <span class="text-xs font-bold text-blue-400 uppercase">{{ix.type}}</span>
+                                    <p class="text-sm text-slate-300 mt-1">{{ix.conclusion || 'No details logged.'}}</p>
+                                </div>
+                            </div>
+                            <div v-if="!data.interactions?.length" class="text-center text-slate-600 italic text-sm py-4">No recent interactions available.</div>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-xl p-6" v-if="data.media?.length">
+                         <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">Attachments</h3>
+                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                            <div v-for="m in data.media" class="aspect-square bg-slate-800 rounded-lg overflow-hidden relative group">
+                                <img v-if="m.content_type.startsWith('image')" :src="'/api/media/'+m.object_key" class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity">
+                                <div v-else class="w-full h-full flex items-center justify-center"><i class="fa-solid fa-file text-slate-600"></i></div>
+                                <a :href="'/api/media/'+m.object_key" download class="absolute inset-0 z-10"></a>
+                            </div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        createApp({
+            setup() {
+                const loading = ref(true);
+                const error = ref(null);
+                const data = ref(null);
+                const meta = ref(null);
+                const timer = ref(0);
+
+                const token = window.location.pathname.split('/').pop();
+
+                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/cubes.png';
+                const formatTime = (s) => {
+                    const m = Math.floor(s / 60);
+                    const sec = Math.floor(s % 60);
+                    return \`\${m}:\${sec.toString().padStart(2, '0')}\`;
+                };
+
+                const threatColor = (level) => {
+                    if(level === 'Critical') return 'red';
+                    if(level === 'High') return 'orange';
+                    return 'blue';
+                }
+
+                onMounted(async () => {
+                    try {
+                        const res = await fetch('/api/share/' + token);
+                        const json = await res.json();
+                        if(json.error) throw new Error(json.error);
+                        data.value = json;
+                        meta.value = json.meta;
+                        timer.value = json.meta?.remaining_seconds || 0;
+                        loading.value = false;
+                        
+                        // Countdown
+                        setInterval(() => {
+                            if(timer.value > 0) timer.value--;
+                            else if(!error.value && timer.value <= 0) window.location.reload();
+                        }, 1000);
+                    } catch(e) {
+                        error.value = e.message;
+                        loading.value = false;
+                    }
+                });
+
+                return { loading, error, data, meta, timer, resolveImg, formatTime, threatColor };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>`;
+}
+
+
+// --- Frontend: Main Admin App ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -372,8 +545,6 @@ function serveHtml() {
 
     .leaflet-popup-content-wrapper { background: white; color: #111827; border-radius: 0.5rem; font-family: 'Inter', sans-serif; font-size: 12px; }
     .leaflet-popup-tip { background: white; }
-    
-    .touch-target { min-height: 48px; }
     
     /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -859,43 +1030,65 @@ function serveHtml() {
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest">Link Contacts</button>
                  </form>
 
+                 <!-- UPDATED SHARE MODAL -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <div class="text-center">
                         <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 text-xl">
                             <i class="fa-solid fa-link"></i>
                         </div>
                         <h4 class="font-bold text-gray-900">Share Read-Only Access</h4>
-                        <p class="text-xs text-gray-500 mt-1">Generate a temporary link. It will expire automatically.</p>
+                        <p class="text-xs text-gray-500 mt-1">Generate temporary secure links for this subject.</p>
                     </div>
                     
-                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <div class="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
                         <div class="flex gap-2">
-                            <div class="relative w-24">
+                            <div class="relative w-28">
                                 <input v-model.number="forms.share.minutes" type="number" class="glass-input p-2.5 w-full text-center text-sm font-bold pl-2 pr-8" placeholder="15" min="1">
                                 <span class="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">MIN</span>
                             </div>
-                            <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md">Create Link</button>
-                        </div>
-                        <div v-if="forms.share.result" class="mt-3 relative">
-                            <input readonly :value="forms.share.result" class="w-full bg-white border border-blue-200 text-blue-600 text-xs p-3 rounded-lg pr-10 font-mono" @click="copyToClipboard(forms.share.result)">
-                            <button @click="copyToClipboard(forms.share.result)" class="absolute right-2 top-2 text-blue-400 hover:text-blue-600 p-1"><i class="fa-regular fa-copy"></i></button>
+                            <button @click="createShareLink" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs uppercase shadow-md flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-plus"></i> Generate Link
+                            </button>
                         </div>
                     </div>
 
                     <div>
-                        <h5 class="text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Active Links</h5>
-                        <div class="max-h-40 overflow-y-auto space-y-2">
-                            <div v-for="link in activeShareLinks" :key="link.token" class="flex justify-between items-center p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
-                                <div>
-                                    <div class="text-gray-900 text-xs font-bold">Created {{ new Date(link.created_at).toLocaleDateString() }}</div>
-                                    <div class="text-gray-500 text-[10px] mt-0.5 flex items-center gap-2">
-                                        <span class="bg-gray-100 px-1.5 rounded">{{ link.duration_seconds ? (link.duration_seconds/60).toFixed(0) + 'm Limit' : 'No Limit' }}</span>
-                                        <span v-if="link.views > 0" class="text-blue-600 font-bold"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
+                        <div class="flex items-center justify-between mb-2 px-1">
+                            <h5 class="text-xs font-bold text-gray-400 uppercase">Active Links</h5>
+                            <button @click="fetchShareLinks" class="text-xs text-blue-500 hover:underline">Refresh</button>
+                        </div>
+                        
+                        <div class="max-h-60 overflow-y-auto space-y-2 pr-1">
+                            <div v-for="link in activeShareLinks" :key="link.token" class="flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-lg shadow-sm group hover:border-blue-200 transition-colors">
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" :class="link.is_active ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-400'">
+                                    <i class="fa-solid" :class="link.is_active ? 'fa-lock-open' : 'fa-lock'"></i>
+                                </div>
+                                
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-bold text-gray-900">...{{link.token.slice(-6)}}</span>
+                                        <span v-if="!link.is_active" class="px-1.5 py-0.5 bg-red-100 text-red-600 text-[9px] font-bold rounded uppercase">Revoked</span>
+                                    </div>
+                                    <div class="text-[10px] text-gray-400 flex items-center gap-3 mt-0.5">
+                                        <span title="Views"><i class="fa-regular fa-eye mr-1"></i>{{link.views}}</span>
+                                        <span><i class="fa-regular fa-clock mr-1"></i>{{ formatDuration(link) }}</span>
                                     </div>
                                 </div>
-                                <button @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 text-[10px] font-bold bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded transition-colors">KILL</button>
+
+                                <div class="flex gap-1">
+                                    <button @click="copyToClipboard(getShareUrl(link.token))" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition-colors" title="Copy Link">
+                                        <i class="fa-regular fa-copy"></i>
+                                    </button>
+                                    <button v-if="link.is_active" @click="revokeLink(link.token)" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors" title="Revoke Access">
+                                        <i class="fa-solid fa-ban"></i>
+                                    </button>
+                                </div>
                             </div>
-                            <div v-if="activeShareLinks.length === 0" class="text-center text-xs text-gray-400 py-4 italic">No active share links.</div>
+                            
+                            <div v-if="activeShareLinks.length === 0" class="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg">
+                                <div class="text-gray-300 text-xl mb-2"><i class="fa-solid fa-link-slash"></i></div>
+                                <div class="text-xs text-gray-400 font-medium">No active links found</div>
+                            </div>
                         </div>
                     </div>
                  </div>
@@ -955,7 +1148,7 @@ function serveHtml() {
             location: {},
             intel: {},
             rel: {},
-            share: { minutes: 30, result: '' }
+            share: { minutes: 30 }
         });
 
         // URL Sync
@@ -1091,14 +1284,27 @@ function serveHtml() {
         };
 
         const createShareLink = async () => {
-            const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
-            forms.share.result = res.url;
+            await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) });
             fetchShareLinks();
         };
 
         const revokeLink = async (token) => {
             await api('/share-links?token=' + token, { method: 'DELETE' });
             fetchShareLinks();
+        };
+
+        const getShareUrl = (token) => {
+            return window.location.origin + '/share/' + token;
+        };
+
+        const formatDuration = (link) => {
+            if (!link.is_active) return 'Inactive';
+            if (link.duration_seconds && link.started_at) {
+               // Calculate remaining
+               // This is a simple client side approx, real validation is server side
+               return (link.duration_seconds / 60).toFixed(0) + 'm Limit';
+            }
+            return (link.duration_seconds / 60).toFixed(0) + 'm Limit';
         };
 
         // Maps
@@ -1229,7 +1435,7 @@ function serveHtml() {
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id };
             if(type === 'share-secure') {
-                forms.share = { minutes: 30, result: '' };
+                forms.share = { minutes: 30 };
                 fetchShareLinks();
             }
         };
@@ -1348,7 +1554,8 @@ function serveHtml() {
             activeShareLinks, locationSearchQuery, locationSearchResults, searchLocations, selectLocation, warMapSelected, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, revokeLink, fetchShareLinks, copyToClipboard, changeTab, changeSubTab, errors, suggestions, archiveSubject,
-            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
+            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData,
+            getShareUrl, formatDuration
         };
       }
     }).mount('#app');
@@ -1370,7 +1577,7 @@ export default {
 
         // Share Page Route
         const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return serveSharedHtml(shareMatch[1]);
+        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
 
         if (req.method === 'GET' && path === '/') return serveHtml();
 
