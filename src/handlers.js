@@ -9,27 +9,34 @@ import {
   safeJson,
   safeVal,
   jsonResponse,
+  signJwt
 } from './utils.js';
 
-export async function handleLogin(req, db) {
+export async function handleLogin(req, db, jwtSecret) {
   const { email, password } = await safeJson(req);
   if (!email || !password) return errorResponse("Missing credentials", 400);
 
-  const admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+  let admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
 
   if (!admin) {
     const count = await db.prepare('SELECT COUNT(*) as c FROM admins').first();
     if (count.c === 0) {
+      // First user becomes admin
       const hash = await hashPassword(password);
       const res = await db.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-      return jsonResponse({ id: res.meta.last_row_id, message: "Admin created" });
+      // Fetch back to get ID reliably
+      admin = await db.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+    } else {
+        return errorResponse("Admin not found", 404);
     }
-    return errorResponse("Admin not found", 404);
+  } else {
+      const hashed = await hashPassword(password);
+      if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401);
   }
 
-  const hashed = await hashPassword(password);
-  if (hashed !== admin.password_hash) return errorResponse('Access Denied', 401);
-  return jsonResponse({ id: admin.id });
+  // Generate JWT
+  const token = await signJwt({ id: admin.id, email: admin.email }, jwtSecret || 'secret');
+  return jsonResponse({ token, id: admin.id });
 }
 
 export async function handleShareCreate(req, db, origin) {
@@ -160,7 +167,6 @@ export async function handleShareRevoke(db, token) {
 
 export async function handleCreateLocation(db, payload) {
   const errors = [];
-
   const subjectId = Number(payload.subject_id);
   if (!subjectId || Number.isNaN(subjectId)) errors.push('Valid subject_id is required');
   if (!payload.name || !payload.name.trim()) errors.push('Location name is required');
