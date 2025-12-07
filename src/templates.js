@@ -505,37 +505,37 @@ export function serveHtml() {
                     <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                         <label class="text-[10px] text-gray-500 font-bold uppercase block mb-1">Avatar / Image</label>
                         <div class="flex gap-2">
-                             <input v-model="forms.subject.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
+                             <input v-model="subjectForm.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
                              <button type="button" @click="triggerUpload('avatar')" class="bg-white border border-gray-300 px-3 rounded text-xs font-bold hover:bg-gray-100">Upload</button>
                         </div>
                     </div>
-                    <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
-                    <input v-model="forms.subject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
+                    <input v-model="subjectForm.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
+                    <input v-model="subjectForm.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
                     <div class="grid grid-cols-3 gap-4">
-                        <select v-model="forms.subject.sex" class="glass-input p-3 text-sm bg-white">
+                        <select v-model="subjectForm.sex" class="glass-input p-3 text-sm bg-white">
                             <option disabled value="">Sex</option>
                             <option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option>
                         </select>
-                        <select v-model="forms.subject.threat_level" class="glass-input p-3 text-sm bg-white">
+                        <select v-model="subjectForm.threat_level" class="glass-input p-3 text-sm bg-white">
                             <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                         </select>
-                        <input v-model="forms.subject.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
+                        <input v-model="subjectForm.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
                     </div>
                     <div class="grid grid-cols-2 gap-4">
-                        <input type="date" v-model="forms.subject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
-                        <input v-model="forms.subject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
+                        <input type="date" v-model="subjectForm.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
+                        <input v-model="subjectForm.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
                     </div>
-                    <input v-model="forms.subject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
-                    <input v-model="forms.subject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
-                    <input v-model="forms.subject.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
+                    <input v-model="subjectForm.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
+                    <input v-model="subjectForm.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
+                    <input v-model="subjectForm.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <input v-model="forms.subject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
-                        <input v-model="forms.subject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
-                        <input v-model="forms.subject.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
+                        <input v-model="subjectForm.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
+                        <input v-model="subjectForm.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
+                        <input v-model="subjectForm.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
                     </div>
-                    <textarea v-model="forms.subject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
+                    <textarea v-model="subjectForm.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="subjectForm.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="subjectForm.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
 
                     <datalist id="nationalityOptions"><option v-for="nat in fieldSuggestions.nationality" :value="nat"></option></datalist>
                     <datalist id="ideologyOptions"><option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option></datalist>
@@ -698,31 +698,36 @@ export function serveHtml() {
         const warMapSearch = ref('');
         const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
         const defaultSubjectValues = { admin_id: '', full_name: '', alias: '', status: 'Active', threat_level: 'Low', sex: '', gender: '', occupation: '', nationality: '', ideology: '', religion: '', dob: '', age: null, modus_operandi: '', weakness: '', avatar_path: '', last_sighted: '', height: '', weight: '', identifying_marks: '', location: '', contact: '', hometown: '', previous_locations: '', notes: '', social_links: '', digital_identifiers: '', eye_color: '', hair_color: '', blood_type: '' };
+        
         const buildSubjectForm = (source = {}, adminId = '') => {
           const form = {};
-
           SUBJECT_FORM_FIELDS.forEach((key) => {
             let val = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
-
             if (key === 'dob' && val && typeof val === 'string' && val.includes('T')) {
               val = val.split('T')[0];
             }
-
             form[key] = val;
           });
-
           return form;
         };
-        const buildSubjectPayload = (form) => { const payload = {}; SUBJECT_FORM_FIELDS.forEach((key) => { if (form[key] !== undefined) payload[key] = form[key]; }); return payload; };
-        const forms = reactive({ subject: buildSubjectForm({}, ''), interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30, result: '', error: '' } });
+
+        const buildSubjectPayload = (form) => { 
+            const payload = {}; 
+            SUBJECT_FORM_FIELDS.forEach((key) => { 
+                if (form[key] !== undefined) payload[key] = form[key]; 
+            }); 
+            return payload; 
+        };
+
+        // RECODE: subjectForm is now a standalone ref, detached from the 'forms' reactive proxy
+        const subjectForm = ref(buildSubjectForm({}, ''));
+        const forms = reactive({ interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30, result: '', error: '' } });
         const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
 
         const api = async (ep, opts = {}) => {
             const finalOpts = { ...opts, headers: { ...(opts.headers || {}) } };
-            // Auto-inject Token
             const token = localStorage.getItem('auth_token');
             if(token) finalOpts.headers['Authorization'] = 'Bearer ' + token;
-            
             if (finalOpts.body && !(finalOpts.body instanceof FormData) && !finalOpts.headers['Content-Type']) {
                 finalOpts.headers['Content-Type'] = 'application/json';
             }
@@ -743,7 +748,7 @@ export function serveHtml() {
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('auth_token', res.token);
-                localStorage.setItem('admin_id', res.id); // For legacy refs
+                localStorage.setItem('admin_id', res.id); 
                 view.value = 'app';
                 fetchData();
             } catch(e) { alert(e.message); } finally { loading.value = false; }
@@ -766,7 +771,26 @@ export function serveHtml() {
                 throw e;
             }
         });
-        const submitSubject = async () => withAction(async () => { try { const isEdit = modal.active === 'edit-profile'; const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; const method = isEdit ? 'PATCH' : 'POST'; const payload = buildSubjectPayload(forms.subject); payload.age = payload.dob ? calculateAge(payload.dob) : null; await api(ep, { method, body: JSON.stringify(payload) }); if(isEdit) { await viewSubject(selected.value.id); } else fetchData(); closeModal(); } catch(e) { errors.form = e.message; alert(e.message); } });
+        
+        // RECODE: Updated submit logic to use subjectForm.value
+        const submitSubject = async () => withAction(async () => { 
+            try { 
+                const isEdit = modal.active === 'edit-profile'; 
+                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; 
+                const method = isEdit ? 'PATCH' : 'POST'; 
+                const payload = buildSubjectPayload(subjectForm.value); 
+                
+                payload.age = payload.dob ? calculateAge(payload.dob) : null; 
+                
+                await api(ep, { method, body: JSON.stringify(payload) }); 
+                if(isEdit) { await viewSubject(selected.value.id); } else fetchData(); 
+                closeModal(); 
+            } catch(e) { 
+                errors.form = e.message; 
+                alert(e.message); 
+            } 
+        });
+
         const submitInteraction = async () => withAction(async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); });
         const submitLocation = async () => withAction(async () => { Object.keys(errors).forEach(k => delete errors[k]); if(!forms.location.name) errors.loc_name = 'Required'; if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map'; if(errors.loc_name || errors.loc_coords) return; await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); });
         const submitIntel = async () => withAction(async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); });
@@ -777,7 +801,10 @@ export function serveHtml() {
         const createShareLink = async () => { try { if (!selected.value) return; forms.share.error = ''; forms.share.result = ''; await withAction(async () => { const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); forms.share.result = res.url; }); fetchShareLinks(); } catch(e) { forms.share.error = e.message; } };
         const copyToClipboard = (text) => { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => fallbackCopy(text)); } else { fallbackCopy(text); } };
         const fallbackCopy = (text) => { const textArea = document.createElement("textarea"); textArea.value = text; textArea.style.position = "fixed"; document.body.appendChild(textArea); textArea.focus(); textArea.select(); try { document.execCommand('copy'); alert("Copied to clipboard!"); } catch (err) { alert("Could not copy text."); } document.body.removeChild(textArea); };
-        watch(() => forms.subject.dob, (val) => { forms.subject.age = calculateAge(val); });
+        
+        // RECODE: Updated watcher to watch subjectForm.value.dob
+        watch(() => subjectForm.value.dob, (val) => { subjectForm.value.age = calculateAge(val); });
+        
         let mapInstance = null, pickerMapInstance = null, pickerMarker = null;
         const initMap = (elementId, locations, isGlobal = false, isPicker = false) => { const el = document.getElementById(elementId); if(!el) return; if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; } if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; } const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2); L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map); if(isPicker) { pickerMapInstance = map; map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng)); setTimeout(() => map.invalidateSize(), 100); } else { mapInstance = map; const markers = []; locations.forEach(loc => { if(loc.lat && loc.lng) { const m = L.marker([loc.lat, loc.lng]).addTo(map); if(!isGlobal) m.bindPopup(\`<b>\${loc.name}</b>\`); markers.push(m); } }); if(markers.length > 0) { const group = L.featureGroup(markers); map.fitBounds(group.getBounds().pad(0.1)); } } };
         watch(() => subTab.value, (val) => { if(val === 'locations' && selected.value) nextTick(() => initMap('subjectMap', selected.value.locations || [])); if(val === 'network' && selected.value) nextTick(initNetwork); });
@@ -785,21 +812,30 @@ export function serveHtml() {
         const placePickerMarker = (map, lat, lng) => { forms.location.lat = lat; forms.location.lng = lng; if (pickerMarker) map.removeLayer(pickerMarker); pickerMarker = L.marker([lat, lng]).addTo(map); };
         const searchLocations = async () => { if(!locationSearchQuery.value) return; locationSearchLoading.value = true; locationSearchResults.value = []; try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } }); locationSearchResults.value = await res.json(); } catch(e) { locationSearchResults.value = []; errors.loc_coords = 'Unable to search locations right now'; } finally { locationSearchLoading.value = false; } };
         const selectLocation = (res) => { forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng); } };
-        const openModal = (type) => {
+        
+        // RECODE: Completely rewritten openModal to prevent reactivity freezes
+        const openModal = async (type) => {
           try {
-            modal.active = type;
             const aid = localStorage.getItem('admin_id');
             Object.keys(errors).forEach(k => delete errors[k]);
 
-            if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
-
+            // Add slight delay to unblock main thread before heavy modal render
+            // This prevents the "jamming" feeling on click
             if(type === 'edit-profile') {
-              if (!selected.value) throw new Error("No contact selected");
-
-              const newData = buildSubjectForm(selected.value, aid);
-              Object.assign(forms.subject, newData);
+                if (!selected.value) throw new Error("No contact selected");
+                
+                // Deep Clone to break reactivity completely
+                const safeData = JSON.parse(JSON.stringify(selected.value));
+                const newData = buildSubjectForm(safeData, aid);
+                
+                // Atomic replacement of the ref value (fastest method)
+                subjectForm.value = { ...newData };
+            } 
+            else if(type === 'add-subject') {
+                subjectForm.value = buildSubjectForm({}, aid);
             }
 
+            // Initialization for other forms
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') {
               forms.location = { subject_id: selected.value.id };
@@ -810,11 +846,15 @@ export function serveHtml() {
             if(type === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
             if(type === 'add-rel') forms.rel = { subjectA: selected.value.id, isExternal: false };
             if(type === 'share-secure') { forms.share = { minutes: 30, result: '', error: '' }; fetchShareLinks(); }
+            
+            // Set active last to trigger render only after data is ready
+            nextTick(() => { modal.active = type; });
           } catch (e) {
             console.error("Modal Error:", e);
             alert("Failed to open form: " + e.message);
           }
         };
+
         const closeModal = () => modal.active = null;
         const initNetwork = () => { const container = document.getElementById('relNetwork'); if(!container || !selected.value) return; const nodes = [{ id: selected.value.id, label: selected.value.full_name, shape: 'circularImage', image: resolveImg(selected.value.avatar_path), size: 30 }]; const edges = []; selected.value.relationships.forEach((r, i) => { const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id; nodes.push({ id: targetId || 'ext-'+i, label: r.target_name, shape: 'circularImage', image: resolveImg(r.target_avatar) }); edges.push({ from: selected.value.id, to: targetId || 'ext-'+i }); }); new vis.Network(container, { nodes, edges }, { nodes: { font: { color: '#374151' }, borderWidth: 2 }, edges: { color: '#cbd5e1' } }); };
         const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://www.transparenttextures.com/patterns/carbon-fibre.png';
@@ -845,7 +885,8 @@ export function serveHtml() {
             activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, fetchShareLinks, revokeLink, copyShare, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
-            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
+            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData,
+            subjectForm // EXPOSED NEW REF
         };
       }
     }).mount('#app');
