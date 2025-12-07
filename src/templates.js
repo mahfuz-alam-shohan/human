@@ -194,6 +194,11 @@ export function serveHtml() {
 <body class="h-full overflow-hidden selection:bg-blue-100 selection:text-blue-900">
   <div id="app" class="h-full flex flex-col">
 
+    <!-- Global Datalists (Moved outside modal to prevent re-render loops) -->
+    <datalist id="nationalityOptions"><option v-for="nat in fieldSuggestions.nationality" :value="nat"></option></datalist>
+    <datalist id="ideologyOptions"><option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option></datalist>
+    <datalist id="religionOptions"><option v-for="rel in fieldSuggestions.religion" :value="rel"></option></datalist>
+
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-gray-50">
         <div class="w-full max-w-sm glass p-8 shadow-xl">
             <div class="text-center mb-8">
@@ -330,7 +335,7 @@ export function serveHtml() {
                             <div class="space-y-4">
                                 <div class="aspect-square bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden relative group">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    <button @click="openModal('edit-profile')" class="absolute inset-0 bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-sm font-bold text-gray-800 cursor-pointer">Edit Profile</button>
+                                    <button @click="openEditProfile" class="absolute inset-0 bg-white/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-sm font-bold text-gray-800 cursor-pointer">Edit Profile</button>
                                 </div>
                                 <div class="glass p-4 space-y-2">
                                     <div class="text-xs text-gray-500 uppercase font-bold">Priority Status</div>
@@ -341,7 +346,7 @@ export function serveHtml() {
                             </div>
                             <div class="md:col-span-2 space-y-4">
                                 <div class="glass p-6 relative">
-                                    <button @click="openModal('edit-profile')" class="absolute top-6 right-6 text-blue-500 hover:text-blue-700"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <button @click="openEditProfile" class="absolute top-6 right-6 text-blue-500 hover:text-blue-700"><i class="fa-solid fa-pen-to-square"></i></button>
                                     <h3 class="text-sm text-gray-900 font-bold uppercase mb-6 flex items-center"><i class="fa-solid fa-id-card mr-2 text-blue-500"></i>Core Information</h3>
                                     <div class="grid grid-cols-2 gap-x-8 gap-y-6 text-sm">
                                         <div><span class="text-gray-400 text-xs font-bold block mb-1 uppercase">Full Name</span> <span class="font-medium text-gray-900">{{selected.full_name}}</span></div>
@@ -501,7 +506,8 @@ export function serveHtml() {
             </div>
             
             <div class="overflow-y-auto p-6">
-                <form v-if="modal.active === 'add-subject' || modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
+                <!-- Add Subject Form -->
+                <form v-if="modal.active === 'add-subject'" @submit.prevent="submitSubject" class="space-y-4">
                     <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                         <label class="text-[10px] text-gray-500 font-bold uppercase block mb-1">Avatar / Image</label>
                         <div class="flex gap-2">
@@ -537,12 +543,50 @@ export function serveHtml() {
                     <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     <textarea v-model="forms.subject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
 
-                    <datalist id="nationalityOptions"><option v-for="nat in fieldSuggestions.nationality" :value="nat"></option></datalist>
-                    <datalist id="ideologyOptions"><option v-for="ideo in fieldSuggestions.ideology" :value="ideo"></option></datalist>
-                    <datalist id="religionOptions"><option v-for="rel in fieldSuggestions.religion" :value="rel"></option></datalist>
-
                     <button type="submit" :disabled="actionLoading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
                         {{ actionLoading ? 'Saving...' : 'Save Contact' }}
+                    </button>
+                </form>
+
+                <!-- Edit Profile Form (Separate Instance to prevent Freezing) -->
+                <form v-if="modal.active === 'edit-profile'" @submit.prevent="submitSubject" class="space-y-4">
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <label class="text-[10px] text-gray-500 font-bold uppercase block mb-1">Avatar / Image</label>
+                        <div class="flex gap-2">
+                             <input v-model="forms.editSubject.avatar_path" placeholder="Paste Image URL..." class="glass-input flex-1 p-2 text-xs">
+                             <button type="button" @click="triggerUpload('avatar')" class="bg-white border border-gray-300 px-3 rounded text-xs font-bold hover:bg-gray-100">Upload</button>
+                        </div>
+                    </div>
+                    <input v-model="forms.editSubject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm font-medium" :class="{'error': errors.full_name}">
+                    <input v-model="forms.editSubject.alias" placeholder="Alias / Nickname" class="glass-input w-full p-3 text-sm">
+                    <div class="grid grid-cols-3 gap-4">
+                        <select v-model="forms.editSubject.sex" class="glass-input p-3 text-sm bg-white">
+                            <option disabled value="">Sex</option>
+                            <option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option>
+                        </select>
+                        <select v-model="forms.editSubject.threat_level" class="glass-input p-3 text-sm bg-white">
+                            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+                        </select>
+                        <input v-model="forms.editSubject.occupation" placeholder="Job Title" class="glass-input p-3 text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="date" v-model="forms.editSubject.dob" class="glass-input p-2.5 text-sm bg-white w-full text-gray-900">
+                        <input v-model="forms.editSubject.age" type="number" placeholder="Age" class="glass-input p-2.5 text-sm w-full bg-gray-50" readonly>
+                    </div>
+                    <input v-model="forms.editSubject.nationality" placeholder="Nationality" class="glass-input w-full p-3 text-sm" list="nationalityOptions">
+                    <input v-model="forms.editSubject.ideology" placeholder="Affiliations / Organizations" class="glass-input w-full p-3 text-sm" list="ideologyOptions">
+                    <input v-model="forms.editSubject.religion" placeholder="Religion" class="glass-input w-full p-3 text-sm" list="religionOptions">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <input v-model="forms.editSubject.height" placeholder="Height (e.g., 180cm)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.editSubject.weight" placeholder="Weight (e.g., 75kg)" class="glass-input p-3 text-sm">
+                        <input v-model="forms.editSubject.last_sighted" placeholder="Last sighted (notes or timestamp)" class="glass-input p-3 text-sm">
+                    </div>
+                    <textarea v-model="forms.editSubject.identifying_marks" placeholder="Distinguishing Features (scars, tattoos, etc.)" rows="2" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="forms.editSubject.modus_operandi" placeholder="Routine & Habits" rows="3" class="glass-input w-full p-3 text-sm"></textarea>
+                    <textarea v-model="forms.editSubject.weakness" placeholder="Challenges / Pain Points" rows="2" class="glass-input w-full p-3 text-sm border-red-100"></textarea>
+
+                    <button type="submit" :disabled="actionLoading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {{ actionLoading ? 'Saving...' : 'Update Contact' }}
                     </button>
                 </form>
 
@@ -664,7 +708,7 @@ export function serveHtml() {
     <input type="file" ref="fileInput" class="hidden" @change="handleFile" accept="image/*,application/pdf">
   </div>
   <script>
-    const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, watch, nextTick, toRaw } = Vue;
     function calculateAge(dob) {
       if (!dob) return null;
       const birthDate = new Date(dob);
@@ -698,11 +742,14 @@ export function serveHtml() {
         const warMapSearch = ref('');
         const SUBJECT_FORM_FIELDS = ['admin_id','full_name','alias','status','threat_level','sex','gender','occupation','nationality','ideology','religion','dob','age','modus_operandi','weakness','avatar_path','last_sighted','height','weight','identifying_marks','location','contact','hometown','previous_locations','notes','social_links','digital_identifiers','eye_color','hair_color','blood_type'];
         const defaultSubjectValues = { admin_id: '', full_name: '', alias: '', status: 'Active', threat_level: 'Low', sex: '', gender: '', occupation: '', nationality: '', ideology: '', religion: '', dob: '', age: null, modus_operandi: '', weakness: '', avatar_path: '', last_sighted: '', height: '', weight: '', identifying_marks: '', location: '', contact: '', hometown: '', previous_locations: '', notes: '', social_links: '', digital_identifiers: '', eye_color: '', hair_color: '', blood_type: '' };
+        
         const buildSubjectForm = (source = {}, adminId = '') => {
           const form = {};
-
+          // Ensure source is a plain object to prevent reactivity leak if a proxy is passed
+          const safeSource = source || {};
+          
           SUBJECT_FORM_FIELDS.forEach((key) => {
-            let val = source[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
+            let val = safeSource[key] ?? (key === 'admin_id' ? adminId : defaultSubjectValues[key]);
 
             if (key === 'dob' && val && typeof val === 'string' && val.includes('T')) {
               val = val.split('T')[0];
@@ -714,12 +761,21 @@ export function serveHtml() {
           return form;
         };
         const buildSubjectPayload = (form) => { const payload = {}; SUBJECT_FORM_FIELDS.forEach((key) => { if (form[key] !== undefined) payload[key] = form[key]; }); return payload; };
-        const forms = reactive({ subject: buildSubjectForm({}, ''), interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 30, result: '', error: '' } });
+        
+        // Forms State - 'editSubject' is separated from 'subject' (add) to prevent state collision and reactivity loops
+        const forms = reactive({ 
+            subject: buildSubjectForm({}, ''), 
+            editSubject: buildSubjectForm({}, ''),
+            interaction: {}, 
+            location: {}, 
+            intel: {}, 
+            rel: {}, 
+            share: { minutes: 30, result: '', error: '' } 
+        });
         const fieldSuggestions = reactive({ nationality: [], ideology: [], religion: [] });
 
         const api = async (ep, opts = {}) => {
             const finalOpts = { ...opts, headers: { ...(opts.headers || {}) } };
-            // Auto-inject Token
             const token = localStorage.getItem('auth_token');
             if(token) finalOpts.headers['Authorization'] = 'Bearer ' + token;
             
@@ -743,7 +799,7 @@ export function serveHtml() {
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('auth_token', res.token);
-                localStorage.setItem('admin_id', res.id); // For legacy refs
+                localStorage.setItem('admin_id', res.id); 
                 view.value = 'app';
                 fetchData();
             } catch(e) { alert(e.message); } finally { loading.value = false; }
@@ -757,6 +813,7 @@ export function serveHtml() {
         const viewSubject = async (id) => withAction(async () => { selected.value = await api('/subjects/'+id); if (!selected.value.age && selected.value.dob) selected.value.age = calculateAge(selected.value.dob); currentTab.value = 'detail'; subTab.value = 'profile'; });
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
+        
         const updateSubject = async () => withAction(async () => {
             if(!selected.value) return;
             try {
@@ -766,7 +823,30 @@ export function serveHtml() {
                 throw e;
             }
         });
-        const submitSubject = async () => withAction(async () => { try { const isEdit = modal.active === 'edit-profile'; const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; const method = isEdit ? 'PATCH' : 'POST'; const payload = buildSubjectPayload(forms.subject); payload.age = payload.dob ? calculateAge(payload.dob) : null; await api(ep, { method, body: JSON.stringify(payload) }); if(isEdit) { await viewSubject(selected.value.id); } else fetchData(); closeModal(); } catch(e) { errors.form = e.message; alert(e.message); } });
+        
+        // Revised Submit Logic handling both Add and Edit with separate state containers
+        const submitSubject = async () => withAction(async () => { 
+            try { 
+                const isEdit = modal.active === 'edit-profile'; 
+                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; 
+                const method = isEdit ? 'PATCH' : 'POST'; 
+                
+                // Use the correct form state
+                const sourceForm = isEdit ? forms.editSubject : forms.subject;
+                const payload = buildSubjectPayload(sourceForm); 
+                
+                payload.age = payload.dob ? calculateAge(payload.dob) : null; 
+                await api(ep, { method, body: JSON.stringify(payload) }); 
+                
+                if(isEdit) { await viewSubject(selected.value.id); } 
+                else { fetchData(); }
+                
+                closeModal(); 
+            } catch(e) { 
+                errors.form = e.message; alert(e.message); 
+            } 
+        });
+
         const submitInteraction = async () => withAction(async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); });
         const submitLocation = async () => withAction(async () => { Object.keys(errors).forEach(k => delete errors[k]); if(!forms.location.name) errors.loc_name = 'Required'; if(!forms.location.lat || !forms.location.lng) errors.loc_coords = 'Select coordinates on the map'; if(errors.loc_name || errors.loc_coords) return; await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); });
         const submitIntel = async () => withAction(async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); });
@@ -777,7 +857,11 @@ export function serveHtml() {
         const createShareLink = async () => { try { if (!selected.value) return; forms.share.error = ''; forms.share.result = ''; await withAction(async () => { const res = await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); forms.share.result = res.url; }); fetchShareLinks(); } catch(e) { forms.share.error = e.message; } };
         const copyToClipboard = (text) => { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(() => alert("Copied!")).catch(() => fallbackCopy(text)); } else { fallbackCopy(text); } };
         const fallbackCopy = (text) => { const textArea = document.createElement("textarea"); textArea.value = text; textArea.style.position = "fixed"; document.body.appendChild(textArea); textArea.focus(); textArea.select(); try { document.execCommand('copy'); alert("Copied to clipboard!"); } catch (err) { alert("Could not copy text."); } document.body.removeChild(textArea); };
+        
+        // Watchers updated to handle both forms safely
         watch(() => forms.subject.dob, (val) => { forms.subject.age = calculateAge(val); });
+        watch(() => forms.editSubject.dob, (val) => { forms.editSubject.age = calculateAge(val); });
+
         let mapInstance = null, pickerMapInstance = null, pickerMarker = null;
         const initMap = (elementId, locations, isGlobal = false, isPicker = false) => { const el = document.getElementById(elementId); if(!el) return; if (isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; } if (!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; } const map = L.map(elementId, { attributionControl: false }).setView([20, 0], 2); L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map); if(isPicker) { pickerMapInstance = map; map.on('click', e => placePickerMarker(map, e.latlng.lat, e.latlng.lng)); setTimeout(() => map.invalidateSize(), 100); } else { mapInstance = map; const markers = []; locations.forEach(loc => { if(loc.lat && loc.lng) { const m = L.marker([loc.lat, loc.lng]).addTo(map); if(!isGlobal) m.bindPopup(\`<b>\${loc.name}</b>\`); markers.push(m); } }); if(markers.length > 0) { const group = L.featureGroup(markers); map.fitBounds(group.getBounds().pad(0.1)); } } };
         watch(() => subTab.value, (val) => { if(val === 'locations' && selected.value) nextTick(() => initMap('subjectMap', selected.value.locations || [])); if(val === 'network' && selected.value) nextTick(initNetwork); });
@@ -785,6 +869,28 @@ export function serveHtml() {
         const placePickerMarker = (map, lat, lng) => { forms.location.lat = lat; forms.location.lng = lng; if (pickerMarker) map.removeLayer(pickerMarker); pickerMarker = L.marker([lat, lng]).addTo(map); };
         const searchLocations = async () => { if(!locationSearchQuery.value) return; locationSearchLoading.value = true; locationSearchResults.value = []; try { const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(locationSearchQuery.value), { headers: { 'User-Agent': 'PeopleOS/1.0' } }); locationSearchResults.value = await res.json(); } catch(e) { locationSearchResults.value = []; errors.loc_coords = 'Unable to search locations right now'; } finally { locationSearchLoading.value = false; } };
         const selectLocation = (res) => { forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); placePickerMarker(pickerMapInstance, forms.location.lat, forms.location.lng); } };
+        
+        // Optimized Edit Profile Opener - Resolves the Freezing Issue
+        const openEditProfile = () => {
+            try {
+                if (!selected.value) throw new Error("No contact selected");
+                
+                // CRITICAL FIX: Use toRaw and Deep Clone to detach from reactivity system during preparation
+                // This prevents infinite reactivity loops when copying data to the form
+                const rawData = toRaw(selected.value);
+                const cleanData = JSON.parse(JSON.stringify(rawData));
+                const aid = localStorage.getItem('admin_id');
+                
+                const newData = buildSubjectForm(cleanData, aid);
+                Object.assign(forms.editSubject, newData);
+                
+                modal.active = 'edit-profile';
+            } catch(e) {
+                console.error("Edit Profile Error:", e);
+                alert("Failed to load editor: " + e.message);
+            }
+        };
+
         const openModal = (type) => {
           try {
             modal.active = type;
@@ -793,12 +899,7 @@ export function serveHtml() {
 
             if(type === 'add-subject') forms.subject = buildSubjectForm({}, aid);
 
-            if(type === 'edit-profile') {
-              if (!selected.value) throw new Error("No contact selected");
-
-              const newData = buildSubjectForm(selected.value, aid);
-              Object.assign(forms.subject, newData);
-            }
+            // 'edit-profile' is now handled by openEditProfile directly for safety
 
             if(type === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
             if(type === 'add-location') {
@@ -845,7 +946,8 @@ export function serveHtml() {
             activeShareLinks, locationSearchQuery, locationSearchResults, locationSearchLoading, searchLocations, selectLocation, warMapSearch, modalTitle,
             handleAuth, fetchData, viewSubject, openModal, closeModal, submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, 
             createShareLink, fetchShareLinks, revokeLink, copyShare, copyToClipboard, changeTab, changeSubTab, errors, updateSubject,
-            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData
+            triggerUpload, handleFile, deleteItem, burnProtocol, resolveImg, getThreatColor, flyTo, openSettings, logout, exportData,
+            openEditProfile
         };
       }
     }).mount('#app');
