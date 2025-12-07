@@ -503,7 +503,7 @@ function serveSharedHtml(token) {
 }
 
 
-// --- Frontend: Main Admin App (MASSIVE UPGRADE) ---
+// --- Frontend: Main Admin App (MASSIVE UPGRADE + FULL FEATURE PARITY) ---
 
 function serveHtml() {
   const html = `<!DOCTYPE html>
@@ -549,6 +549,12 @@ function serveHtml() {
     .vis-item { border-color: #3b82f6; background-color: rgba(59, 130, 246, 0.2); color: white; border-radius: 4px; }
     .vis-item.vis-selected { border-color: white; background-color: #3b82f6; }
     .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #1e293b; color: white; font-family: 'Inter'; border: 1px solid #475569; }
+    
+    .marker-pin { width: 30px; height: 30px; border-radius: 50% 50% 50% 0; background: #2563eb; position: absolute; transform: rotate(-45deg); left: 50%; top: 50%; margin: -15px 0 0 -15px; box-shadow: 0px 2px 5px rgba(0,0,0,0.3); }
+    .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 3px 0 0 3px; background: #fff; position: absolute; border-radius: 50%; }
+    .custom-div-icon { background: transparent; border: none; }
+    .custom-div-icon img { width: 24px; height: 24px; border-radius: 50%; position: absolute; top: 3px; left: 3px; transform: rotate(45deg); z-index: 2; object-fit: cover; }
+
 
     /* Panic Mode */
     .panic-mode { position: fixed; inset: 0; z-index: 9999; background: white; color: #333; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; }
@@ -747,10 +753,10 @@ function serveHtml() {
 
                 <!-- SUB TABS -->
                 <div class="flex border-b border-slate-800 overflow-x-auto bg-slate-900/30 shrink-0 no-print">
-                    <button v-for="t in ['profile','timeline','intel','network','files']" 
+                    <button v-for="t in ['profile', 'intel', 'meetings', 'locations', 'timeline', 'network', 'files']" 
                         @click="changeSubTab(t)" 
                         :class="subTab === t ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'"
-                        class="px-6 py-3 text-[10px] font-bold uppercase tracking-[0.15em] whitespace-nowrap transition-colors font-mono">
+                        class="px-5 py-3 text-[10px] font-bold uppercase tracking-[0.15em] whitespace-nowrap transition-colors font-mono">
                         {{ t }}
                     </button>
                 </div>
@@ -826,23 +832,60 @@ function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- MEETINGS TAB (Restored Interaction List) -->
+                    <div v-if="subTab === 'meetings'" class="space-y-4 max-w-4xl mx-auto">
+                        <div class="flex justify-between items-center mb-4 no-print">
+                            <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Engagement Logs</h3>
+                            <button @click="openModal('add-interaction')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-[10px] font-bold uppercase font-mono">+ Log Meeting</button>
+                        </div>
+                        <div v-if="!selected.interactions?.length" class="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded">No history found.</div>
+                        <div v-for="ix in selected.interactions" :key="ix.id" class="glass border-l-4 border-amber-500 p-5 space-y-3 relative group">
+                             <div class="flex justify-between items-start">
+                                <div>
+                                    <span class="bg-amber-500/20 text-amber-400 px-2 py-1 text-[10px] font-bold uppercase rounded font-mono border border-amber-500/30">{{ix.type}}</span>
+                                    <span class="text-slate-500 text-xs ml-2 font-mono">{{ new Date(ix.date).toLocaleString() }}</span>
+                                </div>
+                                <button @click="deleteItem('subject_interactions', ix.id)" class="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                            <div class="text-sm text-slate-300 font-mono whitespace-pre-wrap pl-4 border-l border-slate-700">{{ix.transcript}}</div>
+                            <div class="bg-slate-900/50 p-3 rounded text-xs border border-slate-700 text-slate-400 font-mono">
+                                <span class="text-blue-500 font-bold uppercase text-[10px] block mb-1">Conclusion</span>
+                                {{ix.conclusion}}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LOCATIONS TAB (Restored Subject Map) -->
+                    <div v-show="subTab === 'locations'" class="h-full flex flex-col">
+                        <div class="flex justify-between items-center mb-4 shrink-0 no-print">
+                            <h3 class="text-xs font-bold text-white uppercase tracking-widest font-mono">Geospatial Intelligence</h3>
+                            <button @click="openModal('add-location')" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-[10px] font-bold uppercase font-mono">Pin Location</button>
+                        </div>
+                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="md:col-span-2 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative h-64 md:h-full md:min-h-[400px]">
+                                <div id="subjectMap" class="w-full h-full z-0"></div>
+                            </div>
+                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
+                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 flex flex-col gap-2 cursor-pointer border-l-4 border-transparent hover:border-blue-500" @click="flyTo(loc)">
+                                    <div class="flex justify-between items-center">
+                                        <div class="text-sm font-bold text-white">{{loc.name}}</div>
+                                        <span class="text-[9px] uppercase bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">{{loc.type}}</span>
+                                    </div>
+                                    <div class="text-xs text-slate-500 font-mono">{{loc.address}}</div>
+                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-[10px] text-red-500 text-right hover:text-red-400 font-bold mt-1">REMOVE PIN</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- TIMELINE TAB (New Feature) -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="glass p-4 border-l-4 border-blue-500 flex justify-between items-center no-print">
                             <h3 class="text-xs font-bold text-white uppercase font-mono tracking-widest">Temporal Analysis</h3>
-                            <button @click="openModal('add-interaction')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-[10px] font-bold uppercase font-mono">+ Log Event</button>
+                            <div class="text-[10px] text-slate-400">Visualizing movement & contact patterns</div>
                         </div>
                         <div class="flex-1 glass p-2 relative timeline-container">
                             <div id="visTimeline" class="w-full h-full"></div>
-                        </div>
-                        <!-- List Fallback for print -->
-                        <div class="print-only">
-                             <h3 class="border-b border-black mb-2">Event Log</h3>
-                             <ul class="text-xs font-mono">
-                                <li v-for="ix in selected.interactions" class="mb-2">
-                                    <b>{{new Date(ix.date).toLocaleDateString()}}</b>: {{ix.type.toUpperCase()}} - {{ix.conclusion}}
-                                </li>
-                             </ul>
                         </div>
                     </div>
 
@@ -853,13 +896,14 @@ function serveHtml() {
                             <button @click="openModal('add-intel')" class="text-xs border border-slate-600 hover:border-white text-slate-400 hover:text-white px-3 py-1.5 rounded transition-all font-mono">+ ADD ENTRY</button>
                         </div>
                         <div class="space-y-3">
-                            <div v-for="log in selected.intel" :key="log.id" class="glass p-4 border-l-2 border-slate-600">
+                            <div v-for="log in selected.intel" :key="log.id" class="glass p-4 border-l-2 border-slate-600 relative group">
                                 <div class="flex items-center gap-2 mb-2">
                                     <span class="text-[10px] font-mono text-slate-500">{{new Date(log.created_at).toLocaleDateString()}}</span>
                                     <span class="text-[10px] bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded uppercase font-bold border border-slate-700">{{log.category}}</span>
                                     <span class="text-xs font-bold text-white">{{log.label}}</span>
                                 </div>
                                 <p class="text-sm text-slate-300 font-mono">{{log.value}}</p>
+                                <button @click="deleteItem('subject_intel', log.id)" class="absolute top-4 right-4 text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
                             </div>
                         </div>
                     </div>
@@ -877,6 +921,7 @@ function serveHtml() {
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-500"><i class="fa-solid fa-file-lines text-4xl"></i></div>
                                     <a :href="'/api/media/' + m.object_key" download class="absolute inset-0 z-10"></a>
                                     <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] text-white font-mono truncate">{{m.description}}</div>
+                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500 text-white w-5 h-5 flex items-center justify-center text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-times"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -949,6 +994,27 @@ function serveHtml() {
                     <textarea v-model="forms.interaction.transcript" placeholder="TRANSCRIPT / NOTES" rows="6" class="glass-input w-full p-3 text-sm font-mono"></textarea>
                     <textarea v-model="forms.interaction.conclusion" placeholder="CONCLUSION" rows="3" class="glass-input w-full p-3 text-sm font-mono"></textarea>
                     <button type="submit" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded text-xs uppercase tracking-widest font-mono">Log Intel</button>
+                </form>
+                
+                <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                    <div class="relative z-[100]">
+                         <input v-model="locationSearchQuery" @keyup.enter="searchLocations" placeholder="SEARCH LOCATION..." class="glass-input w-full p-3 pl-10 text-sm font-mono border-blue-500/30">
+                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-blue-500"></i>
+                         <div v-if="locationSearchResults.length" class="absolute w-full bg-slate-800 border border-slate-600 max-h-48 overflow-y-auto mt-1 shadow-xl rounded z-[101]">
+                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-700 text-slate-300 font-mono">
+                                 {{ res.display_name }}
+                             </div>
+                         </div>
+                    </div>
+                    <div class="h-48 w-full bg-slate-800 rounded border border-slate-600 relative overflow-hidden">
+                        <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
+                    </div>
+                    <input v-model="forms.location.name" placeholder="LOCATION NAME *" class="glass-input w-full p-3 text-sm font-mono">
+                    <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm font-mono">
+                        <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Safehouse</option>
+                    </select>
+                    <input v-model="forms.location.address" placeholder="ADDRESS" class="glass-input w-full p-3 text-sm font-mono">
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded text-xs uppercase tracking-widest font-mono">Confirm Pin</button>
                 </form>
 
                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
@@ -1023,6 +1089,12 @@ function serveHtml() {
         const modal = reactive({ active: null, shake: false });
         const analysisResult = ref(null);
         
+        // Map & Location
+        const locationSearchQuery = ref('');
+        const locationSearchResults = ref([]);
+        let pickerMapInstance = null;
+        let mapInstance = null;
+        
         // CMD & Panic
         const showCmd = ref(false);
         const cmdQuery = ref('');
@@ -1071,6 +1143,11 @@ function serveHtml() {
             window.history.replaceState({}, '', url);
         };
 
+        const modalTitle = computed(() => {
+             const m = { 'add-subject':'New Target', 'edit-profile':'Update Profile', 'add-interaction':'Log Intel', 'add-location':'Pin Location', 'add-intel':'Add Observation', 'add-rel':'New Connection', 'share-secure':'Secure Share' };
+             return m[modal.active] || 'System Dialog';
+        });
+
         // API
         const api = async (ep, opts = {}) => {
             try {
@@ -1116,13 +1193,8 @@ function serveHtml() {
 
         // Advanced Logic
         const runAnalysis = () => {
-             // Simulate processing time for effect
              const originalText = "Analyzing...";
              setTimeout(() => {
-                 // Simple client side first, but we will assume we could call API
-                 // Here we just parse the data we already have to save a trip for demo, 
-                 // but in real app we could call /api/analyze if we wanted server logic
-                 // Using the textBank logic from worker locally for immediate feedback
                  const textBank = [
                     selected.value.modus_operandi, selected.value.weakness, selected.value.ideology,
                     ...selected.value.interactions.map(i => i.transcript + ' ' + i.conclusion),
@@ -1171,18 +1243,59 @@ function serveHtml() {
         };
 
         // Maps
-        const initMap = (id, data) => {
+        const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
-            const map = L.map(id, { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
+            
+            // Clean up old maps
+            if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
+            if(!isPicker && mapInstance) { mapInstance.remove(); mapInstance = null; }
+
+            const map = L.map(id, { attributionControl: false, zoomControl: !isPicker }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-            data.forEach(d => {
-                if(d.lat) {
-                    const color = d.threat_level === 'Critical' ? '#ef4444' : '#3b82f6';
-                    L.circleMarker([d.lat, d.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.8 }).addTo(map)
-                    .bindPopup(d.full_name || d.name);
-                }
-            });
+
+            if(isPicker) {
+                 pickerMapInstance = map;
+                 map.on('dblclick', e => {
+                    forms.location.lat = e.latlng.lat;
+                    forms.location.lng = e.latlng.lng;
+                    map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
+                    L.marker(e.latlng).addTo(map);
+                 });
+                 setTimeout(() => map.invalidateSize(), 100);
+            } else {
+                mapInstance = map;
+                data.forEach(d => {
+                    if(d.lat) {
+                        const color = d.threat_level === 'Critical' ? '#ef4444' : '#3b82f6';
+                        // Use simple circle markers for global map
+                        L.circleMarker([d.lat, d.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.8 }).addTo(map)
+                        .bindPopup(d.full_name || d.name);
+                    }
+                });
+            }
+        };
+
+        // Location Search
+        const searchLocations = async () => {
+            if(!locationSearchQuery.value) return;
+            try {
+                const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
+                locationSearchResults.value = await res.json();
+            } catch(e) { console.error(e); }
+        };
+
+        const selectLocation = (res) => {
+            forms.location.lat = parseFloat(res.lat);
+            forms.location.lng = parseFloat(res.lon);
+            forms.location.address = res.display_name;
+            locationSearchResults.value = [];
+            // Center picker map
+            if(pickerMapInstance) {
+                pickerMapInstance.setView([res.lat, res.lon], 15);
+                pickerMapInstance.eachLayer(l => { if(l instanceof L.Marker) pickerMapInstance.removeLayer(l); });
+                L.marker([res.lat, res.lon]).addTo(pickerMapInstance);
+            }
         };
 
         // Utility
@@ -1195,6 +1308,12 @@ function serveHtml() {
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
+             if(t === 'add-location') {
+                 forms.location = { subject_id: selected.value.id };
+                 locationSearchQuery.value = '';
+                 locationSearchResults.value = [];
+                 nextTick(() => initMap('locationPickerMap', [], true));
+             }
              if(t === 'share-secure') { fetchShareLinks(); }
         };
         const closeModal = () => modal.active = null;
@@ -1230,7 +1349,19 @@ function serveHtml() {
         // Watchers for UI initialization
         watch(() => subTab.value, (val) => {
             if(val === 'timeline') nextTick(initTimeline);
-            if(val === 'network') nextTick(() => { /* Init network logic same as before */ });
+            if(val === 'locations') nextTick(() => initMap('subjectMap', selected.value.locations || []));
+            if(val === 'network') nextTick(() => {
+                 const container = document.getElementById('relNetwork');
+                 if(!container || !selected.value) return;
+                 const nodes = [{id: selected.value.id, label: selected.value.alias || selected.value.full_name, color: '#2563eb', size: 30}];
+                 const edges = [];
+                 selected.value.relationships.forEach(r => {
+                    const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                    nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#9ca3af' });
+                    edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type });
+                 });
+                 new vis.Network(container, { nodes, edges }, { nodes: { shape: 'dot', font: { color: '#cbd5e1' } }, edges: { color: '#475569' } });
+            });
         });
         watch(() => currentTab.value, (val) => {
              if(val === 'map') nextTick(async () => {
@@ -1239,7 +1370,7 @@ function serveHtml() {
              });
         });
 
-        // Basic CRUD Wrappers (keeping simple for brevity, logic identical to previous version)
+        // Basic CRUD Wrappers
         const submitSubject = async () => {
             const isEdit = modal.active === 'edit-profile';
             const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
@@ -1253,6 +1384,10 @@ function serveHtml() {
              await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) });
              viewSubject(selected.value.id); closeModal();
         };
+        const submitLocation = async () => {
+             await api('/location', { method: 'POST', body: JSON.stringify(forms.location) });
+             viewSubject(selected.value.id); closeModal();
+        };
         const submitIntel = async () => {
              await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
              viewSubject(selected.value.id); closeModal();
@@ -1260,6 +1395,12 @@ function serveHtml() {
         const submitRel = async () => {
              await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) });
              viewSubject(selected.value.id); closeModal();
+        };
+        const deleteItem = async (table, id) => {
+            if(confirm('Delete this item permanently?')) {
+                await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) });
+                viewSubject(selected.value.id);
+            }
         };
 
         // File Logic
@@ -1296,9 +1437,10 @@ function serveHtml() {
              if(isBorder) return 'border-' + c + '-500';
              return isBg ? \`bg-\${c}-900/50 text-\${c}-400 border-\${c}-500/50\` : \`text-\${c}-500\`;
         };
-        
+        const flyTo = (loc) => mapInstance?.flyTo([loc.lat, loc.lng], 15);
         const printDossier = () => window.print();
-        const openSettings = () => { /* Placeholder for settings */ };
+        const openSettings = () => { if(confirm("System Reset?")) api('/nuke', {method:'POST'}).then(()=>location.reload()) };
+        const archiveSubject = async () => { if(confirm("Archive Subject?")) { await api('/delete', {method:'POST', body: JSON.stringify({table:'subjects', id:selected.value.id})}); closeModal(); changeTab('targets'); fetchData(); } };
         
         onMounted(() => {
             if(localStorage.getItem('admin_id')) {
@@ -1311,11 +1453,11 @@ function serveHtml() {
 
         return {
             view, loading, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
-            analysisResult, showCmd, cmdQuery, cmdResults, cmdInput, panicMode,
+            analysisResult, showCmd, cmdQuery, cmdResults, cmdInput, panicMode, locationSearchQuery, locationSearchResults, modalTitle,
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, executeCmd, selectCmd,
-            submitSubject, submitInteraction, submitIntel, submitRel, triggerUpload, handleFile,
+            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor, runAnalysis,
-            activeShareLinks, suggestions, printDossier, openSettings
+            activeShareLinks, suggestions, printDossier, openSettings, flyTo, searchLocations, selectLocation, archiveSubject
         };
       }
     }).mount('#app');
@@ -1395,6 +1537,12 @@ export default {
                 .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
             return response({success:true});
         }
+        if (path === '/api/location') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+            return response({success:true});
+        }
         if (path === '/api/intel') {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
@@ -1416,6 +1564,16 @@ export default {
         }
         const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        if (path === '/api/delete') {
+            const { table, id } = await req.json();
+            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
+            if(safeTables.includes(table)) {
+                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
+                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+                return response({success:true});
+            }
+        }
 
         // File Ops
         if (path === '/api/upload-avatar' || path === '/api/upload-media') {
