@@ -12,8 +12,13 @@ const MIGRATIONS = [
   "ALTER TABLE subjects ADD COLUMN is_archived INTEGER DEFAULT 0",
   "ALTER TABLE subject_data_points ADD COLUMN confidence INTEGER DEFAULT 100",
   "ALTER TABLE subject_data_points ADD COLUMN source TEXT",
-  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'", 
+  "ALTER TABLE subjects ADD COLUMN status TEXT DEFAULT 'Active'",
   "ALTER TABLE subjects ADD COLUMN last_sighted TEXT",
+  "ALTER TABLE subjects ADD COLUMN hometown TEXT",
+  "ALTER TABLE subjects ADD COLUMN previous_locations TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_name TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_avatar TEXT",
+  "ALTER TABLE subject_relationships ADD COLUMN custom_notes TEXT",
   // Physical Attributes
   "ALTER TABLE subjects ADD COLUMN height TEXT",
   "ALTER TABLE subjects ADD COLUMN weight TEXT",
@@ -28,9 +33,14 @@ const MIGRATIONS = [
   "ALTER TABLE subjects ADD COLUMN digital_identifiers TEXT",
   // Routine & Activities
   "CREATE TABLE IF NOT EXISTS subject_routine (id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT)",
+  "ALTER TABLE subject_routine ADD COLUMN quote TEXT",
+  "ALTER TABLE subject_routine ADD COLUMN follow_up TEXT",
   // Media Links
   "ALTER TABLE subject_media ADD COLUMN media_type TEXT DEFAULT 'file'",
-  "ALTER TABLE subject_media ADD COLUMN external_url TEXT"
+  "ALTER TABLE subject_media ADD COLUMN external_url TEXT",
+  "CREATE TABLE IF NOT EXISTS subject_shares (id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1, duration_seconds INTEGER, started_at TEXT, created_at TEXT)",
+  "ALTER TABLE subject_shares ADD COLUMN duration_seconds INTEGER",
+  "ALTER TABLE subject_shares ADD COLUMN started_at TEXT"
 ];
 
 // --- Helper Functions ---
@@ -52,6 +62,12 @@ function sanitizeFileName(name) {
     .replace(/[^a-z0-9.-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '') || 'upload';
+}
+
+function generateShareToken() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function response(data, status = 200) {
@@ -93,8 +109,9 @@ async function ensureSchema(db) {
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT)`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
-          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT, 
-          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT, 
+          id INTEGER PRIMARY KEY, admin_id INTEGER, full_name TEXT, dob TEXT, age INTEGER, gender TEXT,
+          occupation TEXT, nationality TEXT, education TEXT, religion TEXT, location TEXT, contact TEXT,
+          hometown TEXT, previous_locations TEXT,
           habits TEXT, notes TEXT, avatar_path TEXT, is_archived INTEGER DEFAULT 0,
           status TEXT DEFAULT 'Active', last_sighted TEXT,
           height TEXT, weight TEXT, eye_color TEXT, hair_color TEXT, blood_type TEXT, identifying_marks TEXT,
@@ -109,14 +126,19 @@ async function ensureSchema(db) {
           id INTEGER PRIMARY KEY, subject_id INTEGER, title TEXT, description TEXT, event_date TEXT, created_at TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
-          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_a_id INTEGER, subject_b_id INTEGER, relationship_type TEXT, notes TEXT, created_at TEXT,
+          custom_name TEXT, custom_avatar TEXT, custom_notes TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_media (
           id INTEGER PRIMARY KEY, subject_id INTEGER, object_key TEXT, content_type TEXT, description TEXT, created_at TEXT,
           media_type TEXT DEFAULT 'file', external_url TEXT
         )`),
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_routine (
-          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, created_at TEXT
+          id INTEGER PRIMARY KEY, subject_id INTEGER, activity TEXT, location TEXT, schedule TEXT, duration TEXT, notes TEXT, quote TEXT, follow_up TEXT, created_at TEXT
+        )`),
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_shares (
+          id INTEGER PRIMARY KEY, subject_id INTEGER REFERENCES subjects(id), token TEXT UNIQUE, is_active INTEGER DEFAULT 1,
+          duration_seconds INTEGER, started_at TEXT, created_at TEXT
         )`)
       ]);
 
@@ -170,48 +192,58 @@ async function handleGetSuggestions(db, adminId) {
 async function handleGetGraph(db, adminId) {
     const subjects = await db.prepare("SELECT id, full_name, avatar_path, occupation, status FROM subjects WHERE admin_id = ? AND is_archived = 0").bind(adminId).all();
     const rels = await db.prepare(`
-        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label 
-        FROM subject_relationships r 
-        JOIN subjects s ON r.subject_a_id = s.id 
-        WHERE s.admin_id = ?
+        SELECT r.subject_a_id as from_id, r.subject_b_id as to_id, r.relationship_type as label
+        FROM subject_relationships r
+        JOIN subjects s ON r.subject_a_id = s.id
+        WHERE s.admin_id = ? AND r.subject_b_id IS NOT NULL
     `).bind(adminId).all();
     
     return response({ nodes: subjects.results, edges: rels.results });
 }
 
-async function handleGetSubjectFull(db, id) {
+async function getSubjectWithDetails(db, id) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-    if (!subject) return errorResponse("Subject not found", 404);
+    if (!subject) return null;
 
     const [media, dataPoints, events, relationships, routine] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(), 
+        db.prepare('SELECT * FROM subject_data_points WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare('SELECT * FROM subject_events WHERE subject_id = ? ORDER BY event_date DESC').bind(id).all(),
         // Updated to fetch relationships where this subject is EITHER side A or B
         db.prepare(`
-            SELECT r.*, s.full_name as target_name, s.avatar_path as target_avatar
-            FROM subject_relationships r 
-            JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            SELECT
+              r.*,
+              COALESCE(s.full_name, r.custom_name) as target_name,
+              COALESCE(s.avatar_path, r.custom_avatar) as target_avatar,
+              CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END as target_id
+            FROM subject_relationships r
+            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(id, id, id).all(),
+        `).bind(id, id, id, id).all(),
         db.prepare('SELECT * FROM subject_routine WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
-    return response({ 
-        ...subject, 
-        media: media.results, 
-        dataPoints: dataPoints.results, 
-        events: events.results, 
+    return {
+        ...subject,
+        media: media.results,
+        dataPoints: dataPoints.results,
+        events: events.results,
         relationships: relationships.results,
         routine: routine.results
-    });
+    };
+}
+
+async function handleGetSubjectFull(db, id) {
+    const data = await getSubjectWithDetails(db, id);
+    if (!data) return errorResponse("Subject not found", 404);
+    return response(data);
 }
 
 async function handleUpdateSubject(req, db, id) {
     const p = await req.json();
     const allowed = [
-        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education', 
-        'religion', 'location', 'contact', 'habits', 'notes', 'status', 'last_sighted',
+        'full_name', 'dob', 'age', 'gender', 'occupation', 'nationality', 'education',
+        'religion', 'location', 'hometown', 'previous_locations', 'contact', 'habits', 'notes', 'status', 'last_sighted',
         'height', 'weight', 'eye_color', 'hair_color', 'blood_type', 'identifying_marks',
         'mbti', 'alignment', 'social_links', 'digital_identifiers'
     ];
@@ -260,6 +292,125 @@ async function handleExportCSV(db, adminId) {
     
     const csv = [headers, ...rows].join('\n');
     return csvResponse(csv, `subjects_export_${new Date().toISOString().split('T')[0]}.csv`);
+}
+
+async function handleCreateShareLink(req, db, origin) {
+    const { subjectId, durationMinutes } = await req.json();
+    if (!subjectId) return errorResponse('subjectId required', 400);
+
+    const durationSeconds = Math.max(30, Math.floor((durationMinutes || 0) * 60)) || 300;
+
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ? AND is_archived = 0').bind(subjectId).first();
+    if (!subject) return errorResponse('Subject not found', 404);
+
+    const token = generateShareToken();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at) VALUES (?, ?, ?, ?)')
+        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
+
+    return response({ token, url: `${origin}/share/${token}` });
+}
+
+async function handleListShareLinks(db, subjectId, origin) {
+    if (!subjectId) return errorResponse('subjectId required', 400);
+    const res = await db.prepare('SELECT token, created_at, is_active, duration_seconds, started_at FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC')
+        .bind(subjectId).all();
+    const links = res.results.map((row) => ({ ...row, url: `${origin}/share/${row.token}` }));
+    return response({ links });
+}
+
+async function handleRevokeShareLink(req, db) {
+    const { token } = await req.json();
+    if (!token) return errorResponse('token required', 400);
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
+}
+
+async function handleGetSharedSubject(db, token) {
+    const link = await db.prepare('SELECT subject_id, is_active, duration_seconds, started_at FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link || !link.is_active) return errorResponse('Share link invalid or disabled', 404);
+
+    let shareMeta = null;
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+        const startedMs = new Date(startedAt).getTime();
+        const elapsed = Math.floor((now - startedMs) / 1000);
+        const remaining = Math.max(link.duration_seconds - elapsed, 0);
+
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE token = ?').bind(startedAt, token).run();
+        }
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+            return errorResponse('Share link expired', 410);
+        }
+
+        shareMeta = {
+            duration_seconds: link.duration_seconds,
+            started_at: startedAt,
+            remaining_seconds: remaining
+        };
+    }
+
+    const payload = await getSubjectWithDetails(db, link.subject_id);
+    if (!payload || payload.is_archived) {
+        await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+        return errorResponse('Subject not found', 404);
+    }
+
+    // Remove sensitive/internal metadata before sharing
+    const {
+        admin_id,
+        is_archived,
+        dataPoints,
+        contact,
+        digital_identifiers,
+        habits,
+        notes,
+        ...safeSubject
+    } = payload;
+
+    // Only expose a curated subset of subject fields to the shared view
+    const publicSubject = {
+        full_name: safeSubject.full_name,
+        dob: safeSubject.dob,
+        age: safeSubject.age,
+        gender: safeSubject.gender,
+        occupation: safeSubject.occupation,
+        nationality: safeSubject.nationality,
+        education: safeSubject.education,
+        religion: safeSubject.religion,
+        location: safeSubject.location,
+        hometown: safeSubject.hometown,
+        previous_locations: safeSubject.previous_locations,
+        status: safeSubject.status,
+        last_sighted: safeSubject.last_sighted,
+        avatar_path: safeSubject.avatar_path,
+        height: safeSubject.height,
+        weight: safeSubject.weight,
+        eye_color: safeSubject.eye_color,
+        hair_color: safeSubject.hair_color,
+        blood_type: safeSubject.blood_type,
+        identifying_marks: safeSubject.identifying_marks,
+        mbti: safeSubject.mbti,
+        alignment: safeSubject.alignment,
+        social_links: safeSubject.social_links,
+        media: safeSubject.media,
+        events: safeSubject.events,
+        relationships: safeSubject.relationships,
+        routine: safeSubject.routine,
+    };
+
+    // Hide internal intel entries from public view
+    return response({ ...publicSubject, dataPoints: [], share: shareMeta });
+}
+
+async function handleExpireShareLink(req, db) {
+    const { token } = await req.json();
+    if (!token) return errorResponse('token required', 400);
+    await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
+    return response({ success: true });
 }
 
 // --- Frontend Application ---
@@ -513,7 +664,7 @@ function serveHtml() {
                              </div>
                              <div class="flex items-center p-4 gap-4">
                                 <div class="w-16 h-16 rounded-xl bg-slate-800 flex-shrink-0 overflow-hidden border border-slate-700 relative">
-                                    <img v-if="s.avatar_path" :src="'/api/media/' + s.avatar_path" class="w-full h-full object-cover">
+                                    <img v-if="s.avatar_path" :src="resolveImagePath(s.avatar_path)" class="w-full h-full object-cover cursor-zoom-in" @click.stop="openImage(resolveImagePath(s.avatar_path), s.full_name)">
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-600 text-2xl font-bold">{{ s.full_name.charAt(0) }}</div>
                                 </div>
                                 <div class="min-w-0">
@@ -550,8 +701,8 @@ function serveHtml() {
                             <i class="fa-solid fa-arrow-left text-slate-400"></i>
                         </button>
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="triggerAvatar">
-                                <img v-if="selectedSubject.avatar_path" :src="'/api/media/' + selectedSubject.avatar_path" class="w-full h-full object-cover">
+                            <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-600 relative group cursor-pointer" @click="openModal('avatar-options')">
+                                <img v-if="selectedSubject.avatar_path" :src="resolveImagePath(selectedSubject.avatar_path)" class="w-full h-full object-cover">
                                 <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                     <i class="fa-solid fa-camera text-xs"></i>
                                 </div>
@@ -564,6 +715,7 @@ function serveHtml() {
                     </div>
                     <div class="flex gap-2">
                         <button @click="openModal('quick-note')" class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30 hover:scale-105 transition-transform touch-target" title="Quick Note"><i class="fa-solid fa-pen-nib text-sm"></i></button>
+                        <button @click="openModal('share-link')" class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 hover:scale-105 transition-transform touch-target" title="Share View-Only Link"><i class="fa-solid fa-share-nodes text-sm"></i></button>
                         <button @click="exportData" class="w-10 h-10 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors touch-target" title="Export JSON"><i class="fa-solid fa-download text-sm"></i></button>
                     </div>
                 </header>
@@ -603,9 +755,17 @@ function serveHtml() {
                                             <span class="text-white font-medium text-sm text-right">{{ selectedSubject.location || '—' }}</span>
                                         </div>
                                         <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Hometown</span>
+                                            <span class="text-white font-medium text-sm text-right">{{ selectedSubject.hometown || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                                            <span class="text-slate-400 text-sm">Previous Locations</span>
+                                            <span class="text-white font-medium text-sm text-right whitespace-pre-wrap max-w-[240px]">{{ selectedSubject.previous_locations || '—' }}</span>
+                                        </div>
+                                        <div class="flex justify-between border-b border-slate-800 pb-2">
                                             <span class="text-slate-400 text-sm">DOB / Age</span>
                                             <span class="text-white font-medium text-sm text-right">
-                                                {{ selectedSubject.dob || '—' }} 
+                                                {{ selectedSubject.dob || '—' }}
                                                 <span v-if="selectedSubject.dob" class="text-indigo-400 font-bold">({{ calculateRealAge(selectedSubject.dob) }} yrs)</span>
                                                 <span v-else-if="selectedSubject.age">({{ selectedSubject.age }} yrs)</span>
                                             </span>
@@ -707,6 +867,8 @@ function serveHtml() {
                                         </div>
                                         <div class="text-xs text-indigo-300 mt-0.5"><i class="fa-solid fa-location-dot mr-1"></i> {{ r.location }} <span class="text-slate-500 mx-1">•</span> {{ r.duration }}</div>
                                         <p v-if="r.notes" class="text-xs text-slate-400 mt-2 bg-slate-800/30 p-2 rounded">{{ r.notes }}</p>
+                                        <p v-if="r.quote" class="text-xs text-indigo-200 italic mt-1">“{{ r.quote }}”</p>
+                                        <p v-if="r.follow_up" class="text-[11px] text-amber-300 mt-1">Follow-up: {{ r.follow_up }}</p>
                                     </div>
                                     <button @click="deleteItem('subject_routine', r.id)" class="text-slate-600 hover:text-red-500 p-2 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash text-xs"></i></button>
                                 </div>
@@ -788,6 +950,7 @@ function serveHtml() {
                                     </div>
                                     <div class="flex flex-col gap-2 justify-center">
                                         <button @click.stop="openModal('add-intel', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-plus text-xs"></i></button>
+                                        <button @click.stop="openModal('edit-intel', node)" class="w-8 h-8 rounded bg-slate-800 hover:bg-amber-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-pen text-[10px]"></i></button>
                                         <button @click.stop="deleteItem('subject_data_points', node.id)" class="w-8 h-8 rounded bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white flex items-center justify-center transition-colors touch-target"><i class="fa-solid fa-trash text-[10px]"></i></button>
                                     </div>
                                 </div>
@@ -805,7 +968,10 @@ function serveHtml() {
                                                 <p class="text-xs text-slate-300 leading-relaxed">{{ child.value }}</p>
                                                 <p v-if="child.source" class="text-[10px] text-slate-500 mt-1 italic">Source: {{ child.source }}</p>
                                             </div>
-                                            <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <div class="flex flex-col sm:flex-row gap-1 sm:items-center">
+                                                <button @click.stop="openModal('edit-intel', child)" class="text-slate-600 hover:text-amber-400 p-2"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
+                                                <button @click.stop="deleteItem('subject_data_points', child.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            </div>
                                          </div>
                                     </div>
                                 </div>
@@ -869,10 +1035,15 @@ function serveHtml() {
                                         <div class="flex items-baseline gap-2 mb-1 flex-wrap">
                                             <span class="text-xs font-mono font-bold text-amber-500 bg-amber-900/20 px-2 py-0.5 rounded">{{ e.event_date }}</span>
                                             <h4 class="font-bold text-sm text-slate-200">{{ e.title }}</h4>
-                                            <button @click="deleteItem('subject_events', e.id)" class="ml-auto text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            <div class="ml-auto flex gap-1">
+                                                <button @click="openModal('edit-event', e)" class="text-slate-600 hover:text-indigo-400 p-2"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
+                                                <button @click="deleteItem('subject_events', e.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-trash text-xs"></i></button>
+                                            </div>
                                         </div>
-                                        <div v-if="e.description" class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
-                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{ e.description }}</p>
+                                        <div class="bg-slate-800/30 p-3 rounded-lg border border-slate-700/50 mt-2">
+                                            <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                                {{ e.description || 'No details provided' }}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
@@ -887,12 +1058,13 @@ function serveHtml() {
                             <div class="grid grid-cols-1 gap-3">
                                 <div v-for="r in selectedSubject.relationships" :key="r.id" class="glass-panel p-4 rounded-xl flex items-center justify-between">
                                     <div class="flex items-center gap-4">
-                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden">
-                                            <img v-if="r.target_avatar" :src="'/api/media/'+r.target_avatar" class="w-full h-full object-cover">
+                                        <div class="w-10 h-10 rounded-full bg-slate-700 overflow-hidden cursor-zoom-in" @click.stop="r.target_avatar && openImage(resolveImagePath(r.target_avatar), r.target_name)">
+                                            <img v-if="r.target_avatar" :src="resolveImagePath(r.target_avatar)" class="w-full h-full object-cover">
                                         </div>
                                         <div>
                                             <div class="text-sm font-bold text-white">{{ r.target_name }}</div>
                                             <div class="text-xs text-indigo-400 font-mono">{{ r.relationship_type }}</div>
+                                            <div v-if="r.notes || r.custom_notes" class="text-[11px] text-slate-400 max-w-[220px]">{{ r.notes || r.custom_notes }}</div>
                                         </div>
                                     </div>
                                     <button @click="deleteItem('subject_relationships', r.id)" class="text-slate-600 hover:text-red-500 p-2"><i class="fa-solid fa-link-slash"></i></button>
@@ -912,6 +1084,19 @@ function serveHtml() {
                     <div class="flex gap-2">
                         <button @click="fitGraph" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] py-2 rounded">Reset View</button>
                         <button @click="refreshGraph" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-2 rounded">Refresh Data</button>
+                    </div>
+                </div>
+                <div v-if="selectedNode" class="absolute bottom-4 right-4 left-4 md:left-auto md:w-80 glass-panel p-4 rounded-xl border border-slate-800 shadow-2xl animate-slide-up">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-full bg-slate-800 overflow-hidden border border-slate-700 flex-shrink-0 cursor-zoom-in" @click="selectedNode.avatar_path && openImage(resolveImagePath(selectedNode.avatar_path), selectedNode.label)">
+                            <img :src="selectedNode.avatar_path ? resolveImagePath(selectedNode.avatar_path) : selectedNode.image" class="w-full h-full object-cover">
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm font-bold text-white truncate">{{ selectedNode.label }}</div>
+                            <div class="text-[11px] text-slate-400 truncate">{{ selectedNode.occupation || 'Unknown Role' }}</div>
+                            <div class="text-[10px] font-mono text-indigo-400">{{ selectedNode.status }}</div>
+                        </div>
+                        <button @click="viewSubject(selectedNode.id)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] px-3 py-2 rounded-lg font-bold">Details</button>
                     </div>
                 </div>
              </div>
@@ -1026,13 +1211,21 @@ function serveHtml() {
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Information</label>
                                 <input v-model="forms.subject.contact" class="glass-input w-full p-3 rounded-lg" placeholder="Phone, Email, PGP Keys...">
                             </div>
-                             <div class="space-y-1">
+                            <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Education</label>
                                 <input v-model="forms.subject.education" class="glass-input w-full p-3 rounded-lg" placeholder="Degrees, Schools...">
                             </div>
                             <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Location</label>
                                 <input v-model="forms.subject.location" class="glass-input w-full p-3 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Hometown</label>
+                                <input v-model="forms.subject.hometown" class="glass-input w-full p-3 rounded-lg" placeholder="City of origin">
+                            </div>
+                             <div class="space-y-1">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Previous Locations</label>
+                                <textarea v-model="forms.subject.previous_locations" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="Comma-separated or newline list"></textarea>
                             </div>
                              <div class="space-y-1">
                                 <label class="text-[10px] font-bold text-slate-500 uppercase">Social Media Links</label>
@@ -1084,6 +1277,14 @@ function serveHtml() {
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Notes</label>
                             <textarea v-model="forms.routine.notes" placeholder="Additional details..." class="glass-input w-full p-3 rounded-lg" rows="2"></textarea>
                          </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Quote (Optional)</label>
+                            <input v-model="forms.routine.quote" placeholder="Memorable line or comment" class="glass-input w-full p-3 rounded-lg">
+                         </div>
+                         <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Follow-up Needed</label>
+                            <input v-model="forms.routine.follow_up" placeholder="Next steps or leads" class="glass-input w-full p-3 rounded-lg">
+                         </div>
                          <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Add Routine Activity</button>
                      </form>
 
@@ -1101,7 +1302,7 @@ function serveHtml() {
                      </form>
 
                      <!-- Form: Add Intel -->
-                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note'" @submit.prevent="submitIntel" class="space-y-4">
+                     <form v-if="modal.active === 'add-intel' || modal.active === 'quick-note' || modal.active === 'edit-intel'" @submit.prevent="submitIntel" class="space-y-4">
                         <div v-if="modal.parentId" class="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
                             <i class="fa-solid fa-level-up-alt rotate-90 mr-2"></i> Appending to thread
                         </div>
@@ -1145,28 +1346,126 @@ function serveHtml() {
                                 <input type="range" v-model="forms.intel.confidence" min="0" max="100" class="w-full mt-3 accent-indigo-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
                             </div>
                         </div>
-                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">Commit Intelligence</button>
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 touch-target">{{ modal.active === 'edit-intel' ? 'Save Intelligence' : 'Commit Intelligence' }}</button>
                      </form>
 
                      <!-- Event Form -->
-                     <form v-if="modal.active === 'add-event'" @submit.prevent="submitEvent" class="space-y-4">
+                     <form v-if="modal.active === 'add-event' || modal.active === 'edit-event'" @submit.prevent="submitEvent" class="space-y-4">
                          <input type="date" v-model="forms.event.date" class="glass-input w-full p-3 rounded-lg" required>
                          <input v-model="forms.event.title" placeholder="Event Title" class="glass-input w-full p-3 rounded-lg" required>
                          <textarea v-model="forms.event.description" placeholder="Details..." class="glass-input w-full p-3 rounded-lg h-32"></textarea>
-                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">Log Timeline Event</button>
+                         <button type="submit" class="w-full bg-amber-600 text-white py-4 rounded-xl font-bold touch-target">{{ modal.active === 'edit-event' ? 'Save Timeline Event' : 'Log Timeline Event' }}</button>
                      </form>
 
                      <!-- Rel Form -->
                      <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                        <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
-                            <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
-                        </select>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" @click="forms.rel.mode = 'subject'" :class="forms.rel.mode === 'subject' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'" class="w-full py-3 rounded-lg font-bold text-xs">Existing Subject</button>
+                            <button type="button" @click="forms.rel.mode = 'custom'" :class="forms.rel.mode === 'custom' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-200'" class="w-full py-3 rounded-lg font-bold text-xs">External Contact</button>
+                        </div>
+                        <div v-if="forms.rel.mode === 'subject'" class="space-y-3">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Link to another subject</label>
+                            <select v-model="forms.rel.subjectB" class="glass-input w-full p-3 rounded-lg bg-slate-800">
+                                <option v-for="s in subjects" :value="s.id" :disabled="s.id === selectedSubject.id">{{ s.full_name }}</option>
+                            </select>
+                            <p class="text-xs text-slate-500">Choose someone already in the system.</p>
+                        </div>
+                        <div v-else class="space-y-3">
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Contact Name *</label>
+                                <input v-model="forms.rel.customName" placeholder="Full name" class="glass-input w-full p-3 rounded-lg mt-1" required>
+                            </div>
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Portrait (Upload or Link)</label>
+                                <div class="flex gap-2 flex-wrap">
+                                    <input v-model="forms.rel.customAvatar" placeholder="https://image.url/face.jpg" class="glass-input flex-1 min-w-[200px] p-3 rounded-lg">
+                                    <input type="file" accept="image/*" @change="handleRelAvatarUpload" class="glass-input p-2 text-xs rounded-lg bg-slate-800 text-white cursor-pointer">
+                                </div>
+                                <div v-if="forms.rel.customAvatar" class="flex items-center gap-2 text-xs text-slate-400">
+                                    <img :src="resolveImagePath(forms.rel.customAvatar)" class="w-10 h-10 rounded-full object-cover border border-slate-700">
+                                    <span>Preview of stored portrait.</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Notes about this contact</label>
+                                <textarea v-model="forms.rel.customNotes" rows="2" class="glass-input w-full p-3 rounded-lg" placeholder="Role, identifiers, affiliations..."></textarea>
+                            </div>
+                        </div>
                         <div>
                             <label class="text-[10px] font-bold text-slate-500 uppercase">Relationship Label (Displays on Graph)</label>
-                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1">
+                            <input v-model="forms.rel.type" placeholder="e.g. Father, Employee, Rival" class="glass-input w-full p-3 rounded-lg mt-1" required>
                         </div>
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Link Subjects</button>
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Connection Notes</label>
+                            <textarea v-model="forms.rel.notes" class="glass-input w-full p-3 rounded-lg" rows="2" placeholder="Context for this link"></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold touch-target">Save Connection</button>
                      </form>
+
+                     <!-- Avatar Options -->
+                     <div v-if="modal.active === 'avatar-options'" class="space-y-4">
+                        <div class="flex items-center gap-4">
+                            <div class="w-20 h-20 rounded-2xl bg-slate-800 overflow-hidden border border-slate-700">
+                                <img v-if="selectedSubject.avatar_path" :src="resolveImagePath(selectedSubject.avatar_path)" class="w-full h-full object-cover">
+                                <div v-else class="w-full h-full flex items-center justify-center text-slate-600 font-bold text-2xl">{{ selectedSubject.full_name?.charAt(0) }}</div>
+                            </div>
+                            <div>
+                                <div class="text-white font-bold">{{ selectedSubject.full_name }}</div>
+                                <p class="text-xs text-slate-400">Update or preview the dossier portrait.</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <button :disabled="!selectedSubject.avatar_path" @click="openImage(resolveImagePath(selectedSubject.avatar_path), selectedSubject.full_name)" class="bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-700 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-eye"></i> View</button>
+                            <button @click="closeModal(); triggerAvatar();" class="bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-upload"></i> Upload</button>
+                            <button @click="openModal('avatar-link')" class="bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2"><i class="fa-solid fa-link"></i> Use Link</button>
+                        </div>
+                     </div>
+
+                     <!-- Avatar Link Form -->
+                     <form v-if="modal.active === 'avatar-link'" @submit.prevent="submitAvatarLink" class="space-y-4">
+                        <div>
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Image URL</label>
+                            <input v-model="forms.avatarLink.url" type="url" required placeholder="https://example.com/photo.jpg" class="glass-input w-full p-3 rounded-lg mt-1">
+                        </div>
+                        <p class="text-xs text-slate-500">Provide a direct link to the subject portrait. It will display immediately without uploading to storage.</p>
+                        <div class="flex gap-2">
+                            <button type="button" @click="openModal('avatar-options')" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-lg font-bold">Back</button>
+                            <button type="submit" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold">Save</button>
+                        </div>
+                     </form>
+
+                     <!-- Shareable Link Manager -->
+                     <div v-if="modal.active === 'share-link'" class="space-y-4">
+                        <p class="text-sm text-slate-400 leading-relaxed">Generate a view-only dossier link. Anyone with the link can see this subject, but cannot edit. Disable a link anytime to cut access.</p>
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase">Viewing window (minutes)</label>
+                            <input v-model.number="forms.share.durationMinutes" type="number" min="0.5" step="0.5" class="glass-input w-full p-3 rounded-lg" placeholder="5">
+                            <p class="text-[11px] text-slate-500">A countdown starts when someone opens the link. Once the timer hits zero, the link is disabled automatically.</p>
+                        </div>
+                        <button @click="createShareLink" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-link"></i> Create Timed Link
+                        </button>
+                        <div v-if="shareLinks.length" class="space-y-3">
+                            <div v-for="link in shareLinks" :key="link.token" class="glass-panel border border-slate-800 p-3 rounded-xl">
+                                <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+                                    <span>Created {{ new Date(link.created_at).toLocaleString() }}</span>
+                                    <span class="font-bold" :class="link.is_active ? 'text-emerald-400' : 'text-amber-400'">{{ link.is_active ? 'Active' : 'Disabled' }}</span>
+                                </div>
+                                <div class="flex items-center gap-2 text-[11px] text-slate-500 mb-2">
+                                    <i class="fa-regular fa-hourglass-half text-indigo-300"></i>
+                                    <span v-if="link.duration_seconds">{{ Math.round(link.duration_seconds / 60) }} min window</span>
+                                    <span v-else>No timer set</span>
+                                    <span v-if="link.started_at">• Started {{ new Date(link.started_at).toLocaleString() }}</span>
+                                </div>
+                                <div class="bg-slate-900/60 p-2 rounded font-mono text-xs text-indigo-300 break-all">{{ link.url }}</div>
+                                <div class="flex gap-2 mt-3">
+                                    <button @click="copyShareLink(link.url)" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 rounded-lg text-xs font-bold"><i class="fa-solid fa-copy mr-1"></i> Copy</button>
+                                    <button @click="revokeShareLink(link.token)" :disabled="!link.is_active" class="flex-1 bg-red-600/80 hover:bg-red-600 text-white py-2 rounded-lg text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"><i class="fa-solid fa-ban mr-1"></i> Disable</button>
+                                </div>
+                            </div>
+                        </div>
+                        <p v-else class="text-center text-slate-500 text-sm">No share links created yet.</p>
+                     </div>
                 </div>
             </div>
         </div>
@@ -1210,19 +1509,23 @@ function serveHtml() {
         const suggestions = reactive({ occupations: [], nationalities: [], religions: [] });
         const selectedSubject = ref(null);
         const toasts = ref([]);
-        
+        const shareLinks = ref([]);
+
         const lightbox = reactive({ active: null, url: '', desc: '' });
-        const modal = reactive({ active: null, parentId: null });
+        const selectedNode = ref(null);
+        const modal = reactive({ active: null, parentId: null, editId: null });
         const expandedState = reactive({});
         
         // Forms
         const forms = reactive({
-            subject: {},
+            subject: { hometown: '', previous_locations: '' },
             intel: { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' },
             event: { date: new Date().toISOString().split('T')[0], title: '', description: '' },
-            rel: { subjectB: '', type: '' },
-            routine: { activity: '', location: '', schedule: '', duration: '', notes: '' },
-            mediaLink: { url: '', description: '' }
+            rel: { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' },
+            routine: { activity: '', location: '', schedule: '', duration: '', notes: '', quote: '', follow_up: '' },
+            mediaLink: { url: '', description: '' },
+            avatarLink: { url: '' },
+            share: { durationMinutes: 5 }
         });
 
         const navItems = [
@@ -1329,15 +1632,20 @@ function serveHtml() {
         });
 
         const modalTitle = computed(() => {
-            const map = { 
-                'add-subject': 'New Subject Profile', 
+            const map = {
+                'add-subject': 'New Subject Profile',
                 'edit-profile': 'Edit Profile',
                 'add-intel': 'Add Intelligence',
+                'edit-intel': 'Edit Intelligence',
                 'quick-note': 'Quick Field Note',
                 'add-event': 'Log Timeline Event',
+                'edit-event': 'Edit Timeline Event',
                 'add-rel': 'Connect Subjects',
                 'add-routine': 'Add Routine Activity',
-                'add-media-link': 'Add External Link'
+                'add-media-link': 'Add External Link',
+                'avatar-options': 'Profile Image',
+                'avatar-link': 'Set Profile Image from Link',
+                'share-link': 'Share View-Only Dossier'
             };
             return map[modal.active] || 'System Dialog';
         });
@@ -1397,11 +1705,18 @@ function serveHtml() {
             suggestions.religions = data.religions;
         };
 
+        const loadShareLinks = async (subjectId) => {
+            const res = await api('/share-links?subjectId=' + subjectId);
+            shareLinks.value = res.links || [];
+        };
+
         const viewSubject = async (id) => {
             selectedSubject.value = await api('/subjects/' + id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
-            
+
+            await loadShareLinks(id);
+
             // Sync URL
             const url = new URL(window.location);
             url.searchParams.set('tab', 'detail');
@@ -1440,12 +1755,18 @@ function serveHtml() {
 
         // Intel Ops
         const submitIntel = async () => {
-            const payload = { ...forms.intel, subjectId: selectedSubject.value.id, parentId: modal.parentId };
-            await api('/data-point', { method: 'POST', body: JSON.stringify(payload) });
+            const isEdit = modal.active === 'edit-intel';
+            const payload = { ...forms.intel, subjectId: selectedSubject.value.id };
+            if (!isEdit) payload.parentId = modal.parentId;
+
+            await api('/data-point', {
+                method: isEdit ? 'PATCH' : 'POST',
+                body: JSON.stringify({ ...payload, id: modal.editId })
+            });
             closeModal();
             viewSubject(selectedSubject.value.id);
             fetchDashboard();
-            notify("Intelligence added");
+            notify(isEdit ? "Intelligence updated" : "Intelligence added");
         };
 
         const toggleNode = (id) => {
@@ -1504,14 +1825,63 @@ function serveHtml() {
              if(e.target.files[0]) compressAndUpload(e.target.files[0], '/upload-avatar');
         };
 
+        const uploadContactImage = (file) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX = 800;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+                    else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    const b64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+                    notify("Uploading portrait...", "info");
+                    const res = await api('/upload-contact', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            data: b64,
+                            filename: file.name,
+                            contentType: 'image/jpeg'
+                        })
+                    });
+                    forms.rel.customAvatar = res.key;
+                    notify("Portrait saved");
+                };
+            };
+        };
+
+        const handleRelAvatarUpload = (e) => {
+            if (e.target.files[0]) uploadContactImage(e.target.files[0]);
+        };
+
         // Events, Rels, Routine, Links
         const submitEvent = async () => {
-            await api('/event', { method: 'POST', body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id }) });
-            closeModal(); viewSubject(selectedSubject.value.id); notify("Event Logged");
+            const isEdit = modal.active === 'edit-event';
+            await api('/event', {
+                method: isEdit ? 'PATCH' : 'POST',
+                body: JSON.stringify({ ...forms.event, subjectId: selectedSubject.value.id, id: modal.editId })
+            });
+            closeModal(); viewSubject(selectedSubject.value.id); notify(isEdit ? "Event Updated" : "Event Logged");
         };
         const submitRel = async () => {
-            await api('/relationship', { method: 'POST', body: JSON.stringify({ ...forms.rel, subjectA: selectedSubject.value.id }) });
+            const payload = { ...forms.rel, subjectA: selectedSubject.value.id };
+            if (forms.rel.mode === 'custom' && !forms.rel.customName) {
+                notify('Contact name required', 'error');
+                return;
+            }
+            if (forms.rel.mode === 'subject' && !forms.rel.subjectB) {
+                notify('Select a subject to connect', 'error');
+                return;
+            }
+            await api('/relationship', { method: 'POST', body: JSON.stringify(payload) });
             closeModal(); viewSubject(selectedSubject.value.id); notify("Connection Established");
+            forms.rel = { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' };
         };
         const submitRoutine = async () => {
             await api('/routine', { method: 'POST', body: JSON.stringify({ ...forms.routine, subjectId: selectedSubject.value.id }) });
@@ -1522,11 +1892,17 @@ function serveHtml() {
             closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Link Attached");
         };
 
+        const submitAvatarLink = async () => {
+            await api('/avatar-link', { method: 'POST', body: JSON.stringify({ url: forms.avatarLink.url, subjectId: selectedSubject.value.id }) });
+            closeModal(); viewSubject(selectedSubject.value.id); fetchDashboard(); notify("Profile image updated");
+        };
+
 
         // Graph
         let network = null;
         const loadGraph = async () => {
             const data = await api('/graph?adminId=' + localStorage.getItem('admin_id'));
+            selectedNode.value = null;
             const container = document.getElementById('network-graph');
             if(!container) return;
             
@@ -1534,8 +1910,11 @@ function serveHtml() {
                 id: n.id,
                 label: n.full_name,
                 shape: 'circularImage',
-                image: n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random',
-                size: 30, borderWidth: 3, 
+                image: n.avatar_path && n.avatar_path.startsWith('http') ? n.avatar_path : (n.avatar_path ? '/api/media/' + n.avatar_path : 'https://ui-avatars.com/api/?name='+n.full_name+'&background=random'),
+                avatar_path: n.avatar_path,
+                occupation: n.occupation,
+                status: n.status,
+                size: 30, borderWidth: 3,
                 color: { border: n.status === 'Active' ? '#10b981' : '#64748b', background: '#1e293b' }
             }));
             
@@ -1550,7 +1929,14 @@ function serveHtml() {
                 physics: { stabilization: true, barnesHut: { gravitationalConstant: -4000 } },
                 interaction: { hover: true }
             });
-            network.on('click', (p) => { if(p.nodes.length) viewSubject(p.nodes[0]); });
+            network.on('click', (p) => {
+                if(p.nodes.length) {
+                    const node = nodes.find(n => n.id === p.nodes[0]);
+                    selectedNode.value = node || null;
+                } else {
+                    selectedNode.value = null;
+                }
+            });
         };
 
         const fitGraph = () => network?.fit();
@@ -1565,28 +1951,55 @@ function serveHtml() {
         watch(currentTab, (v) => { if(v === 'graph') setTimeout(loadGraph, 100); });
 
         // Utils
-        const openModal = (type, parentId = null) => {
+        const openModal = (type, payload = null) => {
             modal.active = type;
-            modal.parentId = parentId;
+            modal.parentId = null;
+            modal.editId = null;
             modalStep.value = 'Identity';
-            
+
             if(type === 'quick-note') {
                 forms.intel.category = 'General';
                 forms.intel.label = 'Field Note ' + new Date().toLocaleTimeString();
                 forms.intel.confidence = 100;
             } else if (type === 'add-intel') {
                 forms.intel = { category: 'General', label: '', value: '', analysis: '', confidence: 100, source: '' };
+                modal.parentId = typeof payload === 'number' ? payload : null;
+            } else if (type === 'add-event') {
+                forms.event = { date: new Date().toISOString().split('T')[0], title: '', description: '' };
+            } else if (type === 'add-rel') {
+                forms.rel = { mode: 'subject', subjectB: '', type: '', customName: '', customAvatar: '', customNotes: '', notes: '' };
+            } else if (type === 'edit-intel') {
+                const intel = payload || {};
+                modal.editId = intel.id;
+                forms.intel = {
+                    category: intel.category || 'General',
+                    label: intel.label || '',
+                    value: intel.value || '',
+                    analysis: intel.analysis || '',
+                    confidence: intel.confidence ?? 100,
+                    source: intel.source || ''
+                };
             } else if (type === 'add-subject') {
-                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id') };
+                forms.subject = { status: 'Active', adminId: localStorage.getItem('admin_id'), hometown: '', previous_locations: '' };
             } else if (type === 'edit-profile') {
                 forms.subject = JSON.parse(JSON.stringify(selectedSubject.value));
             } else if (type === 'add-routine') {
-                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '' };
+                forms.routine = { activity: '', location: '', schedule: '', duration: '', notes: '', quote: '', follow_up: '' };
             } else if (type === 'add-media-link') {
                 forms.mediaLink = { url: '', description: '' };
+            } else if (type === 'avatar-link') {
+                forms.avatarLink = { url: selectedSubject.value?.avatar_path?.startsWith('http') ? selectedSubject.value.avatar_path : '' };
+            } else if (type === 'edit-event') {
+                const event = payload || {};
+                modal.editId = event.id;
+                forms.event = {
+                    date: event.event_date || event.date || new Date().toISOString().split('T')[0],
+                    title: event.title || '',
+                    description: event.description || ''
+                };
             }
         };
-        const closeModal = () => modal.active = null;
+        const closeModal = () => { modal.active = null; modal.editId = null; modal.parentId = null; };
         
         const deleteItem = async (table, id) => {
             if(confirm("Permanently delete this item?")) {
@@ -1603,6 +2016,42 @@ function serveHtml() {
             node.setAttribute("href", dataStr);
             node.setAttribute("download", \`dossier_\${selectedSubject.value.full_name.replace(/\s/g,'_')}.json\`);
             node.click();
+        };
+
+        const createShareLink = async () => {
+            if (!selectedSubject.value) return;
+            const payload = { subjectId: selectedSubject.value.id, durationMinutes: forms.share.durationMinutes };
+            const res = await api('/share-links', { method: 'POST', body: JSON.stringify(payload) });
+            await loadShareLinks(selectedSubject.value.id);
+            notify('Share link created');
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(res.url).catch(() => {});
+            }
+        };
+
+        const revokeShareLink = async (token) => {
+            await api('/share-links/revoke', { method: 'POST', body: JSON.stringify({ token }) });
+            await loadShareLinks(selectedSubject.value.id);
+            notify('Link disabled');
+        };
+
+        const copyShareLink = async (url) => {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+                notify('Link copied');
+            }
+        };
+
+        const resolveImagePath = (path) => {
+            if(!path) return '';
+            return path.startsWith('http') ? path : '/api/media/' + path;
+        };
+
+        const openImage = (url, desc = '') => {
+            if(!url) return;
+            lightbox.url = url;
+            lightbox.desc = desc;
+            lightbox.active = true;
         };
 
         // Keyboard Shortcuts
@@ -1637,15 +2086,338 @@ function serveHtml() {
         return {
             view, setupMode, auth, loading, dashboard, subjects, suggestions, currentTab, subTab, navItems,
             searchQuery, filteredSubjects, selectedSubject, dataTree, lightbox, modal, modalTitle, forms,
-            expandedState, graphSearch, modalStep, toasts,
+            expandedState, graphSearch, modalStep, toasts, shareLinks,
             handleAuth, logout: () => { localStorage.clear(); location.reload(); },
-            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink,
-            handleMediaUpload, handleAvatarUpload, triggerMediaUpload, triggerAvatar,
-            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV,
-            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge
+            viewSubject, createSubject, updateSubjectCore, submitIntel, submitEvent, submitRel, submitRoutine, submitMediaLink, submitAvatarLink,
+            handleMediaUpload, handleAvatarUpload, handleRelAvatarUpload, triggerMediaUpload, triggerAvatar,
+            openModal, closeModal, toggleNode, getConfidenceColor, deleteItem, exportData, downloadCSV, openImage, resolveImagePath,
+            createShareLink, revokeShareLink, copyShareLink,
+            fitGraph, refreshGraph, changeTab, parseSocials, calculateRealAge, selectedNode
         };
       }
     }).mount('#app');
+  </script>
+</body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+}
+
+function serveSharedHtml(token) {
+  const html = `<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shared Dossier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #0b1220; color: #e2e8f0; }
+    .content-shell { max-width: 1000px; margin: 0 auto; padding: 1.25rem; }
+    @media (min-width: 768px) { .content-shell { padding: 2rem 2.25rem; } }
+    .glass-panel { background: transparent; border: 0; box-shadow: none; }
+    .pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.02em; }
+    .info-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.35rem 0; border-bottom: 1px dashed rgba(148,163,184,0.3); }
+    .info-label { color: #94a3b8; font-size: 0.8rem; }
+    .info-value { text-align: right; word-break: break-word; color: #e2e8f0; font-weight: 600; }
+    .timeline { position: relative; padding-left: 1.5rem; }
+    .timeline::before { content: ''; position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, rgba(99,102,241,0.5), rgba(14,165,233,0.4)); }
+    .timeline-item { position: relative; padding-left: 1rem; margin-bottom: 1.25rem; }
+    .timeline-item::before { content: ''; position: absolute; left: -0.35rem; top: 0.35rem; width: 12px; height: 12px; background: #6366f1; border: 2px solid rgba(15,23,42,0.9); border-radius: 9999px; box-shadow: 0 0 0 4px rgba(99,102,241,0.25); }
+    .badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.6rem; border-radius: 0.65rem; background: rgba(99,102,241,0.15); color: #c7d2fe; font-size: 0.75rem; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div id="timerShell" class="hidden fixed top-4 right-4 z-50 bg-emerald-600/20 text-emerald-200 border border-emerald-500/50 rounded-full px-4 py-2 shadow-lg text-sm font-semibold backdrop-blur flex items-center gap-2">
+    <i class="fa-regular fa-clock"></i>
+    <span id="countdown">--:--</span>
+  </div>
+  <div class="content-shell">
+    <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
+      <div>
+        <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Secure Share</p>
+        <h1 class="text-3xl font-black text-white flex items-center gap-2">
+          Shared Profile
+          <span class="pill bg-indigo-600/30 text-indigo-200 border border-indigo-500/40"><i class="fa-solid fa-shield-halved"></i> View Only</span>
+        </h1>
+      </div>
+      <div class="text-left md:text-right glass-panel rounded-2xl px-4 py-3">
+        <p class="text-xs text-slate-500">Link ID</p>
+        <p class="font-mono text-sm text-indigo-200 break-all">${token}</p>
+      </div>
+    </header>
+
+    <div id="status" class="glass-panel rounded-2xl p-4 text-sm text-slate-200">Loading dossier...</div>
+
+    <section id="content" class="hidden space-y-5 sm:space-y-6 animate-[fadeIn_0.4s_ease]">
+      <div class="glass-panel rounded-3xl p-2 md:p-0 flex flex-col md:flex-row gap-4 items-start">
+        <img id="avatar" class="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border border-slate-800" alt="Subject portrait">
+        <div class="flex-1 space-y-2">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p class="text-xs uppercase text-slate-400">Subject</p>
+              <h2 id="name" class="text-3xl font-bold text-white"></h2>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs text-slate-400">
+              <span id="age" class="pill bg-slate-800/50 text-slate-200 border border-slate-700"></span>
+              <span id="lastSighted" class="pill bg-slate-800/50 text-slate-300 border border-slate-700"></span>
+            </div>
+          </div>
+          <p id="occupation" class="text-sm text-slate-300"></p>
+          <div class="flex flex-wrap gap-2 text-sm text-slate-300">
+            <span class="inline-flex items-center gap-1"><i class="fa-solid fa-location-dot text-slate-500"></i><span id="location">—</span></span>
+            <span class="inline-flex items-center gap-1"><i class="fa-solid fa-globe text-slate-500"></i><span id="nationality">—</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="glass-panel rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Core Details</h3>
+            <span class="text-[10px] text-slate-500">Verified</span>
+          </div>
+          <div class="text-sm text-slate-300 space-y-2" id="core"></div>
+        </div>
+        <div class="glass-panel rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Contact & Digital</h3>
+            <span class="text-[10px] text-slate-500">Limited</span>
+          </div>
+          <div class="text-sm text-slate-300 space-y-2" id="contact"></div>
+          <div class="pt-2 border-t border-slate-800">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Social Links</h4>
+              <span class="text-[10px] text-slate-500">Icons only</span>
+            </div>
+            <div id="socials" class="flex flex-wrap gap-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="glass-panel rounded-2xl p-4 lg:col-span-2">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Timeline</h3>
+            <span class="text-[10px] text-slate-500">Chronological</span>
+          </div>
+          <div id="events" class="timeline"></div>
+        </div>
+        <div class="glass-panel rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Routine</h3>
+            <span class="text-[10px] text-slate-500">Observations</span>
+          </div>
+          <div id="routine" class="space-y-3"></div>
+        </div>
+      </div>
+
+      <div class="glass-panel rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Connections</h3>
+          <span class="text-[10px] text-slate-500">Subject + external</span>
+        </div>
+        <div id="relationships" class="space-y-3"></div>
+      </div>
+
+      <div class="glass-panel rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Media</h3>
+          <span class="text-[10px] text-slate-500">Attachments</span>
+        </div>
+        <div id="media" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const token = '${token}';
+    const statusEl = document.getElementById('status');
+    const content = document.getElementById('content');
+    const timerShell = document.getElementById('timerShell');
+    const countdownEl = document.getElementById('countdown');
+    let countdownInterval = null;
+
+    const setAvatar = (src) => {
+      const img = document.getElementById('avatar');
+      if (src) img.src = src.startsWith('http') ? src : '/api/media/' + src;
+      else img.src = 'https://ui-avatars.com/api/?name=Subject&background=random';
+    };
+
+    const infoRow = (label, value, highlight = false) =>
+      '<div class="info-row"><span class="info-label">' + label + '</span><span class="info-value ' + (highlight ? 'text-indigo-200' : 'text-white') + '">' + value + '</span></div>';
+
+    const parseSocialLinks = (text) => {
+      if (!text) return [];
+      const urls = text.match(/\bhttps?:\/\/[^\s,]+/gi) || [];
+      return urls.map((url) => {
+        const lower = url.toLowerCase();
+        let icon = 'fa-solid fa-link';
+        if(lower.includes('twitter.com') || lower.includes('x.com')) icon = 'fa-brands fa-x-twitter';
+        else if(lower.includes('facebook.com') || lower.includes('fb.com')) icon = 'fa-brands fa-facebook';
+        else if(lower.includes('linkedin.com')) icon = 'fa-brands fa-linkedin';
+        else if(lower.includes('instagram.com')) icon = 'fa-brands fa-instagram';
+        else if(lower.includes('github.com')) icon = 'fa-brands fa-github';
+        else if(lower.includes('youtube.com')) icon = 'fa-brands fa-youtube';
+        else if(lower.includes('tiktok.com')) icon = 'fa-brands fa-tiktok';
+        else if(lower.includes('reddit.com')) icon = 'fa-brands fa-reddit';
+        else if(lower.includes('discord')) icon = 'fa-brands fa-discord';
+        else if(lower.includes('telegram.org') || lower.includes('t.me')) icon = 'fa-brands fa-telegram';
+        else if(lower.includes('whatsapp.com') || lower.includes('wa.me')) icon = 'fa-brands fa-whatsapp';
+        else if(lower.includes('medium.com')) icon = 'fa-brands fa-medium';
+        else if(lower.includes('pinterest.com')) icon = 'fa-brands fa-pinterest';
+        else if(lower.includes('snapchat.com')) icon = 'fa-brands fa-snapchat';
+        return { url, icon };
+      });
+    };
+
+    const renderSocialLinks = (text) => {
+      const shell = document.getElementById('socials');
+      const socials = parseSocialLinks(text);
+      if (!shell) return;
+      if (!socials.length) {
+        shell.innerHTML = '<p class="text-sm text-slate-500">No social profiles shared.</p>';
+        return;
+      }
+      shell.innerHTML = socials
+        .map(({ url, icon }) =>
+          '<a href="' +
+          url +
+          '" target="_blank" rel="noreferrer" class="w-9 h-9 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-indigo-500 hover:bg-indigo-700/40 flex items-center justify-center">' +
+          '<i class="' + icon + '"></i></a>'
+        )
+        .join('');
+    };
+
+    const resolveShareImage = (path) => {
+      if (!path) return 'https://ui-avatars.com/api/?name=Contact&background=random';
+      return path.startsWith('http') ? path : '/api/media/' + path;
+    };
+
+    const addList = (el, items, emptyText, renderer) => {
+      if (!items.length) {
+        el.innerHTML = '<p class="text-sm text-slate-500">' + emptyText + '</p>';
+        return;
+      }
+      el.innerHTML = '';
+      items.forEach((item) => el.appendChild(renderer(item)));
+    };
+
+    const startCountdown = (seconds) => {
+      if (!seconds || seconds <= 0) return;
+      let remaining = Math.floor(seconds);
+
+      const render = () => {
+        const mins = Math.floor(remaining / 60);
+        const secs = String(remaining % 60).padStart(2, '0');
+        countdownEl.textContent = mins + ':' + secs;
+      };
+
+      render();
+      timerShell.classList.remove('hidden');
+      clearInterval(countdownInterval);
+      countdownInterval = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(countdownInterval);
+          countdownEl.textContent = 'Expired';
+          statusEl.textContent = 'This share link has expired.';
+          statusEl.className = 'glass-panel bg-red-900/40 border border-red-700 rounded-2xl p-4 text-sm text-red-200';
+          statusEl.classList.remove('hidden');
+          content.classList.add('hidden');
+          fetch('/api/share-links/expire', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) }).catch(() => {});
+          return;
+        }
+        render();
+      }, 1000);
+    };
+
+    (async () => {
+      try {
+        const res = await fetch('/api/shared/' + token);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Unable to load dossier');
+
+        statusEl.classList.add('hidden');
+        content.classList.remove('hidden');
+
+        document.getElementById('name').textContent = data.full_name || 'Unknown Subject';
+        document.getElementById('occupation').textContent = data.occupation || 'Occupation unknown';
+        document.getElementById('location').textContent = data.location || 'Location unknown';
+        document.getElementById('nationality').textContent = data.nationality || '—';
+        document.getElementById('age').textContent = data.age ? data.age + ' yrs' : (data.dob || 'Age unknown');
+        document.getElementById('lastSighted').textContent = data.last_sighted ? 'Last sighted ' + data.last_sighted : 'Last sighting unknown';
+        setAvatar(data.avatar_path);
+
+        document.getElementById('core').innerHTML =
+          infoRow('Location', data.location || '—') +
+          infoRow('Hometown', data.hometown || '—') +
+          infoRow('Previous Locations', data.previous_locations || '—') +
+          infoRow('DOB', data.dob || '—') +
+          infoRow('Status', data.status || 'Active', true) +
+          infoRow('MBTI', data.mbti || '—') +
+          infoRow('Alignment', data.alignment || '—') +
+          infoRow('Education', data.education || '—');
+
+        document.getElementById('contact').innerHTML =
+          infoRow('Contact', data.contact || '—') +
+          infoRow('Digital IDs', data.digital_identifiers || '—', true);
+        renderSocialLinks(data.social_links);
+
+        addList(document.getElementById('events'), data.events || [], 'No timeline events logged.', (evt) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'timeline-item';
+          wrap.innerHTML = '<p class="text-[11px] text-slate-400">' + (evt.event_date || 'Undated') + '</p><p class="text-white font-semibold">' + evt.title + '</p><p class="text-sm text-slate-300">' + evt.description + '</p>';
+          return wrap;
+        });
+
+        addList(document.getElementById('routine'), data.routine || [], 'No routine observations captured.', (r) => {
+          const card = document.createElement('div');
+          card.className = 'p-2 rounded-lg';
+          const quoteBlock = r.quote ? '<p class="text-sm text-indigo-200 mt-1 italic">"' + r.quote + '"</p>' : '';
+          const follow = r.follow_up ? '<p class="text-xs text-amber-200 mt-1">Follow-up: ' + r.follow_up + '</p>' : '';
+          card.innerHTML = '<div class="flex items-center justify-between"><p class="text-white font-semibold">' + r.activity + '</p><span class="text-[10px] text-slate-400">' + (r.schedule || '—') + '</span></div><p class="text-xs text-indigo-200 mt-1"><i class="fa-solid fa-location-dot mr-1"></i>' + (r.location || '—') + ' <span class="text-slate-500">•</span> ' + (r.duration || '—') + '</p><p class="text-sm text-slate-300 mt-1">' + (r.notes || '') + '</p>' + quoteBlock + follow;
+          return card;
+        });
+
+        addList(document.getElementById('relationships'), data.relationships || [], 'No known connections.', (rel) => {
+          const card = document.createElement('div');
+          card.className = 'flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800';
+          const avatar = document.createElement('img');
+          avatar.className = 'w-12 h-12 rounded-full object-cover border border-slate-700';
+          avatar.src = resolveShareImage(rel.target_avatar || rel.custom_avatar);
+          card.appendChild(avatar);
+          const text = document.createElement('div');
+          text.innerHTML = '<p class="text-white font-semibold">' + (rel.target_name || rel.custom_name || 'Unknown contact') + '</p>' +
+            '<p class="text-[11px] text-indigo-200">' + (rel.relationship_type || 'Linked') + '</p>' +
+            (rel.notes || rel.custom_notes ? '<p class="text-xs text-slate-400 max-w-[360px]">' + (rel.notes || rel.custom_notes) + '</p>' : '');
+          card.appendChild(text);
+          return card;
+        });
+
+        addList(document.getElementById('media'), data.media || [], 'No media attached.', (m) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800';
+          const thumb = document.createElement('img');
+          thumb.className = 'w-16 h-16 object-cover rounded-lg border border-slate-700';
+          thumb.src = m.media_type === 'link' ? 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14/assets/svg/1f517.svg' : (m.object_key ? '/api/media/' + m.object_key : '');
+          wrap.appendChild(thumb);
+          const text = document.createElement('div');
+          const linkHref = m.media_type === 'link' ? m.external_url : '/api/media/' + m.object_key;
+          text.innerHTML = '<p class="text-white font-semibold">' + (m.description || 'Attachment') + '</p><a class="text-indigo-300 text-sm" href="' + linkHref + '" target="_blank" rel="noreferrer">Open</a>';
+          wrap.appendChild(text);
+          return wrap;
+        });
+
+        if (data.share?.remaining_seconds) {
+          startCountdown(data.share.remaining_seconds);
+        }
+
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.className = 'glass-panel bg-red-900/40 border border-red-700 rounded-2xl p-4 text-sm text-red-200';
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -1694,6 +2466,15 @@ async function handleUploadPhoto(req, db, bucket, isAvatar = false) {
     return response({ success: true, key });
 }
 
+async function handleUploadContact(req, bucket) {
+    const { data, filename, contentType } = await req.json();
+    if (!data || !filename) return errorResponse('Image and filename required', 400);
+    const key = `contact-${Date.now()}-${sanitizeFileName(filename)}`;
+    const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    await bucket.put(key, binary, { httpMetadata: { contentType: contentType || 'image/jpeg' } });
+    return response({ success: true, key });
+}
+
 // --- Main Worker Entrypoint ---
 
 export default {
@@ -1701,13 +2482,16 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
 
+    const sharePage = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+
     try {
         if (req.method === 'GET' && path === '/') return serveHtml();
-        
+        if (req.method === 'GET' && sharePage) return serveSharedHtml(sharePage[1]);
+
         // REMOVED: await ensureSchema(env.DB); from every single request.
         // It now runs only once per worker instance via caching or setup.
         // However, for first runs on existing instances, we should run it lightly.
-        if (path.startsWith('/api/') && !schemaInitialized) {
+        if ((path.startsWith('/api/') || path.startsWith('/share/')) && !schemaInitialized) {
              await ensureSchema(env.DB);
         }
         
@@ -1723,22 +2507,30 @@ export default {
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/export-all') return handleExportCSV(env.DB, url.searchParams.get('adminId'));
         if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/share-links') {
+            if (req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), url.origin);
+        }
+        if (path === '/api/share-links/revoke') return handleRevokeShareLink(req, env.DB);
+        if (path === '/api/share-links/expire') return handleExpireShareLink(req, env.DB);
 
         // Subject Operations
         if (path === '/api/subjects') {
             if (req.method === 'POST') {
                 const p = await req.json();
                 await env.DB.prepare(`INSERT INTO subjects (
-                    admin_id, full_name, occupation, location, dob, status, created_at, 
-                    height, weight, eye_color, hair_color, blood_type, identifying_marks, 
-                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality, 
+                    admin_id, full_name, occupation, location, hometown, previous_locations, dob, status, created_at,
+                    height, weight, eye_color, hair_color, blood_type, identifying_marks,
+                    mbti, alignment, habits, notes, last_sighted, age, gender, nationality,
                     education, religion, contact, social_links, digital_identifiers
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
                     .bind(
-                        p.adminId, 
-                        p.full_name || 'Unknown Subject', 
-                        p.occupation || null, 
+                        p.adminId,
+                        p.full_name || 'Unknown Subject',
+                        p.occupation || null,
                         p.location || null,
+                        p.hometown || null,
+                        p.previous_locations || null,
                         p.dob || null,
                         p.status || 'Active',
                         isoTimestamp(),
@@ -1780,6 +2572,13 @@ export default {
         // Sub-Resources
         if (path === '/api/data-point') {
             const p = await req.json();
+            if (req.method === 'PATCH') {
+                if (!p.id) return errorResponse('Intel id required', 400);
+                await env.DB.prepare('UPDATE subject_data_points SET category = ?, label = ?, value = ?, analysis = ?, confidence = ?, source = ? WHERE id = ?')
+                    .bind(p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', p.id).run();
+                return response({ success: true });
+            }
+
             await env.DB.prepare('INSERT INTO subject_data_points (subject_id, parent_id, category, label, value, analysis, confidence, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
                 .bind(p.subjectId, p.parentId || null, p.category, p.label, p.value, p.analysis || '', p.confidence || 100, p.source || '', isoTimestamp()).run();
             return response({ success: true });
@@ -1787,23 +2586,40 @@ export default {
 
         if (path === '/api/event') {
             const p = await req.json();
+            const description = (p.description || '').toString().trim() || 'No details provided';
+            if (req.method === 'PATCH') {
+                if (!p.id) return errorResponse('Event id required', 400);
+                await env.DB.prepare('UPDATE subject_events SET title = ?, description = ?, event_date = ? WHERE id = ?')
+                    .bind(p.title, description, p.date || isoTimestamp(), p.id).run();
+                return response({ success: true });
+            }
             await env.DB.prepare('INSERT INTO subject_events (subject_id, title, description, event_date, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subjectId, p.title, p.description || '', p.date || isoTimestamp(), isoTimestamp()).run();
+                .bind(p.subjectId, p.title, description, p.date || isoTimestamp(), isoTimestamp()).run();
             return response({ success: true });
         }
 
         if (path === '/api/relationship') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.subjectB, p.type, isoTimestamp()).run();
+            if (!p.subjectB && !p.customName) return errorResponse('Target subject or contact name required', 400);
+            const stmt = await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, notes, created_at, custom_name, custom_avatar, custom_notes) VALUES (?,?,?,?,?,?,?,?)');
+            await stmt.bind(
+                p.subjectA,
+                p.subjectB || null,
+                p.type || 'Connection',
+                p.notes || '',
+                isoTimestamp(),
+                p.customName || null,
+                p.customAvatar || null,
+                p.customNotes || ''
+            ).run();
             return response({ success: true });
         }
 
         // Routine
         if (path === '/api/routine') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', isoTimestamp()).run();
+            await env.DB.prepare('INSERT INTO subject_routine (subject_id, activity, location, schedule, duration, notes, quote, follow_up, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+                .bind(p.subjectId, p.activity, p.location, p.schedule || '', p.duration || '', p.notes || '', p.quote || '', p.follow_up || '', isoTimestamp()).run();
             return response({ success: true });
         }
 
@@ -1812,6 +2628,16 @@ export default {
             const p = await req.json();
             await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, media_type, external_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
                 .bind(p.subjectId, 'link-' + Date.now(), 'link', p.description || 'External Link', 'link', p.url, isoTimestamp()).run();
+            return response({ success: true });
+        }
+
+        const sharedSubject = path.match(/^\/api\/shared\/([a-zA-Z0-9]+)$/);
+        if (sharedSubject) return handleGetSharedSubject(env.DB, sharedSubject[1]);
+
+        if (path === '/api/avatar-link') {
+            const p = await req.json();
+            if(!p.url) return errorResponse('Image URL required', 400);
+            await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(p.url, p.subjectId).run();
             return response({ success: true });
         }
 
@@ -1824,6 +2650,7 @@ export default {
         // Media
         if (path === '/api/upload-photo') return handleUploadPhoto(req, env.DB, env.BUCKET, false);
         if (path === '/api/upload-avatar') return handleUploadPhoto(req, env.DB, env.BUCKET, true);
+        if (path === '/api/upload-contact') return handleUploadContact(req, env.BUCKET);
 
         if (path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
