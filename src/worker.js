@@ -859,8 +859,9 @@ function serveHtml() {
                             <div class="text-2xl md:text-3xl font-bold text-white mt-1">{{ stats.evidence || 0 }}</div>
                             <i class="fa-solid fa-file absolute -bottom-2 -right-2 text-4xl text-white/5"></i>
                         </div>
-                        <button @click="openModal('add-subject')" class="bg-blue-600 active:bg-blue-700 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20 md:hover:scale-[1.02]">
-                            <i class="fa-solid fa-plus text-xl"></i>
+                        <button @click="openModal('add-subject')" :disabled="processing" class="bg-blue-600 active:bg-blue-700 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20 md:hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i v-if="processing" class="fa-solid fa-circle-notch fa-spin text-xl"></i>
+                            <i v-else class="fa-solid fa-plus text-xl"></i>
                             <span class="text-xs font-bold uppercase tracking-wider">Add Profile</span>
                         </button>
                     </div>
@@ -1052,6 +1053,9 @@ function serveHtml() {
                                 </div>
                             </div>
                         </div>
+                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-dashed border-slate-800">
+                            No detailed attributes logged yet.
+                        </div>
                     </div>
 
                     <!-- TIMELINE -->
@@ -1214,7 +1218,10 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform">Save Profile</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Saving...' : 'Save Profile' }}
+                    </button>
                 </form>
 
                 <!-- ADD ATTRIBUTE -->
@@ -1230,7 +1237,10 @@ function serveHtml() {
                     </select>
                     <input v-model="forms.intel.label" placeholder="Label (e.g., 'Instagram', 'University')" class="glass-input w-full p-3 text-sm" required>
                     <textarea v-model="forms.intel.value" placeholder="Value / Detail" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Add Attribute</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Adding...' : 'Add Attribute' }}
+                    </button>
                  </form>
 
                  <!-- ADD MEDIA LINK -->
@@ -1243,7 +1253,10 @@ function serveHtml() {
                         <option value="video/mp4">Video</option>
                         <option value="text/plain">Other</option>
                     </select>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Save Link</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Saving...' : 'Save Link' }}
+                    </button>
                  </form>
 
                  <!-- SECURE SHARE -->
@@ -1256,7 +1269,10 @@ function serveHtml() {
                             <option :value="1440">24 Hours</option>
                             <option :value="10080">7 Days</option>
                         </select>
-                        <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-lg shadow-blue-500/20">Generate Link</button>
+                        <button @click="createShareLink" :disabled="processing" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                            <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                            Generate Link
+                        </button>
                     </div>
                     <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
                         <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
@@ -1291,7 +1307,10 @@ function serveHtml() {
                     <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm">
                         <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option>
                     </select>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Add Pin</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Saving...' : 'Add Pin' }}
+                    </button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
@@ -1302,7 +1321,10 @@ function serveHtml() {
                         </select>
                     </div>
                     <textarea v-model="forms.interaction.transcript" placeholder="Details & Notes" rows="5" class="glass-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Log Event</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Logging...' : 'Log Event' }}
+                    </button>
                 </form>
 
                  <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
@@ -1310,7 +1332,10 @@ function serveHtml() {
                         <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.occupation}})</option>
                     </select>
                     <input v-model="forms.rel.type" placeholder="Relationship (e.g., Colleague, Spouse)" class="glass-input w-full p-3 text-sm">
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20">Link Profiles</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Linking...' : 'Link Profiles' }}
+                    </button>
                  </form>
             </div>
         </div>
@@ -1331,6 +1356,7 @@ function serveHtml() {
       setup() {
         const view = ref('auth');
         const loading = ref(false);
+        const processing = ref(false); // Global processing state
         const auth = reactive({ email: '', password: '' });
         const tabs = [
             { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Dashboard' },
@@ -1354,7 +1380,7 @@ function serveHtml() {
         const modal = reactive({ active: null });
         const analysisResult = ref(null);
         const mapData = ref([]);
-        const showMapSidebar = ref(window.innerWidth >= 768); // Collapsed on mobile by default
+        const showMapSidebar = ref(window.innerWidth >= 768); 
         const mapSearchQuery = ref('');
         
         const locationSearchQuery = ref('');
@@ -1374,6 +1400,7 @@ function serveHtml() {
             subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }, mediaLink: {}
         });
 
+        // ... (computed properties same as before) ...
         const filteredSubjects = computed(() => subjects.value.filter(s => 
             s.full_name.toLowerCase().includes(search.value.toLowerCase()) || 
             (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))
@@ -1424,7 +1451,6 @@ function serveHtml() {
              return m[modal.active] || 'Search';
         });
 
-        // (API, Auth, Fetch, ViewSubject logic - same as before)
         const api = async (ep, opts = {}) => {
             try {
                 const res = await fetch('/api' + ep, opts);
@@ -1474,20 +1500,21 @@ function serveHtml() {
              return { summary: \`Profile is \${completeness}% complete based on collected data points.\`, tags };
         };
 
-        // Initialize Map Logic
+        // Initialize Map Logic (FIXED RESIZING ISSUE)
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
             
-            // Clean up instances
             if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
             if(!isPicker && id === 'subjectMap' && mapInstance) { mapInstance.remove(); mapInstance = null; }
             if(!isPicker && id === 'warRoomMap' && warRoomMapInstance) { warRoomMapInstance.remove(); warRoomMapInstance = null; polylineLayer = null; markerLayer = null; }
 
-            // Dark Matter Tile Layer
             const map = L.map(id, { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            // FIX: Invalidate size for ALL maps after a short delay to ensure correct rendering
+            setTimeout(() => map.invalidateSize(), 200);
 
             if(isPicker) {
                  pickerMapInstance = map;
@@ -1497,7 +1524,6 @@ function serveHtml() {
                     map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
                     L.marker(e.latlng).addTo(map);
                  });
-                 setTimeout(() => map.invalidateSize(), 100);
             } else {
                 if(id === 'subjectMap') mapInstance = map;
                 else warRoomMapInstance = map;
@@ -1508,15 +1534,12 @@ function serveHtml() {
 
         const renderMapData = (map, data) => {
             if(!map) return;
-            
-            // Clear existing layers
             map.eachLayer(layer => {
                 if (layer instanceof L.Marker || layer instanceof L.Polyline) {
                     map.removeLayer(layer);
                 }
             });
 
-            // Group by Subject for Polylines
             const grouped = data.reduce((acc, loc) => {
                 if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name };
                 if(loc.lat) acc[loc.subject_id].locations.push(loc);
@@ -1524,30 +1547,18 @@ function serveHtml() {
             }, {});
 
             Object.values(grouped).forEach(group => {
-                // 1. Draw Polyline if > 1 point
                 if(group.locations.length > 1) {
                     const latlngs = group.locations.map(l => [l.lat, l.lng]);
                     L.polyline(latlngs, { color: '#3b82f6', weight: 2, opacity: 0.6, dashArray: '5, 10' }).addTo(map);
                 }
-
-                // 2. Draw Markers
                 group.locations.forEach(loc => {
                     if(!loc.lat) return;
-                    
                     const avatarUrl = resolveImg(loc.avatar_path);
                     const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-slate-800">
                         <img src="\${avatarUrl}">
                         <div class="marker-label">\${loc.name}</div>
                     </div>\`;
-                    
-                    const icon = L.divIcon({
-                        html: iconHtml,
-                        className: '',
-                        iconSize: [40, 40],
-                        iconAnchor: [20, 20],
-                        popupAnchor: [0, -20]
-                    });
-
+                    const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20] });
                     const marker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
                     marker.bindPopup(\`
                         <div class="text-slate-800">
@@ -1559,19 +1570,21 @@ function serveHtml() {
             });
         };
 
-        const updateMapFilter = () => {
-            if(warRoomMapInstance) renderMapData(warRoomMapInstance, filteredMapData.value);
-        };
+        const updateMapFilter = () => { if(warRoomMapInstance) renderMapData(warRoomMapInstance, filteredMapData.value); };
 
         const flyToGlobal = (loc) => {
             if(warRoomMapInstance) {
                 warRoomMapInstance.flyTo([loc.lat, loc.lng], 15);
-                // On mobile, hide sidebar after selection
                 if(window.innerWidth < 768) showMapSidebar.value = false;
             }
         };
+        
+        // Use this specific flyTo for subject detail map
+        const flyTo = (loc) => {
+             if(mapInstance) mapInstance.flyTo([loc.lat, loc.lng], 15);
+        };
 
-        // (Watchers, CRUD, File Handlers - same as before)
+        // ... (Debounce, SelectLocation, etc. same as before) ...
         const debounceSearch = () => {
             clearTimeout(searchTimeout);
             isSearching.value = true;
@@ -1675,19 +1688,39 @@ function serveHtml() {
             }
         });
 
+        // CRUD with Processing State
         const submitSubject = async () => {
-            const isEdit = modal.active === 'edit-profile';
-            const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
-            await api(ep, { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) });
-            if(isEdit) selected.value = { ...selected.value, ...forms.subject };
-            else fetchData();
-            closeModal();
+            if (processing.value) return;
+            processing.value = true;
+            try {
+                const isEdit = modal.active === 'edit-profile';
+                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
+                await api(ep, { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) });
+                if(isEdit) selected.value = { ...selected.value, ...forms.subject };
+                else fetchData();
+                closeModal();
+            } finally { processing.value = false; }
         };
-        const submitInteraction = async () => { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); };
-        const submitLocation = async () => { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); };
-        const submitIntel = async () => { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); };
-        const submitRel = async () => { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); };
-        const submitMediaLink = async () => { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); };
+        const submitInteraction = async () => { 
+            if (processing.value) return; processing.value = true;
+            try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+        };
+        const submitLocation = async () => { 
+            if (processing.value) return; processing.value = true;
+            try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+        };
+        const submitIntel = async () => { 
+            if (processing.value) return; processing.value = true;
+            try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+        };
+        const submitRel = async () => { 
+            if (processing.value) return; processing.value = true;
+            try { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+        };
+        const submitMediaLink = async () => { 
+            if (processing.value) return; processing.value = true;
+            try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+        };
         const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
         
         const fileInput = ref(null);
@@ -1736,13 +1769,13 @@ function serveHtml() {
         });
 
         return {
-            view, loading, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
+            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
             analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel,
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings,
-            isSearching, mapData, showMapSidebar, flyToGlobal, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData
+            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData
         };
       }
     }).mount('#app');
