@@ -468,6 +468,8 @@ function serveSharedHtml(token) {
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
         :root { --bg-dark: #020617; }
@@ -482,6 +484,8 @@ function serveSharedHtml(token) {
         .tab-btn.active { color: #3b82f6; border-color: #3b82f6; }
         /* Mobile fixes */
         .safe-pb { padding-bottom: env(safe-area-inset-bottom); }
+        .avatar-marker { position: relative; }
+        .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     </style>
 </head>
 <body class="min-h-screen safe-pb">
@@ -522,7 +526,7 @@ function serveSharedHtml(token) {
 
             <!-- Tabs -->
             <div class="flex overflow-x-auto border-b border-slate-800 pb-1 no-scrollbar">
-                <button v-for="t in ['Profile', 'Intel', 'History', 'Network', 'Files']" 
+                <button v-for="t in ['Profile', 'Intel', 'History', 'Network', 'Files', 'Map']" 
                     @click="activeTab = t.toLowerCase()" 
                     :class="['tab-btn', activeTab === t.toLowerCase() ? 'active' : '']">
                     {{ t }}
@@ -637,11 +641,27 @@ function serveSharedHtml(token) {
                         <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] truncate text-slate-300">{{m.description}}</div>
                     </div>
                 </div>
+
+                <!-- Map -->
+                <div v-show="activeTab === 'map'" class="h-[600px] flex flex-col md:flex-row gap-4">
+                    <div class="flex-1 bg-slate-900 rounded-xl overflow-hidden relative min-h-[300px] border border-slate-800">
+                        <div id="sharedMap" class="w-full h-full z-0"></div>
+                    </div>
+                    <div class="w-full md:w-64 space-y-2 overflow-y-auto max-h-[300px] md:max-h-full">
+                        <div v-for="loc in data.locations" :key="loc.id" @click="flyTo(loc)" class="glass p-3 cursor-pointer hover:border-blue-500/50 transition-all border-slate-700/50">
+                            <div class="font-bold text-white text-sm">{{loc.name}}</div>
+                            <span class="text-[10px] uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{{loc.type}}</span>
+                            <div class="text-xs text-slate-500 mt-1 truncate">{{loc.address}}</div>
+                        </div>
+                        <div v-if="!data.locations.length" class="text-center text-slate-500 text-sm py-4">No locations available.</div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
     <script>
-        const { createApp, ref, onMounted } = Vue;
+        const { createApp, ref, onMounted, watch, nextTick } = Vue;
         createApp({
             setup() {
                 const loading = ref(true);
@@ -650,6 +670,7 @@ function serveSharedHtml(token) {
                 const timer = ref(0);
                 const activeTab = ref('profile');
                 const token = window.location.pathname.split('/').pop();
+                let mapInstance = null;
 
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
                 const formatTime = (s) => {
@@ -657,6 +678,44 @@ function serveSharedHtml(token) {
                     const m = Math.floor((s % 3600) / 60);
                     return \`\${h}h \${m}m\`;
                 };
+
+                const initMap = () => {
+                    if(!document.getElementById('sharedMap')) return;
+                    if(mapInstance) { mapInstance.remove(); mapInstance = null; }
+                    
+                    const map = L.map('sharedMap', { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+                    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+                    const bounds = [];
+                    data.value.locations.forEach(loc => {
+                        if(loc.lat) {
+                            const latlng = [loc.lat, loc.lng];
+                            bounds.push(latlng);
+                            
+                            const avatarUrl = resolveImg(data.value.avatar_path) || 'https://ui-avatars.com/api/?background=random&name=' + data.value.full_name;
+                             const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-slate-800">
+                                <img src="\${avatarUrl}">
+                            </div>\`;
+                            const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] });
+                            
+                            L.marker(latlng, { icon }).addTo(map)
+                                .bindPopup(\`<b>\${loc.name}</b><br>\${loc.type}\`);
+                        }
+                    });
+                    
+                    setTimeout(() => map.invalidateSize(), 200); // Fix rendering issues
+                    if(bounds.length) map.fitBounds(bounds, { padding: [50, 50] });
+                    mapInstance = map;
+                };
+
+                const flyTo = (loc) => {
+                    if(mapInstance && loc.lat) mapInstance.flyTo([loc.lat, loc.lng], 16);
+                };
+
+                watch(activeTab, (val) => {
+                    if(val === 'map') nextTick(initMap);
+                });
 
                 onMounted(async () => {
                     try {
@@ -672,12 +731,13 @@ function serveSharedHtml(token) {
                         loading.value = false;
                     }
                 });
-                return { loading, error, data, timer, activeTab, resolveImg, formatTime };
+                return { loading, error, data, timer, activeTab, resolveImg, formatTime, flyTo };
             }
         }).mount('#app');
     </script>
 </body>
 </html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
 
 
@@ -1033,8 +1093,9 @@ function serveHtml() {
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
                                     <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                                        <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
-                                        <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
+                                        <span class="text-sm font-bold text-white">{{ix.type}}</span>
+                                        <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
+                                        <!-- ADDED DELETE BUTTON -->
                                         <button @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-slate-600 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                     <div class="bg-slate-900/50 p-4 rounded-lg text-sm text-slate-300 border border-slate-800 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details recorded.'}}</div>
@@ -1168,7 +1229,8 @@ function serveHtml() {
         </div>
 
         <div v-else class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
-            <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
+             <!-- (Modal Content same as before) -->
+             <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
                 <h3 class="font-bold text-white">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -1883,162 +1945,3 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
-
-// --- Route Handling ---
-
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
-
-        // Share Page
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
-
-        // Main App
-        if (req.method === 'GET' && path === '/') return serveHtml();
-
-        // Auth
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
-            }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
-        }
-
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
-        
-        // Subject CRUD
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                const now = isoTimestamp();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-            return response(res.results);
-        }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                
-                // FIXED: Use whitelist to prevent "no such column" error
-                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
-                
-                if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
-                    const vals = keys.map(k => safeVal(p[k]));
-                    vals.push(isoTimestamp());
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            if (req.method === 'PATCH') {
-                await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
-                    .bind(p.type, p.reciprocal, p.id).run();
-            } else {
-                await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
-                    .bind(p.subjectA, p.targetId, p.type, p.reciprocal, isoTimestamp()).run();
-            }
-            return response({success:true});
-        }
-        if (path === '/api/media-link') {
-            const { subjectId, url, type, description } = await req.json();
-            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        // Sharing
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
-        }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        // File Ops
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
-            return response({success:true});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        return errorResponse(e.message);
-    }
-  }
-};
