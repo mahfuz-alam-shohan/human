@@ -456,6 +456,7 @@ function serveSharedHtml(token) {
 
         <!-- CONTENT -->
         <div v-else class="space-y-6 animate-fade-in">
+            
             <!-- HEADER / IDENTITY -->
             <div class="glass p-6 md:p-8 relative overflow-hidden">
                 <div class="absolute top-0 right-0 p-4 opacity-10">
@@ -504,9 +505,9 @@ function serveSharedHtml(token) {
                 </button>
             </div>
 
-            <!-- TAB CONTENT: PROFILE, INTEL, TIMELINE, NETWORK, FILES, LOCATIONS -->
-            <!-- ... (Keeping existing tab implementations for brevity, similar to previous) ... -->
-            <!-- PROFILE TAB -->
+            <!-- TAB CONTENT -->
+            
+            <!-- 1. PROFILE TAB -->
             <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Physical Stats -->
                 <div class="glass p-6 md:col-span-1">
@@ -546,8 +547,8 @@ function serveSharedHtml(token) {
                     </div>
                 </div>
             </div>
-            
-            <!-- INTEL TAB -->
+
+            <!-- 2. INTEL TAB -->
             <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Core Intel -->
                 <div class="glass p-6 md:col-span-2 space-y-6">
@@ -580,25 +581,25 @@ function serveSharedHtml(token) {
                 </div>
             </div>
 
-            <!-- TIMELINE TAB -->
+            <!-- 3. TIMELINE TAB (UPDATED) -->
             <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
                 <div class="glass p-6 md:p-8">
                     <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
-                    <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-700 space-y-8">
+                    <div class="relative pl-8 border-l-2 border-slate-200 dark:border-slate-700 space-y-8 my-4">
                         <div v-for="ix in data.interactions" class="relative group">
-                            <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
+                            <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
                             <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                 <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
                                 <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
                             </div>
-                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
+                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 border border-slate-100 dark:border-slate-700 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details.'}}</div>
                         </div>
                         <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
                     </div>
                 </div>
             </div>
 
-            <!-- NETWORK TAB -->
+            <!-- 4. NETWORK TAB -->
             <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
                     <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0 border border-slate-600">
@@ -614,7 +615,7 @@ function serveSharedHtml(token) {
                 <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
             </div>
 
-            <!-- FILES TAB -->
+            <!-- 5. FILES TAB -->
             <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
                     <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
@@ -630,7 +631,7 @@ function serveSharedHtml(token) {
                 <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
             </div>
 
-             <!-- LOCATIONS TAB -->
+             <!-- 6. LOCATIONS TAB -->
              <div v-if="activeTab === 'locations'" class="space-y-4">
                 <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
                     <div>
@@ -644,6 +645,7 @@ function serveSharedHtml(token) {
                 </div>
                 <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
              </div>
+
         </div>
     </div>
     <script>
@@ -715,6 +717,7 @@ function serveSharedHtml(token) {
     </script>
 </body>
 </html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
 
 
@@ -739,6 +742,7 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #020617; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
+    /* Improved Glassmorphism for Dark Mode */
     .glass { 
         background: rgba(30, 41, 59, 0.7); 
         backdrop-filter: blur(12px); 
@@ -757,12 +761,15 @@ function serveHtml() {
     }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
+    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* Mobile Safe Area Padding */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     
+    /* Animation */
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     
@@ -778,7 +785,10 @@ function serveHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
-        <!-- ... (auth screen same as before) ... -->
+        <div class="absolute inset-0 overflow-hidden">
+            <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+            <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        </div>
         <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10 border border-slate-800">
             <div class="text-center mb-8">
                 <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg shadow-blue-500/20">
@@ -833,10 +843,10 @@ function serveHtml() {
         <!-- CONTENT -->
         <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-20 md:pb-0 safe-area-pb">
 
-            <!-- DASHBOARD, TARGETS, MAP, NETWORK, DETAIL Tabs -->
-            <!-- (Reusing previous dashboard/targets layout for brevity) -->
+            <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                 <div class="max-w-6xl mx-auto space-y-6">
+                <div class="max-w-6xl mx-auto space-y-6">
+                    <!-- Stats Grid -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
@@ -860,6 +870,7 @@ function serveHtml() {
                         </button>
                     </div>
 
+                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                             <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
@@ -879,10 +890,10 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-                 </div>
+                </div>
             </div>
 
-            <!-- TARGETS -->
+            <!-- TARGETS LIST -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
                 <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
@@ -909,6 +920,7 @@ function serveHtml() {
             <!-- GLOBAL MAP TAB (Updated) -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
+                
                 <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
@@ -916,7 +928,8 @@ function serveHtml() {
                         <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-slate-400 group-focus-within:text-blue-500"></i>
                     </div>
                 </div>
-                <!-- Map Sidebar -->
+
+                <!-- Map Sidebar Overlay (Collapsible on Mobile) -->
                 <div class="absolute top-16 left-4 bottom-4 w-72 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 border-slate-700/50" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
                     <div class="p-3 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/80 backdrop-blur">
                         <h3 class="font-bold text-white text-sm">Active Points</h3>
@@ -934,7 +947,11 @@ function serveHtml() {
                         </div>
                     </div>
                 </div>
-                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
+                
+                <!-- Toggle Button (Visible when sidebar hidden) -->
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar">
+                    <i class="fa-solid fa-list-ul"></i>
+                </button>
             </div>
 
             <!-- GLOBAL NETWORK TAB (Updated) -->
@@ -948,6 +965,7 @@ function serveHtml() {
 
             <!-- SUBJECT DETAIL -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-950">
+                
                 <!-- DETAIL HEADER -->
                 <div class="h-16 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="flex items-center gap-3">
@@ -977,7 +995,7 @@ function serveHtml() {
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     <!-- PROFILE -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
@@ -1020,8 +1038,8 @@ function serveHtml() {
                         </div>
                     </div>
                     
-                    <!-- ATTRIBUTES, TIMELINE, FILES (Same as before) -->
-                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
+                    <!-- ATTRIBUTES -->
+                    <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg text-white">Detailed Attributes</h3>
                             <button @click="openModal('add-intel')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-transform">
@@ -1038,8 +1056,12 @@ function serveHtml() {
                                 </div>
                             </div>
                         </div>
+                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-dashed border-slate-800">
+                            No detailed attributes logged yet.
+                        </div>
                     </div>
 
+                    <!-- TIMELINE -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="flex justify-between items-center">
                              <h3 class="font-bold text-lg text-white">History</h3>
@@ -1048,7 +1070,7 @@ function serveHtml() {
                         <div class="flex-1 glass p-6 overflow-y-auto border-slate-700/50">
                             <div class="relative pl-8 border-l-2 border-slate-800 space-y-8 my-4">
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
-                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-600"></div>
+                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                         <span class="text-sm font-bold text-white">{{ix.type}}</span>
                                         <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
@@ -1056,30 +1078,6 @@ function serveHtml() {
                                     <div class="bg-slate-900/50 p-4 rounded-lg text-sm text-slate-300 border border-slate-800 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details recorded.'}}</div>
                                 </div>
                                 <div v-if="!selected.interactions.length" class="text-slate-500 italic">No history found.</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div v-if="subTab === 'files'" class="space-y-6">
-                        <div class="flex flex-col md:flex-row gap-6">
-                            <div class="space-y-3 w-full md:w-56 shrink-0">
-                                <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
-                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
-                                    <span class="text-xs font-bold uppercase">Upload</span>
-                                </div>
-                                <div @click="openModal('add-media-link')" class="h-10 rounded-xl border border-slate-700 bg-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-700 transition-all text-slate-400 hover:text-white gap-2">
-                                    <i class="fa-solid fa-link text-sm"></i>
-                                    <span class="text-xs font-bold uppercase">Link URL</span>
-                                </div>
-                            </div>
-                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
-                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
-                                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
-                                    <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
-                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -1115,6 +1113,31 @@ function serveHtml() {
                         </div>
                         <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
                             <div id="relNetwork" class="absolute inset-0"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- FILES (Detail) -->
+                    <div v-if="subTab === 'files'" class="space-y-6">
+                        <div class="flex flex-col md:flex-row gap-6">
+                            <div class="space-y-3 w-full md:w-56 shrink-0">
+                                <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
+                                    <span class="text-xs font-bold uppercase">Upload</span>
+                                </div>
+                                <div @click="openModal('add-media-link')" class="h-10 rounded-xl border border-slate-700 bg-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-700 transition-all text-slate-400 hover:text-white gap-2">
+                                    <i class="fa-solid fa-link text-sm"></i>
+                                    <span class="text-xs font-bold uppercase">Link URL</span>
+                                </div>
+                            </div>
+                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
+                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
+                                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
+                                    <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
+                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1347,7 +1370,7 @@ function serveHtml() {
       setup() {
         const view = ref('auth');
         const loading = ref(false);
-        const processing = ref(false); 
+        const processing = ref(false); // Global processing state
         const auth = reactive({ email: '', password: '' });
         const tabs = [
             { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Dashboard' },
