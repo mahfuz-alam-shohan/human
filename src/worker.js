@@ -430,6 +430,7 @@ async function handleGetSharedSubject(db, token) {
         
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
+        // FETCH ALL INFOS
         const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
         const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
         const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
@@ -456,209 +457,187 @@ async function handleGetSharedSubject(db, token) {
     return errorResponse('INVALID CONFIG', 500);
 }
 
-// --- Frontend: Shared Link View ---
+// --- Frontend: Shared Link View (Redesigned for Mobile & Clean Data) ---
 function serveSharedHtml(token) {
     return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>CONFIDENTIAL // Profile Dossier</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
-        :root { --primary: #3b82f6; --bg-dark: #0f172a; }
-        body { font-family: 'Inter', sans-serif; background: #f1f5f9; color: #334155; }
-        .glass { background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-        .dark-mode body { background: #0f172a; color: #e2e8f0; }
-        .dark-mode .glass { background: #1e293b; border-color: #334155; box-shadow: none; }
-        
-        .tab-btn { padding: 0.75rem 1.25rem; font-weight: 500; font-size: 0.875rem; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
-        .tab-btn.active { color: var(--primary); border-color: var(--primary); }
-        .tab-btn:hover:not(.active) { color: #64748b; }
-        .dark-mode .tab-btn:hover:not(.active) { color: #94a3b8; }
+        :root { --bg-dark: #020617; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
+        .glass { 
+            background: rgba(30, 41, 59, 0.7); 
+            backdrop-filter: blur(12px); 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            border-radius: 0.75rem; 
+        }
+        .tab-btn { padding: 0.75rem 1rem; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; font-size: 0.875rem; color: #64748b; }
+        .tab-btn.active { color: #3b82f6; border-color: #3b82f6; }
+        /* Mobile fixes */
+        .safe-pb { padding-bottom: env(safe-area-inset-bottom); }
     </style>
 </head>
-<body class="min-h-screen transition-colors duration-300">
-    <div id="app" class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+<body class="min-h-screen safe-pb">
+    <div id="app" class="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
         
-        <!-- LOADING STATE -->
         <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh]">
-            <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500"></i>
-            <p class="mt-4 text-sm font-bold text-slate-400 uppercase tracking-widest">Decrypting Dossier...</p>
+            <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500"></i>
+            <p class="mt-4 text-xs font-bold uppercase tracking-widest text-slate-500">Decrypting...</p>
         </div>
 
-        <!-- ERROR STATE -->
         <div v-else-if="error" class="flex items-center justify-center min-h-[50vh]">
-            <div class="glass p-8 max-w-md w-full text-center border-l-4 border-red-500">
-                <i class="fa-solid fa-shield-halved text-5xl text-red-500 mb-4"></i>
-                <h1 class="text-2xl font-bold text-red-600 mb-2">Access Restricted</h1>
-                <p class="text-slate-600 dark:text-slate-400 text-sm">{{error}}</p>
+            <div class="glass p-6 text-center border-l-4 border-red-500">
+                <h1 class="text-xl font-bold text-red-500 mb-2">Access Denied</h1>
+                <p class="text-sm text-slate-400">{{error}}</p>
             </div>
         </div>
 
-        <!-- CONTENT -->
         <div v-else class="space-y-6 animate-fade-in">
-            <!-- ... (Header, Tabs, Content same as before) ... -->
-             <!-- Only pasting relevant changed parts for shared view logic not requested to change but keeping it functional -->
-             <!-- HEADER / IDENTITY -->
-            <div class="glass p-6 md:p-8 relative overflow-hidden">
-                <div class="absolute top-0 right-0 p-4 opacity-10">
-                    <i class="fa-solid fa-fingerprint text-9xl"></i>
-                </div>
-                
-                <div class="flex flex-col md:flex-row gap-6 relative z-10">
-                    <div class="shrink-0 mx-auto md:mx-0">
-                        <div class="w-32 h-32 md:w-40 md:h-40 rounded-xl overflow-hidden ring-4 ring-white dark:ring-slate-700 shadow-xl bg-slate-200">
-                            <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
-                        </div>
-                    </div>
-                    <div class="flex-1 text-center md:text-left space-y-2">
-                        <div class="flex flex-col md:flex-row justify-between items-start">
-                            <div>
-                                <h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white tracking-tight">{{data.full_name}}</h1>
-                                <div class="text-lg text-slate-500 font-medium">{{data.occupation}}</div>
-                            </div>
-                            <div class="mt-4 md:mt-0 flex flex-col items-end gap-1">
-                                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                    {{data.status || 'Active'}}
-                                </span>
-                                <div class="text-xs font-mono text-slate-400">EXP: {{ formatTime(timer) }}</div>
-                            </div>
-                        </div>
-                        <div class="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
-                            <div v-if="data.alias" class="px-3 py-1.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-wide">
-                                <i class="fa-solid fa-mask mr-2"></i>{{data.alias}}
-                            </div>
-                            <div v-if="data.nationality" class="px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold uppercase tracking-wide">
-                                <i class="fa-solid fa-flag mr-2"></i>{{data.nationality}}
-                            </div>
-                            <div v-if="data.threat_level" :class="getThreatColor(data.threat_level, true)" class="px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wide">
-                                <i class="fa-solid fa-triangle-exclamation mr-2"></i>{{data.threat_level}} Priority
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <!-- Header -->
+            <div class="glass p-6 flex flex-col md:flex-row gap-6 items-center md:items-start text-center md:text-left">
+                 <div class="w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800 bg-slate-900 shrink-0">
+                    <img :src="resolveImg(data.avatar_path)" class="w-full h-full object-cover">
+                 </div>
+                 <div class="flex-1 space-y-2">
+                     <h1 class="text-3xl font-bold text-white">{{data.full_name}}</h1>
+                     <div class="text-blue-400 font-medium">{{data.occupation || 'Unknown Occupation'}}</div>
+                     <div class="flex flex-wrap justify-center md:justify-start gap-2 mt-2">
+                         <span v-if="data.alias" class="bg-slate-800 px-2 py-1 rounded text-xs text-slate-300 border border-slate-700">AKA: {{data.alias}}</span>
+                         <span v-if="data.nationality" class="bg-slate-800 px-2 py-1 rounded text-xs text-slate-300 border border-slate-700">{{data.nationality}}</span>
+                         <span v-if="data.threat_level" class="bg-slate-800 px-2 py-1 rounded text-xs text-slate-300 border border-slate-700">{{data.threat_level}}</span>
+                     </div>
+                 </div>
+                 <div class="text-right hidden md:block">
+                     <div class="text-[10px] uppercase text-slate-500 font-bold">Session Exp</div>
+                     <div class="font-mono text-xl text-slate-300">{{ formatTime(timer) }}</div>
+                 </div>
             </div>
 
-            <!-- NAVIGATION TABS -->
-            <div class="glass flex overflow-x-auto no-scrollbar border-b-0 sticky top-2 z-20 shadow-md">
-                <button v-for="t in tabs" @click="activeTab = t.id" :class="['tab-btn', activeTab === t.id ? 'active' : '']">
-                    <i :class="t.icon" class="mr-2"></i>{{t.label}}
+            <!-- Tabs -->
+            <div class="flex overflow-x-auto border-b border-slate-800 pb-1 no-scrollbar">
+                <button v-for="t in ['Profile', 'Intel', 'History', 'Network', 'Files']" 
+                    @click="activeTab = t.toLowerCase()" 
+                    :class="['tab-btn', activeTab === t.toLowerCase() ? 'active' : '']">
+                    {{ t }}
                 </button>
             </div>
 
-            <!-- (Tab Content) -->
-            <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Physical Stats & Personal Info -->
-                 <div class="glass p-6 md:col-span-1">
-                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Physical Profile</h3>
-                    <div class="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
-                        <div><div class="text-slate-500 text-xs">Height</div><div class="font-bold">{{data.height || '--'}}</div></div>
-                        <div><div class="text-slate-500 text-xs">Weight</div><div class="font-bold">{{data.weight || '--'}}</div></div>
-                        <div><div class="text-slate-500 text-xs">Age</div><div class="font-bold">{{data.age || '--'}}</div></div>
-                        <div><div class="text-slate-500 text-xs">Blood Type</div><div class="font-bold">{{data.blood_type || '--'}}</div></div>
-                        <div><div class="text-slate-500 text-xs">Eye Color</div><div class="font-bold">{{data.eye_color || '--'}}</div></div>
-                        <div><div class="text-slate-500 text-xs">Hair Color</div><div class="font-bold">{{data.hair_color || '--'}}</div></div>
-                    </div>
-                    <div v-if="data.identifying_marks" class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-                        <div class="text-slate-500 text-xs mb-1">Identifying Marks</div>
-                        <div class="text-sm font-medium">{{data.identifying_marks}}</div>
-                    </div>
-                </div>
-                <div class="glass p-6 md:col-span-2">
-                    <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Background Info</h3>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                        <div class="space-y-4">
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Date of Birth</div><div class="font-medium">{{data.dob || 'Unknown'}}</div></div>
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Hometown</div><div class="font-medium">{{data.hometown || 'Unknown'}}</div></div>
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Current Location</div><div class="font-medium">{{data.location || 'Unknown'}}</div></div>
-                        </div>
-                        <div class="space-y-4">
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Contact Info</div><div class="font-medium break-all">{{data.contact || 'None'}}</div></div>
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Social Links</div><div class="font-medium break-all text-blue-500">{{data.social_links || 'None'}}</div></div>
-                            <div><div class="text-xs text-slate-500 uppercase font-bold">Digital ID</div><div class="font-medium break-all font-mono text-xs">{{data.digital_identifiers || 'None'}}</div></div>
+            <!-- Content -->
+            <div class="min-h-[300px]">
+                
+                <!-- Profile -->
+                <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="glass p-5 space-y-4">
+                        <h3 class="text-xs font-bold uppercase text-slate-500 border-b border-slate-700 pb-2">Vitals</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div v-if="data.dob">
+                                <div class="text-[10px] text-slate-500 uppercase">DOB</div>
+                                <div class="text-slate-200">{{data.dob}}</div>
+                            </div>
+                            <div v-if="data.age">
+                                <div class="text-[10px] text-slate-500 uppercase">Age</div>
+                                <div class="text-slate-200">{{data.age}}</div>
+                            </div>
+                            <div v-if="data.height">
+                                <div class="text-[10px] text-slate-500 uppercase">Height</div>
+                                <div class="text-slate-200">{{data.height}}</div>
+                            </div>
+                            <div v-if="data.weight">
+                                <div class="text-[10px] text-slate-500 uppercase">Weight</div>
+                                <div class="text-slate-200">{{data.weight}}</div>
+                            </div>
+                             <div v-if="data.blood_type">
+                                <div class="text-[10px] text-slate-500 uppercase">Blood</div>
+                                <div class="text-slate-200">{{data.blood_type}}</div>
+                            </div>
                         </div>
                     </div>
-                    <div v-if="data.previous_locations" class="mt-6">
-                        <div class="text-xs text-slate-500 uppercase font-bold mb-1">Previous Locations</div>
-                        <p class="text-sm text-slate-700 dark:text-slate-300">{{data.previous_locations}}</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Core Intel -->
-                <div class="glass p-6 md:col-span-2 space-y-6">
-                    <div><h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2"><i class="fa-solid fa-clipboard-list text-blue-500"></i> Routine & Modus Operandi</h3><div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.modus_operandi || 'No routine data recorded.'}}</div></div>
-                    <div><h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2"><i class="fa-solid fa-lock-open text-red-500"></i> Vulnerabilities & Notes</h3><div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.weakness || 'No vulnerabilities recorded.'}}</div></div>
-                </div>
-                <div class="glass p-6 md:col-span-1 space-y-4">
-                    <h3 class="text-xs font-bold uppercase text-slate-400">Collected Attributes</h3>
-                    <div v-if="!data.intel.length" class="text-sm text-slate-400 italic">No additional attributes.</div>
-                    <div v-for="item in data.intel" class="p-3 border border-slate-100 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                        <div class="flex justify-between items-start mb-1"><span class="text-[10px] font-bold uppercase text-blue-500 tracking-wider">{{item.category}}</span><span class="text-[10px] text-slate-400">{{new Date(item.created_at).toLocaleDateString()}}</span></div>
-                        <div class="text-xs text-slate-500 font-bold uppercase mb-0.5">{{item.label}}</div>
-                        <div class="text-sm font-medium text-slate-900 dark:text-white break-words">{{item.value}}</div>
-                    </div>
-                </div>
-            </div>
-
-            <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
-                <div class="glass p-6 md:p-8">
-                    <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
-                    <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-700 space-y-8">
-                        <div v-for="ix in data.interactions" class="relative group">
-                            <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
-                            <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2"><span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span><span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span></div>
-                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
+                    <div class="glass p-5 space-y-4">
+                        <h3 class="text-xs font-bold uppercase text-slate-500 border-b border-slate-700 pb-2">Contact</h3>
+                        <div class="space-y-3 text-sm">
+                             <div v-if="data.location">
+                                <div class="text-[10px] text-slate-500 uppercase">Location</div>
+                                <div class="text-slate-200">{{data.location}}</div>
+                            </div>
+                            <div v-if="data.contact">
+                                <div class="text-[10px] text-slate-500 uppercase">Contact</div>
+                                <div class="text-slate-200 break-all">{{data.contact}}</div>
+                            </div>
+                             <div v-if="data.social_links">
+                                <div class="text-[10px] text-slate-500 uppercase">Social</div>
+                                <div class="text-blue-400 break-all">{{data.social_links}}</div>
+                            </div>
                         </div>
-                        <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
+                    </div>
+                </div>
+
+                <!-- Intel -->
+                <div v-if="activeTab === 'intel'" class="space-y-4">
+                    <div v-if="data.modus_operandi" class="glass p-5">
+                         <h3 class="text-xs font-bold uppercase text-slate-500 mb-2">Routine & Habits</h3>
+                         <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{data.modus_operandi}}</p>
+                    </div>
+                    <div v-if="data.weakness" class="glass p-5 border-l-4 border-red-500/50">
+                         <h3 class="text-xs font-bold uppercase text-red-400 mb-2">Sensitivities</h3>
+                         <p class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{data.weakness}}</p>
+                    </div>
+                     <div v-if="data.intel && data.intel.length" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                         <div v-for="item in data.intel" class="glass p-3">
+                             <div class="text-[10px] uppercase text-blue-400 font-bold mb-1">{{item.category}}</div>
+                             <div class="text-xs text-slate-500 uppercase mb-1">{{item.label}}</div>
+                             <div class="text-sm text-white">{{item.value}}</div>
+                         </div>
+                    </div>
+                </div>
+
+                <!-- History -->
+                <div v-if="activeTab === 'history'" class="space-y-4">
+                    <div v-if="!data.interactions.length" class="text-center text-slate-500 py-10">No history available.</div>
+                    <div v-for="ix in data.interactions" class="glass p-4 border-l-2 border-blue-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-sm font-bold text-white">{{ix.type}}</span>
+                            <span class="text-xs text-slate-500 font-mono">{{new Date(ix.date).toLocaleDateString()}}</span>
+                        </div>
+                        <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</p>
+                    </div>
+                </div>
+
+                <!-- Network -->
+                <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div v-if="!data.relationships.length" class="col-span-full text-center text-slate-500 py-10">No connections linked.</div>
+                    <div v-for="rel in data.relationships" class="glass p-3 flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-slate-800 overflow-hidden shrink-0 border border-slate-700">
+                            <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                            <div v-else class="w-full h-full flex items-center justify-center text-slate-500 text-xs">{{rel.target_name.charAt(0)}}</div>
+                        </div>
+                        <div>
+                            <div class="text-sm font-bold text-white">{{rel.target_name}}</div>
+                            <div class="text-xs text-blue-400">{{rel.relationship_type}}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Files -->
+                <div v-if="activeTab === 'files'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                     <div v-if="!data.media.length" class="col-span-full text-center text-slate-500 py-10">No files attached.</div>
+                     <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-lg">
+                        <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover" onerror="this.src='https://placehold.co/400?text=IMG'">
+                        <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-800 text-slate-500">
+                            <i class="fa-solid fa-file text-2xl mb-1"></i>
+                            <span class="text-[10px] uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'FILE'}}</span>
+                        </div>
+                        <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0"></a>
+                        <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] truncate text-slate-300">{{m.description}}</div>
                     </div>
                 </div>
             </div>
-
-            <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
-                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0">
-                        <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
-                        <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
-                    </div>
-                    <div class="min-w-0">
-                        <div class="font-bold text-sm truncate">{{rel.target_name}}</div>
-                        <div class="text-xs text-blue-500 font-bold uppercase tracking-wide">{{rel.relationship_type}}</div>
-                        <div class="text-xs text-slate-500 truncate">{{rel.target_role}}</div>
-                    </div>
-                </div>
-                <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
-            </div>
-
-            <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
-                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
-                    <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
-                        <i class="fa-solid fa-file text-4xl mb-2"></i>
-                        <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
-                    </div>
-                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
-                    <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">{{m.description || 'File'}}</div>
-                </div>
-                <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
-            </div>
-
-             <div v-if="activeTab === 'locations'" class="space-y-4">
-                <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
-                    <div>
-                        <div class="font-bold text-sm">{{loc.name}} <span class="ml-2 text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-500 uppercase">{{loc.type}}</span></div>
-                        <div class="text-xs text-slate-500 mt-1">{{loc.address}}</div>
-                        <div v-if="loc.notes" class="text-xs text-slate-400 mt-2 italic">"{{loc.notes}}"</div>
-                    </div>
-                    <a v-if="loc.lat" :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 hover:bg-blue-100 transition-colors"><i class="fa-solid fa-location-arrow"></i></a>
-                </div>
-                <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
-             </div>
         </div>
     </div>
     <script>
@@ -671,35 +650,13 @@ function serveSharedHtml(token) {
                 const timer = ref(0);
                 const activeTab = ref('profile');
                 const token = window.location.pathname.split('/').pop();
-                
-                const tabs = [
-                    {id: 'profile', label: 'Profile', icon: 'fa-solid fa-id-card'},
-                    {id: 'intel', label: 'Intel', icon: 'fa-solid fa-brain'},
-                    {id: 'timeline', label: 'History', icon: 'fa-solid fa-clock-rotate-left'},
-                    {id: 'network', label: 'Network', icon: 'fa-solid fa-diagram-project'},
-                    {id: 'locations', label: 'Locations', icon: 'fa-solid fa-map-location-dot'},
-                    {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
-                ];
 
-                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
-                
+                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
                 const formatTime = (s) => {
-                    if(s <= 0) return "EXPIRED";
                     const h = Math.floor(s / 3600);
                     const m = Math.floor((s % 3600) / 60);
-                    const sec = Math.floor(s % 60);
-                    return \`\${h}h \${m}m \${sec}s\`;
+                    return \`\${h}h \${m}m\`;
                 };
-
-                const getThreatColor = (l, isBg = false) => {
-                     const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
-                     return isBg ? \`bg-\${c}-100 dark:bg-\${c}-900/30 text-\${c}-700 dark:text-\${c}-300\` : \`text-\${c}-600\`;
-                };
-
-                // Check Dark Mode
-                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                    document.body.classList.add('dark-mode');
-                }
 
                 onMounted(async () => {
                     try {
@@ -709,22 +666,13 @@ function serveSharedHtml(token) {
                         data.value = json;
                         timer.value = json.meta?.remaining_seconds || 0;
                         loading.value = false;
-                        
-                        const interval = setInterval(() => {
-                            if(timer.value > 0) timer.value--;
-                            else {
-                                if(!error.value && timer.value <= 0) {
-                                    clearInterval(interval);
-                                    window.location.reload();
-                                }
-                            }
-                        }, 1000);
+                        setInterval(() => { if(timer.value > 0) timer.value--; }, 1000);
                     } catch(e) {
                         error.value = e.message;
                         loading.value = false;
                     }
                 });
-                return { loading, error, data, timer, activeTab, tabs, resolveImg, formatTime, getThreatColor };
+                return { loading, error, data, timer, activeTab, resolveImg, formatTime };
             }
         }).mount('#app');
     </script>
@@ -754,11 +702,9 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #020617; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
-    /* Improved Glassmorphism for Dark Mode */
     .glass { 
         background: rgba(30, 41, 59, 0.7); 
         backdrop-filter: blur(12px); 
-        -webkit-backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.08); 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); 
         border-radius: 0.75rem; 
@@ -773,19 +719,15 @@ function serveHtml() {
     }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
-    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
-    /* Mobile Safe Area Padding */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     
-    /* Animation */
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     
-    /* Marker Styles */
     .avatar-marker { position: relative; }
     .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
     .avatar-marker:hover img { transform: scale(1.1); border-color: #3b82f6; z-index: 500; }
@@ -797,6 +739,7 @@ function serveHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
+        <!-- (Same Auth) -->
         <div class="absolute inset-0 overflow-hidden">
             <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
             <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
@@ -857,7 +800,7 @@ function serveHtml() {
 
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                <!-- (Dashboard content same) -->
+                 <!-- (Dashboard content same) -->
                  <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
@@ -906,7 +849,6 @@ function serveHtml() {
 
             <!-- TARGETS LIST -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
-                <!-- (Targets content same) -->
                  <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500"></i>
@@ -931,16 +873,14 @@ function serveHtml() {
 
             <!-- GLOBAL MAP TAB -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
-                <!-- (Map content same) -->
+                 <!-- (Map content same) -->
                  <div class="absolute inset-0 z-0" id="warRoomMap"></div>
-                <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
                         <input v-model="mapSearchQuery" @input="updateMapFilter" placeholder="Live Filter Map..." class="w-full bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-full py-2.5 pl-10 pr-4 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-white shadow-xl transition-all">
                         <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-slate-400 group-focus-within:text-blue-500"></i>
                     </div>
                 </div>
-                <!-- Map Sidebar -->
                 <div class="absolute top-16 left-4 bottom-4 w-72 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 border-slate-700/50" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
                     <div class="p-3 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/80 backdrop-blur">
                         <h3 class="font-bold text-white text-sm">Active Points</h3>
@@ -983,6 +923,8 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
+                         <!-- ADDED DELETE BUTTON -->
+                        <button @click="deleteProfile" class="bg-red-900/20 hover:bg-red-900/40 text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold border border-red-900/50"><i class="fa-solid fa-trash md:mr-2"></i><span class="hidden md:inline">Delete</span></button>
                         <button @click="openModal('edit-profile')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700"><i class="fa-solid fa-pen md:mr-2"></i><span class="hidden md:inline">Edit</span></button>
                         <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-blue-500/20"><i class="fa-solid fa-share-nodes md:mr-2"></i><span class="hidden md:inline">Share</span></button>
                     </div>
@@ -1046,7 +988,7 @@ function serveHtml() {
                         </div>
                     </div>
                     
-                    <!-- ATTRIBUTES, TIMELINE, FILES, MAP (Same as before) -->
+                    <!-- ATTRIBUTES -->
                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg text-white">Detailed Attributes</h3>
@@ -1069,6 +1011,7 @@ function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- TIMELINE -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="flex justify-between items-center">
                              <h3 class="font-bold text-lg text-white">History</h3>
@@ -1079,8 +1022,10 @@ function serveHtml() {
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
                                     <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                                        <span class="text-sm font-bold text-white">{{ix.type}}</span>
+                                        <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
                                         <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
+                                        <!-- ADDED DELETE BUTTON -->
+                                        <button @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-slate-600 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                     <div class="bg-slate-900/50 p-4 rounded-lg text-sm text-slate-300 border border-slate-800 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details recorded.'}}</div>
                                 </div>
@@ -1089,14 +1034,37 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <!-- NETWORK (Detail) - UPDATED -->
+                    <!-- MAP (Detail) -->
+                    <div v-show="subTab === 'map'" class="h-full flex flex-col">
+                        <!-- ... (Map Detail) ... -->
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-lg text-white">Known Locations</h3>
+                            <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
+                        </div>
+                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="md:col-span-2 bg-slate-900 rounded-xl overflow-hidden relative h-64 md:h-full min-h-[300px] border border-slate-800">
+                                <div id="subjectMap" class="w-full h-full z-0"></div>
+                            </div>
+                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
+                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 cursor-pointer hover:border-blue-500/50 transition-all border-slate-700/50" @click="flyTo(loc)">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <div class="font-bold text-white text-sm">{{loc.name}}</div>
+                                        <span class="text-[10px] uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{{loc.type}}</span>
+                                    </div>
+                                    <div class="text-xs text-slate-500 mb-2">{{loc.address}}</div>
+                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs text-red-500 hover:text-red-400">Remove</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- NETWORK (Detail) -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
+                         <!-- ... (Network Detail) ... -->
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Connections Graph</h3>
                             <button @click="openModal('add-rel')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Connection</button>
                         </div>
-
-                        <!-- Family Report Card -->
                         <div v-if="selected.familyReport && selected.familyReport.length > 0" class="glass p-4 mb-6 border-l-4 border-purple-500 bg-slate-900/40">
                              <h4 class="text-sm font-bold text-purple-400 mb-3 flex items-center gap-2"><i class="fa-solid fa-people-roof"></i> Family Unit</h4>
                              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1111,13 +1079,10 @@ function serveHtml() {
                                  </div>
                              </div>
                         </div>
-
                         <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
-
-                         <!-- NEW: Manage Connections List -->
-                         <div class="mt-6">
+                        <div class="mt-6">
                             <h4 class="text-sm font-bold text-slate-400 uppercase mb-3">Manage Connections</h4>
                             <div class="space-y-2">
                                 <div v-for="rel in selected.relationships" :key="rel.id" class="flex items-center justify-between p-3 glass bg-slate-900/50 border border-slate-800">
@@ -1142,7 +1107,7 @@ function serveHtml() {
                     </div>
 
                     <div v-if="subTab === 'files'" class="space-y-6">
-                         <!-- ... (Files content same) ... -->
+                         <!-- ... (Files Content) ... -->
                          <div class="flex flex-col md:flex-row gap-6">
                             <div class="space-y-3 w-full md:w-56 shrink-0">
                                 <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
@@ -1161,29 +1126,6 @@ function serveHtml() {
                                     <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
                                     <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
                                     <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div v-show="subTab === 'map'" class="h-full flex flex-col">
-                        <!-- ... (Detail map same) ... -->
-                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="font-bold text-lg text-white">Known Locations</h3>
-                            <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
-                        </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="md:col-span-2 bg-slate-900 rounded-xl overflow-hidden relative h-64 md:h-full min-h-[300px] border border-slate-800">
-                                <div id="subjectMap" class="w-full h-full z-0"></div>
-                            </div>
-                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
-                                <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 cursor-pointer hover:border-blue-500/50 transition-all border-slate-700/50" @click="flyTo(loc)">
-                                    <div class="flex justify-between items-center mb-1">
-                                        <div class="font-bold text-white text-sm">{{loc.name}}</div>
-                                        <span class="text-[10px] uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{{loc.type}}</span>
-                                    </div>
-                                    <div class="text-xs text-slate-500 mb-2">{{loc.address}}</div>
-                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs text-red-500 hover:text-red-400">Remove</button>
                                 </div>
                             </div>
                         </div>
@@ -1219,7 +1161,8 @@ function serveHtml() {
         </div>
 
         <div v-else class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
-            <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
+             <!-- (Modal Content same as before) -->
+             <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
                 <h3 class="font-bold text-white">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -1239,48 +1182,29 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- ADD/EDIT REL WITH PRESETS -->
+                <!-- ADD/EDIT REL -->
                  <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
                     <div class="p-4 bg-blue-900/20 border border-blue-800 rounded-lg text-sm text-blue-200 mb-4">
                         {{ modal.active === 'edit-rel' ? 'Editing connection for' : 'Connect' }} <strong>{{selected.full_name}}</strong>
                     </div>
-                    
-                    <!-- Only show select if adding new -->
                     <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
                         <option value="" disabled selected>Select a Person</option>
                         <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
                     </select>
-
                     <div class="border-t border-slate-700 pt-4 mt-2">
                          <label class="block text-xs font-bold uppercase text-slate-500 mb-2">Relationship Type</label>
                          <div class="grid grid-cols-2 gap-4">
-                             <div>
-                                 <div class="text-[10px] text-slate-400 mb-1">Role of {{selected.full_name}}</div>
-                                 <input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="glass-input w-full p-3 text-sm" @input="autoFillReciprocal">
-                             </div>
-                             <div>
-                                 <div class="text-[10px] text-slate-400 mb-1">Role of Target</div>
-                                 <input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="glass-input w-full p-3 text-sm">
-                             </div>
+                             <div><div class="text-[10px] text-slate-400 mb-1">Role of {{selected.full_name}}</div><input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="glass-input w-full p-3 text-sm" @input="autoFillReciprocal"></div>
+                             <div><div class="text-[10px] text-slate-400 mb-1">Role of Target</div><input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="glass-input w-full p-3 text-sm"></div>
                          </div>
-                         <!-- Preset Chips -->
-                         <div class="flex flex-wrap gap-2 mt-3">
-                             <div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-2 py-1 bg-slate-800 border border-slate-700 rounded cursor-pointer hover:bg-blue-600 hover:text-white transition-colors">
-                                 {{p.a}} &harr; {{p.b}}
-                             </div>
-                         </div>
+                         <div class="flex flex-wrap gap-2 mt-3"><div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-2 py-1 bg-slate-800 border border-slate-700 rounded cursor-pointer hover:bg-blue-600 hover:text-white transition-colors">{{p.a}} &harr; {{p.b}}</div></div>
                     </div>
-
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Saving...' : (modal.active === 'edit-rel' ? 'Update Connection' : 'Link Profiles') }}
-                    </button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Saving...' : (modal.active === 'edit-rel' ? 'Update Connection' : 'Link Profiles') }}</button>
                  </form>
 
-                <!-- (Other forms reused) -->
+                <!-- ADD/EDIT SUBJECT -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
-                    <!-- ... (Same subject form) ... -->
-                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
                             <label class="block text-xs font-bold uppercase text-slate-500">Identity</label>
                             <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
@@ -1304,26 +1228,13 @@ function serveHtml() {
                              <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
                         </div>
                     </div>
-                    <div class="space-y-4">
-                        <label class="block text-xs font-bold uppercase text-slate-500">Details</label>
-                        <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                        <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Notes..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
-                    </div>
-                    <div class="pt-4 border-t border-slate-800">
-                        <h4 class="text-xs font-bold uppercase text-slate-500 mb-4">Physical Stats</h4>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs">
-                            <input v-model="forms.subject.weight" placeholder="Weight" class="glass-input p-2 text-xs">
-                            <input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs">
-                        </div>
-                    </div>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Saving...' : 'Save Profile' }}
-                    </button>
+                    <div class="space-y-4"><label class="block text-xs font-bold uppercase text-slate-500">Details</label><textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea><textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Notes..." rows="3" class="glass-input w-full p-3 text-sm"></textarea></div>
+                    <div class="pt-4 border-t border-slate-800"><h4 class="text-xs font-bold uppercase text-slate-500 mb-4">Physical Stats</h4><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs"><input v-model="forms.subject.weight" placeholder="Weight" class="glass-input p-2 text-xs"><input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs"></div></div>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Saving...' : 'Save Profile' }}</button>
                 </form>
 
-                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
+                <!-- ADD INTEL -->
+                <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
                         <option>General</option>
                         <option>Contact Info</option>
@@ -1335,12 +1246,10 @@ function serveHtml() {
                     </select>
                     <input v-model="forms.intel.label" placeholder="Label" class="glass-input w-full p-3 text-sm" required>
                     <textarea v-model="forms.intel.value" placeholder="Value" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Adding...' : 'Add Attribute' }}
-                    </button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Adding...' : 'Add Attribute' }}</button>
                  </form>
 
+                 <!-- ADD MEDIA LINK -->
                  <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
                     <input v-model="forms.mediaLink.url" placeholder="Paste URL *" class="glass-input w-full p-3 text-sm" required>
                     <input v-model="forms.mediaLink.description" placeholder="Description" class="glass-input w-full p-3 text-sm">
@@ -1350,10 +1259,7 @@ function serveHtml() {
                         <option value="video/mp4">Video</option>
                         <option value="text/plain">Other</option>
                     </select>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Saving...' : 'Save Link' }}
-                    </button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Saving...' : 'Save Link' }}</button>
                  </form>
 
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
@@ -1365,61 +1271,39 @@ function serveHtml() {
                             <option :value="1440">24 Hours</option>
                             <option :value="10080">7 Days</option>
                         </select>
-                        <button @click="createShareLink" :disabled="processing" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                            <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                            Generate Link
-                        </button>
+                        <button @click="createShareLink" :disabled="processing" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>Generate Link</button>
                     </div>
                     <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
                         <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
-                            <div>
-                                <div class="text-xs font-mono text-slate-400">...{{link.token.slice(-8)}}</div>
-                                <div class="text-[10px] text-slate-500">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div>
-                            </div>
-                            <div class="flex gap-2">
-                                <button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-400 p-2"><i class="fa-regular fa-copy"></i></button>
-                                <button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 p-2"><i class="fa-solid fa-ban"></i></button>
-                            </div>
+                            <div><div class="text-xs font-mono text-slate-400">...{{link.token.slice(-8)}}</div><div class="text-[10px] text-slate-500">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div></div>
+                            <div class="flex gap-2"><button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-400 p-2"><i class="fa-regular fa-copy"></i></button><button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-400 p-2"><i class="fa-solid fa-ban"></i></button></div>
                         </div>
                     </div>
                  </div>
                  
+                 <!-- LOCATION PICKER -->
                  <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
                          <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
                          <div v-if="isSearching" class="absolute right-3 top-3.5 text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
                          <div v-if="locationSearchResults.length" class="absolute w-full bg-slate-800 border border-slate-700 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-50">
-                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-700 text-slate-300">
-                                 {{ res.display_name }}
-                             </div>
+                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-700 cursor-pointer text-xs border-b border-slate-700 text-slate-300">{{ res.display_name }}</div>
                          </div>
                     </div>
-                    <div class="h-48 w-full bg-slate-800 rounded-lg border border-slate-700 relative overflow-hidden">
-                        <div id="locationPickerMap" class="absolute inset-0 z-0"></div>
-                    </div>
+                    <div class="h-48 w-full bg-slate-800 rounded-lg border border-slate-700 relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
                     <input v-model="forms.location.name" placeholder="Name (e.g. Home)" class="glass-input w-full p-3 text-sm">
-                    <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm">
-                        <option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option>
-                    </select>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Saving...' : 'Add Pin' }}
-                    </button>
+                    <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Saving...' : 'Add Pin' }}</button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
                     <div class="grid grid-cols-2 gap-4">
                         <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm" required>
-                        <select v-model="forms.interaction.type" class="glass-input p-3 text-sm">
-                            <option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option>
-                        </select>
+                        <select v-model="forms.interaction.type" class="glass-input p-3 text-sm"><option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option></select>
                     </div>
                     <textarea v-model="forms.interaction.transcript" placeholder="Details & Notes" rows="5" class="glass-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Logging...' : 'Log Event' }}
-                    </button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50"><i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>{{ processing ? 'Logging...' : 'Log Event' }}</button>
                 </form>
             </div>
         </div>
@@ -1498,7 +1382,7 @@ function serveHtml() {
             subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60 }, mediaLink: {}
         });
 
-        // ... (computed properties) ...
+        // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => 
             s.full_name.toLowerCase().includes(search.value.toLowerCase()) || 
             (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))
@@ -1916,6 +1800,15 @@ function serveHtml() {
         const submitMediaLink = async () => { if (processing.value) return; processing.value = true; try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
         
+        // --- NEW DELETE PROFILE FUNCTION ---
+        const deleteProfile = async () => {
+             if(confirm('WARNING: DELETE THIS PROFILE? This action cannot be undone.')) {
+                 await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) });
+                 fetchData(); // Refresh list
+                 changeTab('targets'); // Go back to list
+             }
+        };
+
         const fileInput = ref(null);
         const uploadType = ref(null);
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
@@ -1947,8 +1840,18 @@ function serveHtml() {
                 view.value = 'app';
                 fetchData();
                 window.viewSubject = (id) => { viewSubject(id); };
+                
                 const id = params.get('id');
+                
+                // FIX: If we are on 'detail' tab but have no ID, force back to dashboard to prevent blank page
+                if (currentTab.value === 'detail' && !id) {
+                    currentTab.value = 'dashboard';
+                }
+                
                 if(id) viewSubject(id, true);
+            } else {
+                // Ensure we start at auth if no token
+                view.value = 'auth';
             }
         });
 
@@ -1956,7 +1859,7 @@ function serveHtml() {
             view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
             analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel,
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
-            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
+            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
             isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData,
@@ -1969,163 +1872,3 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
-
-// --- Route Handling ---
-
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
-
-        // Share Page
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
-
-        // Main App
-        if (req.method === 'GET' && path === '/') return serveHtml();
-
-        // Auth
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
-            }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
-        }
-
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
-        
-        // Subject CRUD
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                const now = isoTimestamp();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-            return response(res.results);
-        }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                
-                // FIXED: Use whitelist to prevent "no such column" error
-                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
-                
-                if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
-                    const vals = keys.map(k => safeVal(p[k]));
-                    vals.push(isoTimestamp());
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            if (req.method === 'PATCH') {
-                 await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
-                    .bind(p.type, p.reciprocal, p.id).run();
-                 return response({success:true});
-            } else {
-                 await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
-                    .bind(p.subjectA, p.targetId, p.type, safeVal(p.reciprocal), isoTimestamp()).run();
-                 return response({success:true});
-            }
-        }
-        if (path === '/api/media-link') {
-            const { subjectId, url, type, description } = await req.json();
-            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        // Sharing
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
-        }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        // File Ops
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
-            return response({success:true});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        return errorResponse(e.message);
-    }
-  }
-};
