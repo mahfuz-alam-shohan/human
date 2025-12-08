@@ -1214,7 +1214,7 @@ function serveHtml() {
             <p class="text-sm text-slate-400 mb-6">{{modal.data.occupation || 'No Occupation'}}</p>
             <div class="flex gap-2">
                  <button @click="closeModal" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-lg text-sm">Close</button>
-                 <button @click="window.viewSubject(modal.data.id)" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg text-sm">View Profile</button>
+                 <button @click="viewSubject(modal.data.id)" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg text-sm">View Profile</button>
             </div>
         </div>
 
