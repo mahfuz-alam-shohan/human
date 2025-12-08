@@ -195,6 +195,13 @@ async function ensureSchema(db) {
         )`)
       ]);
 
+      // --- AUTO-MIGRATION: Fix missing role_b column ---
+      try {
+          await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run();
+      } catch (e) {
+          // Ignore error if column already exists
+      }
+
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
