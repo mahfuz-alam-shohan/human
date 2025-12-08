@@ -1936,3 +1936,157 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
+
+// --- Route Handling ---
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    try {
+        if (!schemaInitialized) await ensureSchema(env.DB);
+
+        // Share Page
+        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
+
+        // Main App
+        if (req.method === 'GET' && path === '/') return serveHtml();
+
+        // Auth
+        if (path === '/api/login') {
+            const { email, password } = await req.json();
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+            if (!admin) {
+                const hash = await hashPassword(password);
+                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+                return response({ id: res.meta.last_row_id });
+            }
+            const hashed = await hashPassword(password);
+            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
+            return response({ id: admin.id });
+        }
+
+        // Dashboard & Stats
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
+        
+        // Subject CRUD
+        if (path === '/api/subjects') {
+            if(req.method === 'POST') {
+                const p = await req.json();
+                const now = isoTimestamp();
+                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
+                return response({success:true});
+            }
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
+            return response(res.results);
+        }
+
+        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+
+        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
+        if (idMatch) {
+            const id = idMatch[1];
+            if(req.method === 'PATCH') {
+                const p = await req.json();
+                
+                // FIXED: Use whitelist to prevent "no such column" error
+                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
+                
+                if(keys.length > 0) {
+                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
+                    const vals = keys.map(k => safeVal(p[k]));
+                    vals.push(isoTimestamp());
+                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
+                }
+                
+                return response({success:true});
+            }
+            return handleGetSubjectFull(env.DB, id);
+        }
+
+        // Sub-resources
+        if (path === '/api/interaction') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/location') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/intel') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
+                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/relationship') {
+            const p = await req.json();
+            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
+                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
+            return response({success:true});
+        }
+        if (path === '/api/media-link') {
+            const { subjectId, url, type, description } = await req.json();
+            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
+            return response({success:true});
+        }
+
+        // Sharing
+        if (path === '/api/share-links') {
+            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
+            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
+        }
+        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+
+        if (path === '/api/delete') {
+            const { table, id } = await req.json();
+            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
+            if(safeTables.includes(table)) {
+                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
+                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+                return response({success:true});
+            }
+        }
+
+        // File Ops
+        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
+            const { subjectId, data, filename, contentType } = await req.json();
+            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
+            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
+            
+            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
+            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
+            return response({success:true});
+        }
+
+        if (path.startsWith('/api/media/')) {
+            const key = path.replace('/api/media/', '');
+            const obj = await env.BUCKET.get(key);
+            if (!obj) return new Response('Not found', { status: 404 });
+            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
+        }
+
+        if (path === '/api/nuke') {
+            await nukeDatabase(env.DB);
+            return response({success:true});
+        }
+
+        return new Response('Not Found', { status: 404 });
+    } catch(e) {
+        return errorResponse(e.message);
+    }
+  }
+};
