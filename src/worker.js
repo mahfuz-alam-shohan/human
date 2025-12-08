@@ -23,6 +23,10 @@ async function hashPassword(secret) {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+async function hashToken(token, secret = '') {
+  return hashPassword(`${token}${secret}`);
+}
+
 function sanitizeFileName(name) {
   return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
@@ -31,6 +35,12 @@ function generateToken() {
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
   return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
+}
+
+function httpError(message, status = 401) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
 }
 
 function response(data, status = 200) {
@@ -48,6 +58,70 @@ function safeVal(v) {
     return v === undefined || v === '' ? null : v;
 }
 
+async function createSession(db, adminId, secret) {
+    const sessionToken = generateToken();
+    const tokenHash = await hashToken(sessionToken, secret);
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(); // 7 days
+    await db.prepare('INSERT INTO admin_sessions (admin_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(adminId, tokenHash, isoTimestamp(), expiresAt).run();
+    return { token: sessionToken, expires_at: expiresAt };
+}
+
+async function validateSessionToken(token, env) {
+    const tokenHash = await hashToken(token, env.AUTH_SECRET || '');
+    const session = await env.DB.prepare('SELECT admin_id, expires_at FROM admin_sessions WHERE token_hash = ?')
+        .bind(tokenHash).first();
+
+    if (!session) throw httpError('INVALID SESSION', 401);
+    if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
+        await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(tokenHash).run();
+        throw httpError('SESSION EXPIRED', 401);
+    }
+
+    return session.admin_id;
+}
+
+async function authenticate(req, env) {
+    const header = req.headers.get('Authorization') || '';
+    if (!header.startsWith('Bearer ')) throw httpError('UNAUTHORIZED', 401);
+
+    const token = header.slice(7);
+    return validateSessionToken(token, env);
+}
+
+async function requireSubject(db, id, adminId) {
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
+    if (!subject) throw httpError('Subject not found', 404);
+    if (subject.admin_id !== Number(adminId)) throw httpError('FORBIDDEN', 403);
+    return subject;
+}
+
+async function ensureRecordOwnership(db, adminId, table, id) {
+    if (table === 'subjects') {
+        await requireSubject(db, id, adminId);
+        return;
+    }
+
+    if (['subject_interactions', 'subject_locations', 'subject_intel', 'subject_media'].includes(table)) {
+        const record = await db.prepare(`SELECT subject_id FROM ${table} WHERE id = ?`).bind(id).first();
+        if (!record) throw httpError('NOT FOUND', 404);
+        await requireSubject(db, record.subject_id, adminId);
+        return;
+    }
+
+    if (table === 'subject_relationships') {
+        const record = await db.prepare('SELECT subject_a_id, subject_b_id FROM subject_relationships WHERE id = ?')
+            .bind(id).first();
+        if (!record) throw httpError('NOT FOUND', 404);
+        const ownership = await db.prepare('SELECT COUNT(*) as count FROM subjects WHERE admin_id = ? AND id IN (?, ?)')
+            .bind(adminId, record.subject_a_id, record.subject_b_id).first();
+        if (!ownership || !ownership.count) throw httpError('FORBIDDEN', 403);
+        return;
+    }
+
+    throw httpError('FORBIDDEN', 403);
+}
+
 // --- Database Layer ---
 
 let schemaInitialized = false;
@@ -59,10 +133,19 @@ async function ensureSchema(db) {
 
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (
-            id INTEGER PRIMARY KEY, 
-            email TEXT UNIQUE, 
-            password_hash TEXT, 
+            id INTEGER PRIMARY KEY,
+            email TEXT UNIQUE,
+            password_hash TEXT,
             created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS admin_sessions (
+            id INTEGER PRIMARY KEY,
+            admin_id INTEGER,
+            token_hash TEXT,
+            created_at TEXT,
+            expires_at TEXT,
+            FOREIGN KEY(admin_id) REFERENCES admins(id)
         )`),
         
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
@@ -178,9 +261,9 @@ async function ensureSchema(db) {
 
 async function nukeDatabase(db) {
     const tables = [
-        'subject_shares', 'subject_locations', 'subject_interactions', 
-        'subject_relationships', 'subject_media', 'subject_intel', 
-        'subjects', 'admins'
+        'subject_shares', 'subject_locations', 'subject_interactions',
+        'subject_relationships', 'subject_media', 'subject_intel',
+        'subjects', 'admin_sessions', 'admins'
     ];
     
     // Disable FKs to allow dropping tables in any order
@@ -335,9 +418,40 @@ async function handleGetMapData(db, adminId) {
 
 // --- Share Logic ---
 
-async function handleCreateShareLink(req, db, origin) {
+async function validateShareAccess(db, token, { incrementView = false } = {}) {
+    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link) throw httpError('LINK INVALID', 404);
+    if (!link.is_active) throw httpError('LINK REVOKED', 410);
+
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
+            link.started_at = startedAt;
+        }
+
+        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
+        const remaining = link.duration_seconds - elapsed;
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+            throw httpError('LINK EXPIRED', 410);
+        }
+
+        link.remaining_seconds = Math.floor(remaining);
+    }
+
+    if (incrementView) await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
+    return link;
+}
+
+async function handleCreateShareLink(req, db, origin, adminId) {
     const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
+
+    await requireSubject(db, subjectId, adminId);
     
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
@@ -350,64 +464,45 @@ async function handleCreateShareLink(req, db, origin) {
     return response({ url, token, duration_seconds: durationSeconds });
 }
 
-async function handleListShareLinks(db, subjectId) {
+async function handleListShareLinks(db, subjectId, adminId) {
+    await requireSubject(db, subjectId, adminId);
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
     return response(res.results);
 }
 
-async function handleRevokeShareLink(db, token) {
+async function handleRevokeShareLink(db, token, adminId) {
+    const link = await db.prepare('SELECT s.subject_id, sub.admin_id FROM subject_shares s JOIN subjects sub ON s.subject_id = sub.id WHERE s.token = ?')
+        .bind(token).first();
+    if (!link) return errorResponse('LINK INVALID', 404);
+    if (link.admin_id !== Number(adminId)) return errorResponse('FORBIDDEN', 403);
     await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
     return response({ success: true });
 }
 
 async function handleGetSharedSubject(db, token) {
-    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
-    if (!link) return errorResponse('LINK INVALID', 404);
-    if (!link.is_active) return errorResponse('LINK REVOKED', 410);
+    const link = await validateShareAccess(db, token, { incrementView: true });
 
-    if (link.duration_seconds) {
-        const now = Date.now();
-        const startedAt = link.started_at || isoTimestamp();
-        
-        if (!link.started_at) {
-            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
-        }
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
+    const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
+    const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+    const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+    const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+    const relationships = await db.prepare(`
+        SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+        FROM subject_relationships r
+        LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+        WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+    `).bind(link.subject_id, link.subject_id, link.subject_id).all();
 
-        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
-        const remaining = link.duration_seconds - elapsed;
-
-        if (remaining <= 0) {
-            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-            return errorResponse('LINK EXPIRED', 410);
-        }
-        
-        await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
-
-        // FETCH ALL INFOS
-        const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
-        const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
-        const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
-        const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
-        const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
-        const relationships = await db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
-            FROM subject_relationships r
-            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
-            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(link.subject_id, link.subject_id, link.subject_id).all();
-
-
-        return response({
-            ...subject,
-            interactions: interactions.results,
-            locations: locations.results,
-            media: media.results,
-            intel: intel.results,
-            relationships: relationships.results,
-            meta: { remaining_seconds: Math.floor(remaining) }
-        });
-    }
-    return errorResponse('INVALID CONFIG', 500);
+    return response({
+        ...subject,
+        interactions: interactions.results,
+        locations: locations.results,
+        media: media.results,
+        intel: intel.results,
+        relationships: relationships.results,
+        meta: link.duration_seconds ? { remaining_seconds: link.remaining_seconds ?? Math.floor(link.duration_seconds) } : null
+    });
 }
 
 // --- Frontend: Shared Link View ---
@@ -617,12 +712,12 @@ function serveSharedHtml(token) {
             <!-- 5. FILES TAB -->
             <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
-                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || ('/api/media/'+m.object_key+'?shareToken='+token)" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
                     <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
                         <i class="fa-solid fa-file text-4xl mb-2"></i>
                         <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
                     </div>
-                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
+                    <a :href="m.external_url || ('/api/media/'+m.object_key+'?shareToken='+token)" target="_blank" class="absolute inset-0 z-10"></a>
                     <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
                         {{m.description || 'File'}}
                     </div>
@@ -667,7 +762,7 @@ function serveSharedHtml(token) {
                     {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
                 ];
 
-                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
+                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/' + p + '?shareToken=' + token) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
                 
                 const formatTime = (s) => {
                     if(s <= 0) return "EXPIRED";
@@ -1130,9 +1225,9 @@ function serveHtml() {
                             </div>
                             <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                                 <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
-                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || mediaUrl(m.object_key)" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
                                     <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
-                                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
+                                    <a :href="m.external_url || mediaUrl(m.object_key)" target="_blank" class="absolute inset-0 z-10"></a>
                                     <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
                                     <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
                                 </div>
@@ -1455,7 +1550,18 @@ function serveHtml() {
 
         const api = async (ep, opts = {}) => {
             try {
-                const res = await fetch('/api' + ep, opts);
+                const token = localStorage.getItem('auth_token');
+                const headers = { ...(opts.headers || {}) };
+                if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+
+                const res = await fetch('/api' + ep, { ...opts, headers });
+                if (res.status === 401) {
+                    localStorage.removeItem('auth_token');
+                    localStorage.removeItem('admin_id');
+                    view.value = 'auth';
+                    throw new Error('Please log in again.');
+                }
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 return data;
@@ -1466,18 +1572,18 @@ function serveHtml() {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
-                localStorage.setItem('admin_id', res.id);
+                localStorage.setItem('auth_token', res.token);
+                localStorage.removeItem('admin_id');
                 view.value = 'app';
                 fetchData();
             } catch(e) {} finally { loading.value = false; }
         };
 
         const fetchData = async () => {
-            const adminId = localStorage.getItem('admin_id');
             const [d, s, sugg] = await Promise.all([
-                api('/dashboard?adminId='+adminId),
-                api('/subjects?adminId='+adminId),
-                api('/suggestions?adminId='+adminId)
+                api('/dashboard'),
+                api('/subjects'),
+                api('/suggestions')
             ]);
             stats.value = d.stats;
             feed.value = d.feed;
@@ -1609,13 +1715,13 @@ function serveHtml() {
             }
         };
 
-        const changeTab = (t) => { currentTab.value = t; updateUrl(); };
-        const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
-        const openModal = (t) => {
-             modal.active = t;
-             if(t === 'add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
-             if(t === 'edit-profile') forms.subject = { ...selected.value };
-             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
+          const changeTab = (t) => { currentTab.value = t; updateUrl(); };
+          const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
+          const openModal = (t) => {
+               modal.active = t;
+               if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
+               if(t === 'edit-profile') forms.subject = { ...selected.value };
+               if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
@@ -1645,16 +1751,16 @@ function serveHtml() {
             });
         });
 
-        watch(() => currentTab.value, (val) => {
-             updateUrl();
-             if(val === 'map') nextTick(async () => {
-                 const d = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
-                 mapData.value = d;
-                 initMap('warRoomMap', d);
-             });
-             if(val === 'network') nextTick(async () => {
-                const data = await api('/global-network?adminId=' + localStorage.getItem('admin_id'));
-                const container = document.getElementById('globalNetworkGraph');
+          watch(() => currentTab.value, (val) => {
+               updateUrl();
+               if(val === 'map') nextTick(async () => {
+                   const d = await api('/map-data');
+                   mapData.value = d;
+                   initMap('warRoomMap', d);
+               });
+               if(val === 'network') nextTick(async () => {
+                 const data = await api('/global-network');
+                 const container = document.getElementById('globalNetworkGraph');
                 const options = {
                     nodes: { 
                         shape: 'circularImage', borderWidth: 2, size: 25, 
@@ -1665,11 +1771,11 @@ function serveHtml() {
                     physics: { stabilization: true }
                 };
                 
-                data.nodes.forEach(n => { 
-                    n.image = n.image ? (n.image.startsWith('http') ? n.image : '/api/media/'+n.image) : 'https://ui-avatars.com/api/?background=random&name='+n.label;
-                    if(n.group === 'Critical') n.color = { border: '#ef4444' };
-                    if(n.group === 'High') n.color = { border: '#f97316' };
-                });
+                 data.nodes.forEach(n => {
+                     n.image = n.image ? (n.image.startsWith('http') ? n.image : mediaUrl(n.image)) : 'https://ui-avatars.com/api/?background=random&name='+n.label;
+                     if(n.group === 'Critical') n.color = { border: '#ef4444' };
+                     if(n.group === 'High') n.color = { border: '#f97316' };
+                 });
 
                 new vis.Network(container, data, options);
              });
@@ -1747,7 +1853,13 @@ function serveHtml() {
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => navigator.clipboard.writeText(t);
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
-        const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
+        const mediaUrl = (p) => {
+            if (!p) return null;
+            if (p.startsWith('http')) return p;
+            const token = localStorage.getItem('auth_token');
+            return '/api/media/' + p + (token ? '?auth=' + token : '');
+        };
+        const resolveImg = (p) => mediaUrl(p);
         const getThreatColor = (l, isBg = false) => {
              const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
              return isBg ? \`bg-\${c}-100 text-\${c}-700\` : \`text-\${c}-600\`;
@@ -1764,14 +1876,14 @@ function serveHtml() {
         // NEW LOGOUT FUNCTION
         const handleLogout = () => {
              if(confirm("Are you sure you want to log out?")) {
-                 localStorage.removeItem('admin_id');
+                 localStorage.removeItem('auth_token');
                  localStorage.removeItem('active_tab');
                  location.reload();
              }
         };
 
         onMounted(() => {
-            if(localStorage.getItem('admin_id')) {
+            if(localStorage.getItem('auth_token')) {
                 view.value = 'app';
                 fetchData();
                 const id = params.get('id');
@@ -1786,7 +1898,7 @@ function serveHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData
+            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData, mediaUrl
         };
       }
     }).mount('#app');
@@ -1798,17 +1910,27 @@ function serveHtml() {
 
 // --- Route Handling ---
 
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    const path = url.pathname;
+  export default {
+    async fetch(req, env) {
+      const url = new URL(req.url);
+      const path = url.pathname;
 
-    try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
+      try {
+          if (!schemaInitialized) await ensureSchema(env.DB);
 
-        // Share Page
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
+          const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
+          const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
+          const isMediaWithShareToken = path.startsWith('/api/media/') && url.searchParams.get('shareToken');
+          const isMediaWithAuthToken = path.startsWith('/api/media/') && url.searchParams.get('auth');
+          const isPublicApi = path === '/api/login' || !!shareApiMatch || isMediaWithShareToken || isMediaWithAuthToken;
+          let adminId = null;
+
+          if (path.startsWith('/api') && !isPublicApi) {
+              adminId = await authenticate(req, env);
+          }
+
+          // Share Page
+          if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
 
         // Main App
         if (req.method === 'GET' && path === '/') return serveHtml();
@@ -1817,20 +1939,25 @@ export default {
         if (path === '/api/login') {
             const { email, password } = await req.json();
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+            let adminId = admin?.id;
+
             if (!admin) {
                 const hash = await hashPassword(password);
                 const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
+                adminId = res.meta.last_row_id;
+            } else {
+                const hashed = await hashPassword(password);
+                if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
             }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
+
+            const session = await createSession(env.DB, adminId, env.AUTH_SECRET || '');
+            return response({ token: session.token, adminId, expires_at: session.expires_at });
         }
 
         // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, adminId);
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, adminId);
+        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, adminId);
         
         // Subject CRUD
         if (path === '/api/subjects') {
@@ -1838,18 +1965,19 @@ export default {
                 const p = await req.json();
                 const now = isoTimestamp();
                 await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
+                .bind(safeVal(adminId), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
                 return response({success:true});
             }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
+            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(adminId).all();
             return response(res.results);
         }
 
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
+        if (path === '/api/map-data') return handleGetMapData(env.DB, adminId);
 
         const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
         if (idMatch) {
             const id = idMatch[1];
+            await requireSubject(env.DB, id, adminId);
             if(req.method === 'PATCH') {
                 const p = await req.json();
                 
@@ -1871,30 +1999,36 @@ export default {
         // Sub-resources
         if (path === '/api/interaction') {
             const p = await req.json();
+            await requireSubject(env.DB, p.subject_id, adminId);
             await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
                 .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
             return response({success:true});
         }
         if (path === '/api/location') {
             const p = await req.json();
+            await requireSubject(env.DB, p.subject_id, adminId);
             await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
                 .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
             return response({success:true});
         }
         if (path === '/api/intel') {
             const p = await req.json();
+            await requireSubject(env.DB, p.subject_id, adminId);
             await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
                 .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
             return response({success:true});
         }
         if (path === '/api/relationship') {
             const p = await req.json();
+            await requireSubject(env.DB, p.subjectA, adminId);
+            await requireSubject(env.DB, p.targetId, adminId);
             await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
                 .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
             return response({success:true});
         }
         if (path === '/api/media-link') {
             const { subjectId, url, type, description } = await req.json();
+            await requireSubject(env.DB, subjectId, adminId);
             await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
                 .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
             return response({success:true});
@@ -1902,17 +2036,17 @@ export default {
 
         // Sharing
         if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
+            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'), adminId);
+            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin, adminId);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), adminId);
         }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
 
         if (path === '/api/delete') {
             const { table, id } = await req.json();
             const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
             if(safeTables.includes(table)) {
+                await ensureRecordOwnership(env.DB, adminId, table, id);
                 if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
                 else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
                 return response({success:true});
@@ -1922,6 +2056,7 @@ export default {
         // File Ops
         if (path === '/api/upload-avatar' || path === '/api/upload-media') {
             const { subjectId, data, filename, contentType } = await req.json();
+            await requireSubject(env.DB, subjectId, adminId);
             const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
             const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
             await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
@@ -1933,6 +2068,25 @@ export default {
 
         if (path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
+            const shareToken = url.searchParams.get('shareToken');
+            const authToken = url.searchParams.get('auth');
+
+            if (!adminId && authToken) {
+                adminId = await validateSessionToken(authToken, env);
+            }
+
+            if (!adminId) {
+                if (shareToken) {
+                    const link = await validateShareAccess(env.DB, shareToken);
+                    const media = await env.DB.prepare('SELECT subject_id FROM subject_media WHERE object_key = ?').bind(key).first();
+                    const avatarOwner = await env.DB.prepare('SELECT id as subject_id FROM subjects WHERE avatar_path = ?').bind(key).first();
+                    const subjectId = media?.subject_id || avatarOwner?.subject_id;
+                    if (!subjectId || subjectId !== link.subject_id) return errorResponse('FORBIDDEN', 403);
+                } else {
+                    throw httpError('UNAUTHORIZED', 401);
+                }
+            }
+
             const obj = await env.BUCKET.get(key);
             if (!obj) return new Response('Not found', { status: 404 });
             return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
@@ -1945,6 +2099,8 @@ export default {
 
         return new Response('Not Found', { status: 404 });
     } catch(e) {
+        if (e instanceof Response) return e;
+        if (e.status) return errorResponse(e.message, e.status);
         return errorResponse(e.message);
     }
   }
