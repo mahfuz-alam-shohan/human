@@ -2040,7 +2040,6 @@ function serveHtml() {
             if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin, adminId);
             return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), adminId);
         }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
 
         if (path === '/api/delete') {
