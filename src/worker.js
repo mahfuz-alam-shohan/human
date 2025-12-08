@@ -457,7 +457,7 @@ async function handleGetSharedSubject(db, token) {
     return errorResponse('INVALID CONFIG', 500);
 }
 
-// --- Frontend: Shared Link View (Redesigned for Mobile & Clean Data) ---
+// --- Frontend: Shared Link View ---
 function serveSharedHtml(token) {
     return `<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -702,9 +702,11 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #020617; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
+    /* Improved Glassmorphism for Dark Mode */
     .glass { 
         background: rgba(30, 41, 59, 0.7); 
         backdrop-filter: blur(12px); 
+        -webkit-backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.08); 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); 
         border-radius: 0.75rem; 
@@ -719,15 +721,19 @@ function serveHtml() {
     }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
+    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* Mobile Safe Area Padding */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     
+    /* Animation */
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     
+    /* Marker Styles */
     .avatar-marker { position: relative; }
     .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
     .avatar-marker:hover img { transform: scale(1.1); border-color: #3b82f6; z-index: 500; }
@@ -739,7 +745,6 @@ function serveHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
-        <!-- (Same Auth) -->
         <div class="absolute inset-0 overflow-hidden">
             <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
             <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
@@ -780,7 +785,7 @@ function serveHtml() {
             <button @click="handleLogout" class="text-slate-400 hover:text-red-500 p-4 transition-colors" title="Logout"><i class="fa-solid fa-power-off"></i></button>
         </nav>
 
-        <!-- MOBILE TOP BAR -->
+        <!-- MOBILE TOP BAR (Brand + Actions) -->
         <header class="md:hidden h-14 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 sticky top-0">
             <div class="flex items-center gap-2.5">
                 <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm shadow-md">
@@ -800,8 +805,8 @@ function serveHtml() {
 
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                 <!-- (Dashboard content same) -->
-                 <div class="max-w-6xl mx-auto space-y-6">
+                <div class="max-w-6xl mx-auto space-y-6">
+                    <!-- Stats Grid -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
@@ -825,6 +830,7 @@ function serveHtml() {
                         </button>
                     </div>
 
+                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                             <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
@@ -844,12 +850,12 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-                 </div>
+                </div>
             </div>
 
             <!-- TARGETS LIST -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
-                 <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
+                <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500"></i>
                         <input v-model="search" placeholder="Search profiles..." class="w-full bg-slate-950 border border-slate-800 rounded-lg py-3 pl-10 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-white placeholder-slate-600 transition-colors">
@@ -871,16 +877,19 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB -->
+            <!-- GLOBAL MAP TAB (Updated) -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
-                 <!-- (Map content same) -->
-                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
+                <div class="absolute inset-0 z-0" id="warRoomMap"></div>
+                
+                <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
                         <input v-model="mapSearchQuery" @input="updateMapFilter" placeholder="Live Filter Map..." class="w-full bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-full py-2.5 pl-10 pr-4 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-white shadow-xl transition-all">
                         <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-slate-400 group-focus-within:text-blue-500"></i>
                     </div>
                 </div>
+
+                <!-- Map Sidebar Overlay (Collapsible on Mobile) -->
                 <div class="absolute top-16 left-4 bottom-4 w-72 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 border-slate-700/50" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
                     <div class="p-3 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/80 backdrop-blur">
                         <h3 class="font-bold text-white text-sm">Active Points</h3>
@@ -898,10 +907,14 @@ function serveHtml() {
                         </div>
                     </div>
                 </div>
-                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
+                
+                <!-- Toggle Button (Visible when sidebar hidden) -->
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar">
+                    <i class="fa-solid fa-list-ul"></i>
+                </button>
             </div>
 
-            <!-- GLOBAL NETWORK TAB -->
+            <!-- GLOBAL NETWORK TAB (Updated) -->
             <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-950 relative">
                 <div class="absolute top-4 left-4 z-10 glass px-4 py-2 border-slate-700/50">
                     <h3 class="font-bold text-white text-sm">Global Relations</h3>
@@ -923,7 +936,6 @@ function serveHtml() {
                         </div>
                     </div>
                     <div class="flex gap-2">
-                         <!-- ADDED DELETE BUTTON -->
                         <button @click="deleteProfile" class="bg-red-900/20 hover:bg-red-900/40 text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold border border-red-900/50"><i class="fa-solid fa-trash md:mr-2"></i><span class="hidden md:inline">Delete</span></button>
                         <button @click="openModal('edit-profile')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700"><i class="fa-solid fa-pen md:mr-2"></i><span class="hidden md:inline">Edit</span></button>
                         <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg shadow-blue-500/20"><i class="fa-solid fa-share-nodes md:mr-2"></i><span class="hidden md:inline">Share</span></button>
@@ -944,7 +956,6 @@ function serveHtml() {
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     <!-- PROFILE -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                        <!-- (Profile content same) -->
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
@@ -1023,8 +1034,7 @@ function serveHtml() {
                                     <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                         <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
-                                        <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
-                                        <!-- ADDED DELETE BUTTON -->
+                                        <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
                                         <button @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-slate-600 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                     <div class="bg-slate-900/50 p-4 rounded-lg text-sm text-slate-300 border border-slate-800 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details recorded.'}}</div>
@@ -1036,7 +1046,6 @@ function serveHtml() {
 
                     <!-- MAP (Detail) -->
                     <div v-show="subTab === 'map'" class="h-full flex flex-col">
-                        <!-- ... (Map Detail) ... -->
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Known Locations</h3>
                             <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
@@ -1060,7 +1069,6 @@ function serveHtml() {
 
                     <!-- NETWORK (Detail) -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
-                         <!-- ... (Network Detail) ... -->
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Connections Graph</h3>
                             <button @click="openModal('add-rel')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Connection</button>
@@ -1107,7 +1115,6 @@ function serveHtml() {
                     </div>
 
                     <div v-if="subTab === 'files'" class="space-y-6">
-                         <!-- ... (Files Content) ... -->
                          <div class="flex flex-col md:flex-row gap-6">
                             <div class="space-y-3 w-full md:w-56 shrink-0">
                                 <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
@@ -1161,8 +1168,7 @@ function serveHtml() {
         </div>
 
         <div v-else class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
-             <!-- (Modal Content same as before) -->
-             <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
+            <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
                 <h3 class="font-bold text-white">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -1553,7 +1559,12 @@ function serveHtml() {
                     if(!loc.lat) return;
                     allPoints.push([loc.lat, loc.lng]);
                     
-                    const avatarUrl = resolveImg(loc.avatar_path) || 'https://ui-avatars.com/api/?background=random&name='+loc.full_name;
+                    // FALLBACK FIX: Use global subject info if row lacks it (e.g. from individual view)
+                    const isGlobal = !!loc.full_name;
+                    const name = isGlobal ? loc.full_name : (selected.value?.full_name || 'Unknown');
+                    const avatar = isGlobal ? loc.avatar_path : (selected.value?.avatar_path);
+
+                    const avatarUrl = resolveImg(avatar) || 'https://ui-avatars.com/api/?background=random&name='+name;
                     const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-slate-800">
                         <img src="\${avatarUrl}">
                         <div class="marker-label">\${loc.name}</div>
@@ -1564,9 +1575,9 @@ function serveHtml() {
                     const popupContent = document.createElement('div');
                     popupContent.innerHTML = \`
                         <div class="text-slate-800 text-sm">
-                            <strong>\${loc.full_name}</strong><br>
+                            <strong>\${name}</strong><br>
                             <span class="text-xs">\${loc.name} (\${loc.type})</span>
-                            <button class="mt-2 w-full bg-blue-600 text-white text-xs py-1 rounded hover:bg-blue-700" onclick="window.viewSubject(\${loc.subject_id})">View Profile</button>
+                            <button class="mt-2 w-full bg-blue-600 text-white text-xs py-1 rounded hover:bg-blue-700" onclick="window.viewSubject(\${isGlobal ? loc.subject_id : selected.value.id})">View Profile</button>
                         </div>
                     \`;
                     marker.bindPopup(popupContent);
