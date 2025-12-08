@@ -1891,17 +1891,9 @@ function serveHtml() {
                         reciprocal: forms.rel.reciprocal // Role of B
                     };
                 } else {
-                     // Update: We need to map "My Role" and "Their Role" back to DB columns based on ID orientation
-                     // But actually, we can just send the raw values we want to set based on the current subject's perspective
-                     // And let the logic figure it out? No, let's keep it simple.
-                     // The backend update logic isn't complex. Let's send the ID and the fields we want to update.
-                     // BUT, we need to know if we are updating `relationship_type` or `role_b`.
-                     // Actually, if we send `subjectA` (current viewer) and `type` (current viewer's role) ...
-                     // It is easier to handle this mapping in Frontend before sending.
-                     
-                     // Re-find the original item to check orientation
+                     // Update Logic: Check orientation to map roles correctly
                      const originalRel = selected.value.relationships.find(r => r.id === forms.rel.id);
-                     if (originalRel.subject_a_id === selected.value.id) {
+                     if (originalRel && originalRel.subject_a_id === selected.value.id) {
                          // I am A. Update: relationship_type = type, role_b = reciprocal
                          payload = { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal };
                      } else {
