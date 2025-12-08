@@ -3,7 +3,31 @@ const encoder = new TextEncoder();
 // --- Configuration & Constants ---
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
-// Whitelist for Subject Columns to prevent "no such column" errors during updates
+const RELATION_PRESETS = [
+    { a: 'Father', b: 'Child', family: true },
+    { a: 'Mother', b: 'Child', family: true },
+    { a: 'Parent', b: 'Child', family: true },
+    { a: 'Son', b: 'Parent', family: true },
+    { a: 'Daughter', b: 'Parent', family: true },
+    { a: 'Brother', b: 'Sibling', family: true },
+    { a: 'Sister', b: 'Sibling', family: true },
+    { a: 'Husband', b: 'Wife', family: true },
+    { a: 'Wife', b: 'Husband', family: true },
+    { a: 'Spouse', b: 'Spouse', family: true },
+    { a: 'Uncle', b: 'Niece/Nephew', family: true },
+    { a: 'Aunt', b: 'Niece/Nephew', family: true },
+    { a: 'Grandfather', b: 'Grandchild', family: true },
+    { a: 'Grandmother', b: 'Grandchild', family: true },
+    { a: 'Teacher', b: 'Student', family: false },
+    { a: 'Employer', b: 'Employee', family: false },
+    { a: 'Colleague', b: 'Colleague', family: false },
+    { a: 'Associate', b: 'Associate', family: false },
+    { a: 'Friend', b: 'Friend', family: false },
+];
+
+const FAMILY_KEYWORDS = ['father', 'mother', 'parent', 'son', 'daughter', 'child', 'brother', 'sister', 'sibling', 'husband', 'wife', 'spouse', 'uncle', 'aunt', 'niece', 'nephew', 'grand'];
+
+// Whitelist for Subject Columns
 const SUBJECT_COLUMNS = [
     'full_name', 'alias', 'dob', 'age', 'gender', 'occupation', 'nationality', 
     'ideology', 'location', 'contact', 'hometown', 'previous_locations', 
@@ -123,11 +147,13 @@ async function ensureSchema(db) {
           created_at TEXT
         )`),
 
+        // Updated Schema for Reciprocal Roles
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
           id INTEGER PRIMARY KEY, 
           subject_a_id INTEGER, 
           subject_b_id INTEGER, 
-          relationship_type TEXT, 
+          relationship_type TEXT, -- Role of A relative to B (e.g. Father)
+          role_b TEXT,            -- Role of B relative to A (e.g. Son)
           notes TEXT, 
           custom_name TEXT, 
           custom_avatar TEXT, 
@@ -183,21 +209,11 @@ async function nukeDatabase(db) {
         'subjects', 'admins'
     ];
     
-    // Disable FKs to allow dropping tables in any order
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
-    
     for(const t of tables) {
-        try { 
-            await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); 
-        } catch(e) { 
-            console.error(`Failed to drop ${t}`, e); 
-        }
+        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
     }
-    
-    // Re-enable FKs
     await db.prepare("PRAGMA foreign_keys = ON;").run();
-    
-    // Force schema re-init on next request so tables are recreated
     schemaInitialized = false; 
     return true;
 }
@@ -227,6 +243,37 @@ function analyzeProfile(subject, interactions, intel) {
         summary: `Profile is ${completeness}% complete. Contains ${interactions.length} interactions and ${intel.length} attribute points.`,
         generated_at: isoTimestamp()
     };
+}
+
+function generateFamilyReport(relationships, subjectId) {
+    const family = [];
+    relationships.forEach(r => {
+        // Determine the role string based on which side of the relationship the current subject is
+        let role = '';
+        if (r.subject_a_id == subjectId) role = r.relationship_type; // I am A, my role is type (e.g. Father) -> Wait, usually relation label describes the link. "A is Father of B".
+        else role = r.role_b; // I am B, my role is role_b.
+        
+        // Actually, in the UI we usually want "Who is this person to ME?".
+        // If I am A, B is "Son" (role_b).
+        // If I am B, A is "Father" (relationship_type).
+        
+        let relativeRole = '';
+        if (r.subject_a_id == subjectId) relativeRole = r.role_b || 'Associate'; 
+        else relativeRole = r.relationship_type || 'Associate';
+
+        // Check if this relative's role is a family keyword
+        const isFamily = FAMILY_KEYWORDS.some(k => relativeRole.toLowerCase().includes(k));
+        
+        if (isFamily) {
+            family.push({
+                name: r.target_name,
+                role: relativeRole,
+                id: r.subject_a_id == subjectId ? r.subject_b_id : r.subject_a_id,
+                avatar: r.target_avatar
+            });
+        }
+    });
+    return family;
 }
 
 // --- API Handlers ---
@@ -280,13 +327,17 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
+    // Generate Family Report
+    const familyReport = generateFamilyReport(relationships.results, id);
+
     return response({
         ...subject,
         media: media.results,
         intel: intel.results,
         relationships: relationships.results,
         interactions: interactions.results,
-        locations: locations.results
+        locations: locations.results,
+        familyReport: familyReport
     });
 }
 
@@ -298,7 +349,7 @@ async function handleGetGlobalNetwork(db, adminId) {
     const subjectIds = subjects.results.map(s => s.id).join(',');
     
     const relationships = await db.prepare(`
-        SELECT subject_a_id, subject_b_id, relationship_type 
+        SELECT subject_a_id, subject_b_id, relationship_type, role_b
         FROM subject_relationships 
         WHERE subject_a_id IN (${subjectIds}) AND subject_b_id IN (${subjectIds})
     `).all();
@@ -315,7 +366,7 @@ async function handleGetGlobalNetwork(db, adminId) {
         edges: relationships.results.map(r => ({
             from: r.subject_a_id,
             to: r.subject_b_id,
-            label: r.relationship_type,
+            label: `${r.relationship_type} / ${r.role_b || '?'}`,
             arrows: 'to',
             font: { align: 'middle' }
         }))
@@ -456,6 +507,7 @@ function serveSharedHtml(token) {
 
         <!-- CONTENT -->
         <div v-else class="space-y-6 animate-fade-in">
+            
             <!-- HEADER / IDENTITY -->
             <div class="glass p-6 md:p-8 relative overflow-hidden">
                 <div class="absolute top-0 right-0 p-4 opacity-10">
@@ -739,6 +791,7 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #020617; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
+    /* Improved Glassmorphism for Dark Mode */
     .glass { 
         background: rgba(30, 41, 59, 0.7); 
         backdrop-filter: blur(12px); 
@@ -757,12 +810,15 @@ function serveHtml() {
     }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
+    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* Mobile Safe Area Padding */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     
+    /* Animation */
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     
@@ -778,7 +834,10 @@ function serveHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
-        <!-- ... (auth screen same as before) ... -->
+        <div class="absolute inset-0 overflow-hidden">
+            <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+            <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        </div>
         <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10 border border-slate-800">
             <div class="text-center mb-8">
                 <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg shadow-blue-500/20">
@@ -833,10 +892,11 @@ function serveHtml() {
         <!-- CONTENT -->
         <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-20 md:pb-0 safe-area-pb">
 
-            <!-- DASHBOARD, TARGETS, MAP, NETWORK, DETAIL Tabs -->
-            <!-- (Reusing previous dashboard/targets layout for brevity) -->
+            <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                 <div class="max-w-6xl mx-auto space-y-6">
+                <!-- (Dashboard content skipped for brevity, keeping existing) -->
+                <div class="max-w-6xl mx-auto space-y-6">
+                    <!-- Stats Grid -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
@@ -860,6 +920,7 @@ function serveHtml() {
                         </button>
                     </div>
 
+                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                             <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
@@ -882,9 +943,10 @@ function serveHtml() {
                  </div>
             </div>
 
-            <!-- TARGETS -->
+            <!-- TARGETS LIST -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
-                <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
+                <!-- (Targets content same as before) -->
+                 <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500"></i>
                         <input v-model="search" placeholder="Search profiles..." class="w-full bg-slate-950 border border-slate-800 rounded-lg py-3 pl-10 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-white placeholder-slate-600 transition-colors">
@@ -906,9 +968,10 @@ function serveHtml() {
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB (Updated) -->
+            <!-- GLOBAL MAP TAB -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
-                <div class="absolute inset-0 z-0" id="warRoomMap"></div>
+                <!-- (Map content same as before) -->
+                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
@@ -937,7 +1000,7 @@ function serveHtml() {
                 <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
             </div>
 
-            <!-- GLOBAL NETWORK TAB (Updated) -->
+            <!-- GLOBAL NETWORK TAB -->
             <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-950 relative">
                 <div class="absolute top-4 left-4 z-10 glass px-4 py-2 border-slate-700/50">
                     <h3 class="font-bold text-white text-sm">Global Relations</h3>
@@ -948,6 +1011,7 @@ function serveHtml() {
 
             <!-- SUBJECT DETAIL -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-950">
+                
                 <!-- DETAIL HEADER -->
                 <div class="h-16 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="flex items-center gap-3">
@@ -977,7 +1041,8 @@ function serveHtml() {
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     <!-- PROFILE -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- (Profile content same as before) -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
@@ -1020,8 +1085,8 @@ function serveHtml() {
                         </div>
                     </div>
                     
-                    <!-- ATTRIBUTES, TIMELINE, FILES (Same as before) -->
-                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
+                    <!-- ATTRIBUTES, TIMELINE, FILES, MAP (Same as before) -->
+                    <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg text-white">Detailed Attributes</h3>
                             <button @click="openModal('add-intel')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-transform">
@@ -1048,7 +1113,7 @@ function serveHtml() {
                         <div class="flex-1 glass p-6 overflow-y-auto border-slate-700/50">
                             <div class="relative pl-8 border-l-2 border-slate-800 space-y-8 my-4">
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
-                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-600"></div>
+                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                         <span class="text-sm font-bold text-white">{{ix.type}}</span>
                                         <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
@@ -1060,8 +1125,37 @@ function serveHtml() {
                         </div>
                     </div>
 
+                    <!-- NETWORK (Detail) - UPDATED with Family Report -->
+                    <div v-show="subTab === 'network'" class="h-full flex flex-col">
+                         <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-lg text-white">Connections Graph</h3>
+                            <button @click="openModal('add-rel')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Connection</button>
+                        </div>
+
+                        <!-- Family Report Card -->
+                        <div v-if="selected.familyReport && selected.familyReport.length > 0" class="glass p-4 mb-6 border-l-4 border-purple-500 bg-slate-900/40">
+                             <h4 class="text-sm font-bold text-purple-400 mb-3 flex items-center gap-2"><i class="fa-solid fa-people-roof"></i> Family Unit</h4>
+                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                 <div v-for="fam in selected.familyReport" class="flex items-center gap-3 p-2 rounded bg-slate-800/50 border border-slate-700 hover:border-purple-500/50 transition-colors cursor-pointer" @click="viewSubject(fam.id)">
+                                     <div class="w-8 h-8 rounded-full bg-slate-700 overflow-hidden shrink-0">
+                                         <img :src="resolveImg(fam.avatar)" class="w-full h-full object-cover">
+                                     </div>
+                                     <div>
+                                         <div class="text-xs font-bold text-white">{{fam.name}}</div>
+                                         <div class="text-[10px] text-purple-300 uppercase tracking-wide">{{fam.role}}</div>
+                                     </div>
+                                 </div>
+                             </div>
+                        </div>
+
+                        <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
+                            <div id="relNetwork" class="absolute inset-0"></div>
+                        </div>
+                    </div>
+
                     <div v-if="subTab === 'files'" class="space-y-6">
-                        <div class="flex flex-col md:flex-row gap-6">
+                         <!-- ... (Files content same as before) ... -->
+                         <div class="flex flex-col md:flex-row gap-6">
                             <div class="space-y-3 w-full md:w-56 shrink-0">
                                 <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
                                     <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
@@ -1084,9 +1178,9 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <!-- MAP (Detail) -->
                     <div v-show="subTab === 'map'" class="h-full flex flex-col">
-                        <div class="flex justify-between items-center mb-4">
+                        <!-- ... (Detail map same as before) ... -->
+                         <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Known Locations</h3>
                             <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
                         </div>
@@ -1104,17 +1198,6 @@ function serveHtml() {
                                     <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs text-red-500 hover:text-red-400">Remove</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- NETWORK (Detail) -->
-                    <div v-show="subTab === 'network'" class="h-full flex flex-col">
-                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="font-bold text-lg text-white">Connections Graph</h3>
-                            <button @click="openModal('add-rel')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Connection</button>
-                        </div>
-                        <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
-                            <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
                 </div>
@@ -1168,9 +1251,45 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- FORM TEMPLATES (Reused) -->
-                <!-- ADD/EDIT SUBJECT -->
+                <!-- ADD REL WITH PRESETS -->
+                 <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-6">
+                    <div class="p-4 bg-blue-900/20 border border-blue-800 rounded-lg text-sm text-blue-200 mb-4">
+                        Connect <strong>{{selected.full_name}}</strong> to:
+                    </div>
+                    <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
+                        <option value="" disabled selected>Select a Person</option>
+                        <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
+                    </select>
+
+                    <div class="border-t border-slate-700 pt-4 mt-2">
+                         <label class="block text-xs font-bold uppercase text-slate-500 mb-2">Relationship Type</label>
+                         <div class="grid grid-cols-2 gap-4">
+                             <div>
+                                 <div class="text-[10px] text-slate-400 mb-1">Role of {{selected.full_name}}</div>
+                                 <input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="glass-input w-full p-3 text-sm" @input="autoFillReciprocal">
+                             </div>
+                             <div>
+                                 <div class="text-[10px] text-slate-400 mb-1">Role of Target</div>
+                                 <input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="glass-input w-full p-3 text-sm">
+                             </div>
+                         </div>
+                         <!-- Preset Chips -->
+                         <div class="flex flex-wrap gap-2 mt-3">
+                             <div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-2 py-1 bg-slate-800 border border-slate-700 rounded cursor-pointer hover:bg-blue-600 hover:text-white transition-colors">
+                                 {{p.a}} &harr; {{p.b}}
+                             </div>
+                         </div>
+                    </div>
+
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
+                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                        {{ processing ? 'Linking...' : 'Link Profiles' }}
+                    </button>
+                 </form>
+
+                <!-- (Other forms reused) -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
+                    <!-- ... (Same subject form as before) ... -->
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
                             <label class="block text-xs font-bold uppercase text-slate-500">Identity</label>
@@ -1214,9 +1333,7 @@ function serveHtml() {
                     </button>
                 </form>
 
-                <!-- ADD INTEL, SHARE, LOCATION, INTERACTION, REL, MEDIA (Standard forms) -->
-                <!-- ADD ATTRIBUTE -->
-                <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
+                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
                         <option>General</option>
                         <option>Contact Info</option>
@@ -1234,7 +1351,6 @@ function serveHtml() {
                     </button>
                  </form>
 
-                 <!-- ADD MEDIA LINK -->
                  <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
                     <input v-model="forms.mediaLink.url" placeholder="Paste URL *" class="glass-input w-full p-3 text-sm" required>
                     <input v-model="forms.mediaLink.description" placeholder="Description" class="glass-input w-full p-3 text-sm">
@@ -1250,7 +1366,6 @@ function serveHtml() {
                     </button>
                  </form>
 
-                 <!-- SECURE SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <p class="text-sm text-slate-400">Create a temporary secure link.</p>
                     <div class="flex gap-2">
@@ -1279,7 +1394,6 @@ function serveHtml() {
                     </div>
                  </div>
                  
-                 <!-- LOCATION PICKER -->
                  <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
@@ -1317,17 +1431,6 @@ function serveHtml() {
                         {{ processing ? 'Logging...' : 'Log Event' }}
                     </button>
                 </form>
-
-                 <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-4">
-                    <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm">
-                        <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.occupation}})</option>
-                    </select>
-                    <input v-model="forms.rel.type" placeholder="Relationship" class="glass-input w-full p-3 text-sm">
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
-                        <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Linking...' : 'Link Profiles' }}
-                    </button>
-                 </form>
             </div>
         </div>
     </div>
@@ -1337,11 +1440,24 @@ function serveHtml() {
     <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
     <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
     <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
+    <datalist id="preset-roles-a"><option v-for="p in presets" :value="p.a"></option></datalist>
+    <datalist id="preset-roles-b"><option v-for="p in presets" :value="p.b"></option></datalist>
 
   </div>
 
   <script>
     const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+
+    const PRESETS = [
+        { a: 'Father', b: 'Child' }, { a: 'Mother', b: 'Child' }, { a: 'Parent', b: 'Child' },
+        { a: 'Son', b: 'Parent' }, { a: 'Daughter', b: 'Parent' }, { a: 'Child', b: 'Parent' },
+        { a: 'Brother', b: 'Sibling' }, { a: 'Sister', b: 'Sibling' },
+        { a: 'Husband', b: 'Wife' }, { a: 'Wife', b: 'Husband' }, { a: 'Spouse', b: 'Spouse' },
+        { a: 'Uncle', b: 'Niece/Nephew' }, { a: 'Aunt', b: 'Niece/Nephew' },
+        { a: 'Grandfather', b: 'Grandchild' }, { a: 'Grandmother', b: 'Grandchild' },
+        { a: 'Teacher', b: 'Student' }, { a: 'Employer', b: 'Employee' },
+        { a: 'Friend', b: 'Friend' }, { a: 'Associate', b: 'Associate' }
+    ];
 
     createApp({
       setup() {
@@ -1373,6 +1489,7 @@ function serveHtml() {
         const mapData = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768); 
         const mapSearchQuery = ref('');
+        const presets = ref(PRESETS);
         
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
@@ -1388,10 +1505,10 @@ function serveHtml() {
         const cmdInput = ref(null);
 
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }, mediaLink: {}
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60 }, mediaLink: {}
         });
 
-        // Computed
+        // ... (computed properties) ...
         const filteredSubjects = computed(() => subjects.value.filter(s => 
             s.full_name.toLowerCase().includes(search.value.toLowerCase()) || 
             (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))
@@ -1483,7 +1600,7 @@ function serveHtml() {
             if(!isRestoring) subTab.value = 'overview'; 
             analysisResult.value = analyzeLocal(selected.value);
             updateUrl();
-            if(modal.active) closeModal(); // Close mini-profile if open
+            if(modal.active) closeModal(); 
         };
 
         const analyzeLocal = (s) => {
@@ -1495,14 +1612,26 @@ function serveHtml() {
              return { summary: \`Profile is \${completeness}% complete based on collected data points.\`, tags };
         };
 
-        // MAPS
+        // Relation Presets Logic
+        const applyPreset = (p) => {
+            forms.rel.type = p.a;
+            forms.rel.reciprocal = p.b;
+        };
+
+        const autoFillReciprocal = () => {
+             const type = forms.rel.type;
+             const p = PRESETS.find(pr => pr.a.toLowerCase() === type.toLowerCase());
+             if (p) forms.rel.reciprocal = p.b;
+        };
+
+        // MAPS (Reused logic)
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
             
             if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
             if(!isPicker && id === 'subjectMap' && mapInstance) { mapInstance.remove(); mapInstance = null; }
-            if(!isPicker && id === 'warRoomMap' && warRoomMapInstance) { warRoomMapInstance.remove(); warRoomMapInstance = null; polylineLayer = null; markerLayer = null; }
+            if(!isPicker && id === 'warRoomMap' && warRoomMapInstance) { warRoomMapInstance.remove(); warRoomMapInstance = null; }
 
             const map = L.map(id, { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
@@ -1521,7 +1650,6 @@ function serveHtml() {
             } else {
                 if(id === 'subjectMap') mapInstance = map;
                 else warRoomMapInstance = map;
-
                 renderMapData(map, data);
             }
         };
@@ -1559,7 +1687,6 @@ function serveHtml() {
                     const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20] });
                     const marker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
                     
-                    // Custom Popup with Action
                     const popupContent = document.createElement('div');
                     popupContent.innerHTML = \`
                         <div class="text-slate-800 text-sm">
@@ -1572,7 +1699,6 @@ function serveHtml() {
                 });
             });
 
-            // Auto-Zoom to fit bounds
             if (allPoints.length > 0) {
                 map.fitBounds(allPoints, { padding: [50, 50] });
             }
@@ -1622,7 +1748,7 @@ function serveHtml() {
              if(t === 'edit-profile') forms.subject = { ...selected.value };
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
-             if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
+             if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; // Init empty
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              if(t === 'add-location') {
                  forms.location = { subject_id: selected.value.id };
@@ -1656,7 +1782,13 @@ function serveHtml() {
                  selected.value.relationships.forEach(r => {
                     const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
                     const targetAvatar = resolveImg(r.target_avatar) || 'https://ui-avatars.com/api/?name='+r.target_name;
-                    
+                    // Determine which role label to show on edge
+                    // If current subject is A, connection is B. Show "A's role to B" (Father) -> "B's role to A" (Son)
+                    // Let's show: "Father (to) Son" for clarity on graph
+                    let label = '';
+                    if (r.subject_a_id === selected.value.id) label = r.relationship_type;
+                    else label = r.role_b || r.relationship_type; 
+
                     nodes.push({ 
                         id: targetId || 'ext-'+r.id, 
                         label: r.target_name, 
@@ -1664,29 +1796,21 @@ function serveHtml() {
                         shape: 'circularImage',
                         image: targetAvatar
                     });
-                    edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type, font: { align: 'middle' } });
+                    edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: label, font: { align: 'middle' } });
                  });
                  
                  const network = new vis.Network(container, { nodes, edges }, { nodes: { shape: 'circularImage', borderWidth: 2 } });
                  
-                 // Handle Click on Personal Network
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
-                         if(nodeId === selected.value.id) return; // Ignore clicking self
-                         
+                         if(nodeId === selected.value.id) return;
                          const rel = selected.value.relationships.find(r => 
                              (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) ||
                              (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId)
                          );
-                         
                          if(rel) {
-                             modal.data = {
-                                 id: nodeId,
-                                 full_name: rel.target_name,
-                                 occupation: rel.target_role,
-                                 avatar_path: rel.target_avatar // raw path, resolveImg called in template
-                             };
+                             modal.data = { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar };
                              modal.active = 'mini-profile';
                          }
                      }
@@ -1705,11 +1829,7 @@ function serveHtml() {
                 const data = await api('/global-network?adminId=' + localStorage.getItem('admin_id'));
                 const container = document.getElementById('globalNetworkGraph');
                 const options = {
-                    nodes: { 
-                        shape: 'circularImage', borderWidth: 2, size: 25, 
-                        color: { border: '#e2e8f0', background: '#fff' },
-                        font: { color: '#94a3b8', size: 12 } 
-                    },
+                    nodes: { shape: 'circularImage', borderWidth: 2, size: 25, color: { border: '#e2e8f0', background: '#fff' }, font: { color: '#94a3b8', size: 12 } },
                     edges: { color: { color: '#475569' }, width: 1, font: { color: '#cbd5e1', strokeWidth: 0, align: 'middle' } },
                     physics: { stabilization: true }
                 };
@@ -1721,19 +1841,12 @@ function serveHtml() {
                 });
 
                 const network = new vis.Network(container, data, options);
-                
-                // Handle Click on Global Network
                 network.on("click", (params) => {
                     if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
                          const nodeData = data.nodes.find(n => n.id === nodeId);
                          if(nodeData) {
-                             modal.data = {
-                                 id: nodeId,
-                                 full_name: nodeData.label,
-                                 occupation: nodeData.occupation,
-                                 avatar_path: nodeData.image // already resolved URL in API logic or raw
-                             };
+                             modal.data = { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image };
                              modal.active = 'mini-profile';
                          }
                     }
@@ -1756,39 +1869,18 @@ function serveHtml() {
             }
         });
 
-        // CRUD with Processing State
-        const submitSubject = async () => {
-            if (processing.value) return;
-            processing.value = true;
-            try {
-                const isEdit = modal.active === 'edit-profile';
-                const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects';
-                await api(ep, { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) });
-                if(isEdit) selected.value = { ...selected.value, ...forms.subject };
-                else fetchData();
-                closeModal();
-            } finally { processing.value = false; }
-        };
-        const submitInteraction = async () => { 
-            if (processing.value) return; processing.value = true;
-            try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
-        };
-        const submitLocation = async () => { 
-            if (processing.value) return; processing.value = true;
-            try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
-        };
-        const submitIntel = async () => { 
-            if (processing.value) return; processing.value = true;
-            try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
-        };
+        const submitSubject = async () => { if (processing.value) return; processing.value = true; try { const isEdit = modal.active === 'edit-profile'; const ep = isEdit ? '/subjects/' + selected.value.id : '/subjects'; await api(ep, { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); closeModal(); } finally { processing.value = false; } };
+        const submitInteraction = async () => { if (processing.value) return; processing.value = true; try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
+        const submitLocation = async () => { if (processing.value) return; processing.value = true; try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
+        const submitIntel = async () => { if (processing.value) return; processing.value = true; try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const submitRel = async () => { 
-            if (processing.value) return; processing.value = true;
-            try { await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
+            if (processing.value) return; processing.value = true; 
+            try { 
+                await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); 
+                viewSubject(selected.value.id); closeModal(); 
+            } finally { processing.value = false; } 
         };
-        const submitMediaLink = async () => { 
-            if (processing.value) return; processing.value = true;
-            try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; }
-        };
+        const submitMediaLink = async () => { if (processing.value) return; processing.value = true; try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
         
         const fileInput = ref(null);
@@ -1813,38 +1905,15 @@ function serveHtml() {
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => navigator.clipboard.writeText(t);
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
-        const getThreatColor = (l, isBg = false) => {
-             const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
-             return isBg ? \`bg-\${c}-100 text-\${c}-700\` : \`text-\${c}-600\`;
-        };
-        const openSettings = () => { 
-            if(confirm("FULL SYSTEM RESET: This will wipe all subjects, data, and admin accounts. You will be logged out.")) {
-                api('/nuke', {method:'POST'}).then(() => {
-                    localStorage.clear();
-                    window.location.href = '/';
-                });
-            }
-        };
-
-        // NEW LOGOUT FUNCTION
-        const handleLogout = () => {
-             if(confirm("Are you sure you want to log out?")) {
-                 localStorage.removeItem('admin_id');
-                 localStorage.removeItem('active_tab');
-                 location.reload();
-             }
-        };
+        const getThreatColor = (l, isBg = false) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate'; return isBg ? \`bg-\${c}-100 text-\${c}-700\` : \`text-\${c}-600\`; };
+        const openSettings = () => { if(confirm("FULL SYSTEM RESET: This will wipe all subjects, data, and admin accounts. You will be logged out.")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
+        const handleLogout = () => { if(confirm("Are you sure you want to log out?")) { localStorage.removeItem('admin_id'); localStorage.removeItem('active_tab'); location.reload(); } };
 
         onMounted(() => {
             if(localStorage.getItem('admin_id')) {
                 view.value = 'app';
                 fetchData();
-                
-                // Expose ViewSubject to window for Leaflet popups
-                window.viewSubject = (id) => {
-                    viewSubject(id);
-                };
-                
+                window.viewSubject = (id) => { viewSubject(id); };
                 const id = params.get('id');
                 if(id) viewSubject(id, true);
             }
@@ -1857,7 +1926,8 @@ function serveHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData
+            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData,
+            presets, applyPreset, autoFillReciprocal
         };
       }
     }).mount('#app');
@@ -1866,157 +1936,3 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
-
-// --- Route Handling ---
-
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    try {
-        if (!schemaInitialized) await ensureSchema(env.DB);
-
-        // Share Page
-        const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-        if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
-
-        // Main App
-        if (req.method === 'GET' && path === '/') return serveHtml();
-
-        // Auth
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                return response({ id: res.meta.last_row_id });
-            }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            return response({ id: admin.id });
-        }
-
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, url.searchParams.get('adminId'));
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, url.searchParams.get('adminId'));
-        
-        // Subject CRUD
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                const now = isoTimestamp();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(p.admin_id), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(url.searchParams.get('adminId')).all();
-            return response(res.results);
-        }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, url.searchParams.get('adminId'));
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                
-                // FIXED: Use whitelist to prevent "no such column" error
-                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
-                
-                if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
-                    const vals = keys.map(k => safeVal(p[k]));
-                    vals.push(isoTimestamp());
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/media-link') {
-            const { subjectId, url, type, description } = await req.json();
-            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        // Sharing
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'));
-        }
-        const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        // File Ops
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
-            return response({success:true});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        return errorResponse(e.message);
-    }
-  }
-};
