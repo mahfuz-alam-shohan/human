@@ -147,13 +147,12 @@ async function ensureSchema(db) {
           created_at TEXT
         )`),
 
-        // Updated Schema for Reciprocal Roles
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_relationships (
           id INTEGER PRIMARY KEY, 
           subject_a_id INTEGER, 
           subject_b_id INTEGER, 
-          relationship_type TEXT, -- Role of A relative to B (e.g. Father)
-          role_b TEXT,            -- Role of B relative to A (e.g. Son)
+          relationship_type TEXT, 
+          role_b TEXT,            
           notes TEXT, 
           custom_name TEXT, 
           custom_avatar TEXT, 
@@ -248,20 +247,10 @@ function analyzeProfile(subject, interactions, intel) {
 function generateFamilyReport(relationships, subjectId) {
     const family = [];
     relationships.forEach(r => {
-        // Determine the role string based on which side of the relationship the current subject is
-        let role = '';
-        if (r.subject_a_id == subjectId) role = r.relationship_type; // I am A, my role is type (e.g. Father) -> Wait, usually relation label describes the link. "A is Father of B".
-        else role = r.role_b; // I am B, my role is role_b.
-        
-        // Actually, in the UI we usually want "Who is this person to ME?".
-        // If I am A, B is "Son" (role_b).
-        // If I am B, A is "Father" (relationship_type).
-        
         let relativeRole = '';
         if (r.subject_a_id == subjectId) relativeRole = r.role_b || 'Associate'; 
         else relativeRole = r.relationship_type || 'Associate';
 
-        // Check if this relative's role is a family keyword
         const isFamily = FAMILY_KEYWORDS.some(k => relativeRole.toLowerCase().includes(k));
         
         if (isFamily) {
@@ -327,7 +316,6 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
     ]);
 
-    // Generate Family Report
     const familyReport = generateFamilyReport(relationships.results, id);
 
     return response({
@@ -435,7 +423,6 @@ async function handleGetSharedSubject(db, token) {
         
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
-        // FETCH ALL INFOS
         const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
         const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
         const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
@@ -507,8 +494,9 @@ function serveSharedHtml(token) {
 
         <!-- CONTENT -->
         <div v-else class="space-y-6 animate-fade-in">
-            
-            <!-- HEADER / IDENTITY -->
+            <!-- ... (Header, Tabs, Content same as before) ... -->
+             <!-- Only pasting relevant changed parts for shared view logic not requested to change but keeping it functional -->
+             <!-- HEADER / IDENTITY -->
             <div class="glass p-6 md:p-8 relative overflow-hidden">
                 <div class="absolute top-0 right-0 p-4 opacity-10">
                     <i class="fa-solid fa-fingerprint text-9xl"></i>
@@ -533,7 +521,6 @@ function serveSharedHtml(token) {
                                 <div class="text-xs font-mono text-slate-400">EXP: {{ formatTime(timer) }}</div>
                             </div>
                         </div>
-                        
                         <div class="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
                             <div v-if="data.alias" class="px-3 py-1.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-bold uppercase tracking-wide">
                                 <i class="fa-solid fa-mask mr-2"></i>{{data.alias}}
@@ -556,12 +543,10 @@ function serveSharedHtml(token) {
                 </button>
             </div>
 
-            <!-- TAB CONTENT: PROFILE, INTEL, TIMELINE, NETWORK, FILES, LOCATIONS -->
-            <!-- ... (Keeping existing tab implementations for brevity, similar to previous) ... -->
-            <!-- PROFILE TAB -->
+            <!-- (Tab Content) -->
             <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Physical Stats -->
-                <div class="glass p-6 md:col-span-1">
+                <!-- Physical Stats & Personal Info -->
+                 <div class="glass p-6 md:col-span-1">
                     <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Physical Profile</h3>
                     <div class="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
                         <div><div class="text-slate-500 text-xs">Height</div><div class="font-bold">{{data.height || '--'}}</div></div>
@@ -576,8 +561,6 @@ function serveSharedHtml(token) {
                         <div class="text-sm font-medium">{{data.identifying_marks}}</div>
                     </div>
                 </div>
-
-                <!-- Personal Info -->
                 <div class="glass p-6 md:col-span-2">
                     <h3 class="text-xs font-bold uppercase text-slate-400 mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Background Info</h3>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -599,50 +582,30 @@ function serveSharedHtml(token) {
                 </div>
             </div>
             
-            <!-- INTEL TAB -->
             <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Core Intel -->
                 <div class="glass p-6 md:col-span-2 space-y-6">
-                    <div>
-                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
-                            <i class="fa-solid fa-clipboard-list text-blue-500"></i> Routine & Modus Operandi
-                        </h3>
-                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.modus_operandi || 'No routine data recorded.'}}</div>
-                    </div>
-                    <div>
-                        <h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2">
-                            <i class="fa-solid fa-lock-open text-red-500"></i> Vulnerabilities & Notes
-                        </h3>
-                        <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.weakness || 'No vulnerabilities recorded.'}}</div>
-                    </div>
+                    <div><h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2"><i class="fa-solid fa-clipboard-list text-blue-500"></i> Routine & Modus Operandi</h3><div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.modus_operandi || 'No routine data recorded.'}}</div></div>
+                    <div><h3 class="flex items-center gap-2 text-sm font-bold uppercase text-slate-900 dark:text-white mb-2"><i class="fa-solid fa-lock-open text-red-500"></i> Vulnerabilities & Notes</h3><div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap">{{data.weakness || 'No vulnerabilities recorded.'}}</div></div>
                 </div>
-
-                <!-- Attributes List -->
                 <div class="glass p-6 md:col-span-1 space-y-4">
                     <h3 class="text-xs font-bold uppercase text-slate-400">Collected Attributes</h3>
                     <div v-if="!data.intel.length" class="text-sm text-slate-400 italic">No additional attributes.</div>
                     <div v-for="item in data.intel" class="p-3 border border-slate-100 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                        <div class="flex justify-between items-start mb-1">
-                            <span class="text-[10px] font-bold uppercase text-blue-500 tracking-wider">{{item.category}}</span>
-                            <span class="text-[10px] text-slate-400">{{new Date(item.created_at).toLocaleDateString()}}</span>
-                        </div>
+                        <div class="flex justify-between items-start mb-1"><span class="text-[10px] font-bold uppercase text-blue-500 tracking-wider">{{item.category}}</span><span class="text-[10px] text-slate-400">{{new Date(item.created_at).toLocaleDateString()}}</span></div>
                         <div class="text-xs text-slate-500 font-bold uppercase mb-0.5">{{item.label}}</div>
                         <div class="text-sm font-medium text-slate-900 dark:text-white break-words">{{item.value}}</div>
                     </div>
                 </div>
             </div>
 
-            <!-- TIMELINE TAB -->
             <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
                 <div class="glass p-6 md:p-8">
                     <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
                     <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-700 space-y-8">
                         <div v-for="ix in data.interactions" class="relative group">
                             <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
-                            <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                                <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
-                                <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
-                            </div>
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2"><span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span><span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span></div>
                             <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
                         </div>
                         <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
@@ -650,10 +613,9 @@ function serveSharedHtml(token) {
                 </div>
             </div>
 
-            <!-- NETWORK TAB -->
             <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
-                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0 border border-slate-600">
+                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0">
                         <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
                         <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
                     </div>
@@ -666,7 +628,6 @@ function serveSharedHtml(token) {
                 <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
             </div>
 
-            <!-- FILES TAB -->
             <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
                     <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
@@ -675,14 +636,11 @@ function serveSharedHtml(token) {
                         <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
                     </div>
                     <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
-                    <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                        {{m.description || 'File'}}
-                    </div>
+                    <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">{{m.description || 'File'}}</div>
                 </div>
                 <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
             </div>
 
-             <!-- LOCATIONS TAB -->
              <div v-if="activeTab === 'locations'" class="space-y-4">
                 <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
                     <div>
@@ -690,9 +648,7 @@ function serveSharedHtml(token) {
                         <div class="text-xs text-slate-500 mt-1">{{loc.address}}</div>
                         <div v-if="loc.notes" class="text-xs text-slate-400 mt-2 italic">"{{loc.notes}}"</div>
                     </div>
-                    <a v-if="loc.lat" :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 hover:bg-blue-100 transition-colors">
-                        <i class="fa-solid fa-location-arrow"></i>
-                    </a>
+                    <a v-if="loc.lat" :href="'https://www.google.com/maps/search/?api=1&query='+loc.lat+','+loc.lng" target="_blank" class="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-500 hover:bg-blue-100 transition-colors"><i class="fa-solid fa-location-arrow"></i></a>
                 </div>
                 <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
              </div>
@@ -894,9 +850,8 @@ function serveHtml() {
 
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                <!-- (Dashboard content skipped for brevity, keeping existing) -->
-                <div class="max-w-6xl mx-auto space-y-6">
-                    <!-- Stats Grid -->
+                <!-- (Dashboard content same) -->
+                 <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
@@ -920,7 +875,6 @@ function serveHtml() {
                         </button>
                     </div>
 
-                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                             <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
@@ -945,7 +899,7 @@ function serveHtml() {
 
             <!-- TARGETS LIST -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
-                <!-- (Targets content same as before) -->
+                <!-- (Targets content same) -->
                  <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-500"></i>
@@ -970,7 +924,7 @@ function serveHtml() {
 
             <!-- GLOBAL MAP TAB -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
-                <!-- (Map content same as before) -->
+                <!-- (Map content same) -->
                  <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
@@ -1041,7 +995,7 @@ function serveHtml() {
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     <!-- PROFILE -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                        <!-- (Profile content same as before) -->
+                        <!-- (Profile content same) -->
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
@@ -1103,6 +1057,9 @@ function serveHtml() {
                                 </div>
                             </div>
                         </div>
+                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-dashed border-slate-800">
+                            No detailed attributes logged yet.
+                        </div>
                     </div>
 
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
@@ -1125,7 +1082,7 @@ function serveHtml() {
                         </div>
                     </div>
 
-                    <!-- NETWORK (Detail) - UPDATED with Family Report -->
+                    <!-- NETWORK (Detail) - UPDATED -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Connections Graph</h3>
@@ -1151,10 +1108,34 @@ function serveHtml() {
                         <div class="flex-1 glass border border-slate-700/50 relative overflow-hidden min-h-[400px]">
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
+
+                         <!-- NEW: Manage Connections List -->
+                         <div class="mt-6">
+                            <h4 class="text-sm font-bold text-slate-400 uppercase mb-3">Manage Connections</h4>
+                            <div class="space-y-2">
+                                <div v-for="rel in selected.relationships" :key="rel.id" class="flex items-center justify-between p-3 glass bg-slate-900/50 border border-slate-800">
+                                    <div class="flex items-center gap-3">
+                                         <div class="w-8 h-8 rounded-full bg-slate-700 overflow-hidden shrink-0">
+                                            <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                                            <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-500">{{rel.target_name.charAt(0)}}</div>
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-bold text-white">{{rel.target_name}}</div>
+                                            <div class="text-xs text-blue-400">{{rel.relationship_type}} &harr; {{rel.role_b || 'Associate'}}</div>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button @click="openModal('edit-rel', rel)" class="text-slate-400 hover:text-white p-2"><i class="fa-solid fa-pen"></i></button>
+                                        <button @click="deleteItem('subject_relationships', rel.id)" class="text-slate-400 hover:text-red-500 p-2"><i class="fa-solid fa-trash"></i></button>
+                                    </div>
+                                </div>
+                                <div v-if="!selected.relationships.length" class="text-slate-500 text-sm italic text-center py-4">No connections found.</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div v-if="subTab === 'files'" class="space-y-6">
-                         <!-- ... (Files content same as before) ... -->
+                         <!-- ... (Files content same) ... -->
                          <div class="flex flex-col md:flex-row gap-6">
                             <div class="space-y-3 w-full md:w-56 shrink-0">
                                 <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
@@ -1179,7 +1160,7 @@ function serveHtml() {
                     </div>
 
                     <div v-show="subTab === 'map'" class="h-full flex flex-col">
-                        <!-- ... (Detail map same as before) ... -->
+                        <!-- ... (Detail map same) ... -->
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-white">Known Locations</h3>
                             <button @click="openModal('add-location')" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold border border-slate-700">Add Location</button>
@@ -1251,12 +1232,14 @@ function serveHtml() {
                     </div>
                 </div>
 
-                <!-- ADD REL WITH PRESETS -->
-                 <form v-if="modal.active === 'add-rel'" @submit.prevent="submitRel" class="space-y-6">
+                <!-- ADD/EDIT REL WITH PRESETS -->
+                 <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
                     <div class="p-4 bg-blue-900/20 border border-blue-800 rounded-lg text-sm text-blue-200 mb-4">
-                        Connect <strong>{{selected.full_name}}</strong> to:
+                        {{ modal.active === 'edit-rel' ? 'Editing connection for' : 'Connect' }} <strong>{{selected.full_name}}</strong>
                     </div>
-                    <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
+                    
+                    <!-- Only show select if adding new -->
+                    <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
                         <option value="" disabled selected>Select a Person</option>
                         <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
                     </select>
@@ -1283,14 +1266,14 @@ function serveHtml() {
 
                     <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
                         <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                        {{ processing ? 'Linking...' : 'Link Profiles' }}
+                        {{ processing ? 'Saving...' : (modal.active === 'edit-rel' ? 'Update Connection' : 'Link Profiles') }}
                     </button>
                  </form>
 
                 <!-- (Other forms reused) -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
-                    <!-- ... (Same subject form as before) ... -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                    <!-- ... (Same subject form) ... -->
+                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
                             <label class="block text-xs font-bold uppercase text-slate-500">Identity</label>
                             <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
@@ -1557,7 +1540,7 @@ function serveHtml() {
         };
 
         const modalTitle = computed(() => {
-             const m = { 'add-subject':'Add New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'add-intel':'Add Attribute', 'add-rel':'Add Connection', 'share-secure':'Share Profile', 'add-media-link': 'Add External Media' };
+             const m = { 'add-subject':'Add New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'add-intel':'Add Attribute', 'add-rel':'Add Connection', 'edit-rel': 'Edit Connection', 'share-secure':'Share Profile', 'add-media-link': 'Add External Media' };
              return m[modal.active] || 'Search';
         });
 
@@ -1742,19 +1725,40 @@ function serveHtml() {
 
         const changeTab = (t) => { currentTab.value = t; updateUrl(); };
         const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
-        const openModal = (t) => {
+        const openModal = (t, item = null) => {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
-             if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; // Init empty
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              if(t === 'add-location') {
                  forms.location = { subject_id: selected.value.id };
                  locationSearchQuery.value = '';
                  nextTick(() => initMap('locationPickerMap', [], true));
              }
+             // Handle Relationship Modals
+             if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; 
+             if(t === 'edit-rel' && item) {
+                // Determine orientation for pre-filling
+                let myRole = '', theirRole = '';
+                if (item.subject_a_id === selected.value.id) {
+                    myRole = item.relationship_type;
+                    theirRole = item.role_b;
+                } else {
+                    myRole = item.role_b;
+                    theirRole = item.relationship_type;
+                }
+                
+                forms.rel = { 
+                    id: item.id,
+                    subjectA: selected.value.id, // Current viewing subject acts as anchor
+                    targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id,
+                    type: myRole,
+                    reciprocal: theirRole
+                };
+             }
+
              if(t === 'share-secure') fetchShareLinks();
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
         };
@@ -1782,9 +1786,7 @@ function serveHtml() {
                  selected.value.relationships.forEach(r => {
                     const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
                     const targetAvatar = resolveImg(r.target_avatar) || 'https://ui-avatars.com/api/?name='+r.target_name;
-                    // Determine which role label to show on edge
-                    // If current subject is A, connection is B. Show "A's role to B" (Father) -> "B's role to A" (Son)
-                    // Let's show: "Father (to) Son" for clarity on graph
+                    // Determine label
                     let label = '';
                     if (r.subject_a_id === selected.value.id) label = r.relationship_type;
                     else label = r.role_b || r.relationship_type; 
@@ -1876,7 +1878,39 @@ function serveHtml() {
         const submitRel = async () => { 
             if (processing.value) return; processing.value = true; 
             try { 
-                await api('/relationship', { method: 'POST', body: JSON.stringify({...forms.rel, subjectA: selected.value.id}) }); 
+                // Determine Payload for Create vs Update
+                let payload = {};
+                const method = forms.rel.id ? 'PATCH' : 'POST';
+                
+                if (method === 'POST') {
+                    // Standard create: Current subject is A, Target is B
+                    payload = {
+                        subjectA: selected.value.id,
+                        targetId: forms.rel.targetId,
+                        type: forms.rel.type,        // Role of A
+                        reciprocal: forms.rel.reciprocal // Role of B
+                    };
+                } else {
+                     // Update: We need to map "My Role" and "Their Role" back to DB columns based on ID orientation
+                     // But actually, we can just send the raw values we want to set based on the current subject's perspective
+                     // And let the logic figure it out? No, let's keep it simple.
+                     // The backend update logic isn't complex. Let's send the ID and the fields we want to update.
+                     // BUT, we need to know if we are updating `relationship_type` or `role_b`.
+                     // Actually, if we send `subjectA` (current viewer) and `type` (current viewer's role) ...
+                     // It is easier to handle this mapping in Frontend before sending.
+                     
+                     // Re-find the original item to check orientation
+                     const originalRel = selected.value.relationships.find(r => r.id === forms.rel.id);
+                     if (originalRel.subject_a_id === selected.value.id) {
+                         // I am A. Update: relationship_type = type, role_b = reciprocal
+                         payload = { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal };
+                     } else {
+                         // I am B. Update: relationship_type = reciprocal, role_b = type
+                         payload = { id: forms.rel.id, type: forms.rel.reciprocal, reciprocal: forms.rel.type };
+                     }
+                }
+
+                await api('/relationship', { method: method, body: JSON.stringify(payload) }); 
                 viewSubject(selected.value.id); closeModal(); 
             } finally { processing.value = false; } 
         };
@@ -2030,9 +2064,15 @@ export default {
         }
         if (path === '/api/relationship') {
             const p = await req.json();
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
-            return response({success:true});
+            if (req.method === 'PATCH') {
+                 await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
+                    .bind(p.type, p.reciprocal, p.id).run();
+                 return response({success:true});
+            } else {
+                 await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
+                    .bind(p.subjectA, p.targetId, p.type, safeVal(p.reciprocal), isoTimestamp()).run();
+                 return response({success:true});
+            }
         }
         if (path === '/api/media-link') {
             const { subjectId, url, type, description } = await req.json();
