@@ -23,10 +23,6 @@ async function hashPassword(secret) {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function hashToken(token, secret = '') {
-  return hashPassword(`${token}${secret}`);
-}
-
 function sanitizeFileName(name) {
   return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
@@ -35,12 +31,6 @@ function generateToken() {
   const b = new Uint8Array(16);
   crypto.getRandomValues(b);
   return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
-}
-
-function httpError(message, status = 401) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
 }
 
 function response(data, status = 200) {
@@ -58,70 +48,6 @@ function safeVal(v) {
     return v === undefined || v === '' ? null : v;
 }
 
-async function createSession(db, adminId, secret) {
-    const sessionToken = generateToken();
-    const tokenHash = await hashToken(sessionToken, secret);
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(); // 7 days
-    await db.prepare('INSERT INTO admin_sessions (admin_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)')
-        .bind(adminId, tokenHash, isoTimestamp(), expiresAt).run();
-    return { token: sessionToken, expires_at: expiresAt };
-}
-
-async function validateSessionToken(token, env) {
-    const tokenHash = await hashToken(token, env.AUTH_SECRET || '');
-    const session = await env.DB.prepare('SELECT admin_id, expires_at FROM admin_sessions WHERE token_hash = ?')
-        .bind(tokenHash).first();
-
-    if (!session) throw httpError('INVALID SESSION', 401);
-    if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
-        await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(tokenHash).run();
-        throw httpError('SESSION EXPIRED', 401);
-    }
-
-    return session.admin_id;
-}
-
-async function authenticate(req, env) {
-    const header = req.headers.get('Authorization') || '';
-    if (!header.startsWith('Bearer ')) throw httpError('UNAUTHORIZED', 401);
-
-    const token = header.slice(7);
-    return validateSessionToken(token, env);
-}
-
-async function requireSubject(db, id, adminId) {
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
-    if (!subject) throw httpError('Subject not found', 404);
-    if (subject.admin_id !== Number(adminId)) throw httpError('FORBIDDEN', 403);
-    return subject;
-}
-
-async function ensureRecordOwnership(db, adminId, table, id) {
-    if (table === 'subjects') {
-        await requireSubject(db, id, adminId);
-        return;
-    }
-
-    if (['subject_interactions', 'subject_locations', 'subject_intel', 'subject_media'].includes(table)) {
-        const record = await db.prepare(`SELECT subject_id FROM ${table} WHERE id = ?`).bind(id).first();
-        if (!record) throw httpError('NOT FOUND', 404);
-        await requireSubject(db, record.subject_id, adminId);
-        return;
-    }
-
-    if (table === 'subject_relationships') {
-        const record = await db.prepare('SELECT subject_a_id, subject_b_id FROM subject_relationships WHERE id = ?')
-            .bind(id).first();
-        if (!record) throw httpError('NOT FOUND', 404);
-        const ownership = await db.prepare('SELECT COUNT(*) as count FROM subjects WHERE admin_id = ? AND id IN (?, ?)')
-            .bind(adminId, record.subject_a_id, record.subject_b_id).first();
-        if (!ownership || !ownership.count) throw httpError('FORBIDDEN', 403);
-        return;
-    }
-
-    throw httpError('FORBIDDEN', 403);
-}
-
 // --- Database Layer ---
 
 let schemaInitialized = false;
@@ -133,19 +59,10 @@ async function ensureSchema(db) {
 
       await db.batch([
         db.prepare(`CREATE TABLE IF NOT EXISTS admins (
-            id INTEGER PRIMARY KEY,
-            email TEXT UNIQUE,
-            password_hash TEXT,
+            id INTEGER PRIMARY KEY, 
+            email TEXT UNIQUE, 
+            password_hash TEXT, 
             created_at TEXT
-        )`),
-
-        db.prepare(`CREATE TABLE IF NOT EXISTS admin_sessions (
-            id INTEGER PRIMARY KEY,
-            admin_id INTEGER,
-            token_hash TEXT,
-            created_at TEXT,
-            expires_at TEXT,
-            FOREIGN KEY(admin_id) REFERENCES admins(id)
         )`),
         
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
@@ -261,9 +178,9 @@ async function ensureSchema(db) {
 
 async function nukeDatabase(db) {
     const tables = [
-        'subject_shares', 'subject_locations', 'subject_interactions',
-        'subject_relationships', 'subject_media', 'subject_intel',
-        'subjects', 'admin_sessions', 'admins'
+        'subject_shares', 'subject_locations', 'subject_interactions', 
+        'subject_relationships', 'subject_media', 'subject_intel', 
+        'subjects', 'admins'
     ];
     
     // Disable FKs to allow dropping tables in any order
@@ -354,7 +271,7 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
         db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role, s.threat_level as target_threat
             FROM subject_relationships r
             LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
@@ -392,7 +309,8 @@ async function handleGetGlobalNetwork(db, adminId) {
             label: s.full_name,
             group: s.threat_level,
             image: s.avatar_path,
-            shape: 'circularImage'
+            shape: 'circularImage',
+            occupation: s.occupation
         })),
         edges: relationships.results.map(r => ({
             from: r.subject_a_id,
@@ -406,7 +324,7 @@ async function handleGetGlobalNetwork(db, adminId) {
 
 async function handleGetMapData(db, adminId) {
     const query = `
-        SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level 
+        SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level, s.occupation
         FROM subject_locations l
         JOIN subjects s ON l.subject_id = s.id
         WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
@@ -418,40 +336,9 @@ async function handleGetMapData(db, adminId) {
 
 // --- Share Logic ---
 
-async function validateShareAccess(db, token, { incrementView = false } = {}) {
-    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
-    if (!link) throw httpError('LINK INVALID', 404);
-    if (!link.is_active) throw httpError('LINK REVOKED', 410);
-
-    if (link.duration_seconds) {
-        const now = Date.now();
-        const startedAt = link.started_at || isoTimestamp();
-
-        if (!link.started_at) {
-            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
-            link.started_at = startedAt;
-        }
-
-        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
-        const remaining = link.duration_seconds - elapsed;
-
-        if (remaining <= 0) {
-            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
-            throw httpError('LINK EXPIRED', 410);
-        }
-
-        link.remaining_seconds = Math.floor(remaining);
-    }
-
-    if (incrementView) await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
-    return link;
-}
-
-async function handleCreateShareLink(req, db, origin, adminId) {
+async function handleCreateShareLink(req, db, origin) {
     const { subjectId, durationMinutes } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
-
-    await requireSubject(db, subjectId, adminId);
     
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
@@ -464,45 +351,64 @@ async function handleCreateShareLink(req, db, origin, adminId) {
     return response({ url, token, duration_seconds: durationSeconds });
 }
 
-async function handleListShareLinks(db, subjectId, adminId) {
-    await requireSubject(db, subjectId, adminId);
+async function handleListShareLinks(db, subjectId) {
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
     return response(res.results);
 }
 
-async function handleRevokeShareLink(db, token, adminId) {
-    const link = await db.prepare('SELECT s.subject_id, sub.admin_id FROM subject_shares s JOIN subjects sub ON s.subject_id = sub.id WHERE s.token = ?')
-        .bind(token).first();
-    if (!link) return errorResponse('LINK INVALID', 404);
-    if (link.admin_id !== Number(adminId)) return errorResponse('FORBIDDEN', 403);
+async function handleRevokeShareLink(db, token) {
     await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
     return response({ success: true });
 }
 
 async function handleGetSharedSubject(db, token) {
-    const link = await validateShareAccess(db, token, { incrementView: true });
+    const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
+    if (!link) return errorResponse('LINK INVALID', 404);
+    if (!link.is_active) return errorResponse('LINK REVOKED', 410);
 
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
-    const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
-    const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
-    const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
-    const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
-    const relationships = await db.prepare(`
-        SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
-        FROM subject_relationships r
-        LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
-        WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-    `).bind(link.subject_id, link.subject_id, link.subject_id).all();
+    if (link.duration_seconds) {
+        const now = Date.now();
+        const startedAt = link.started_at || isoTimestamp();
+        
+        if (!link.started_at) {
+            await db.prepare('UPDATE subject_shares SET started_at = ? WHERE id = ?').bind(startedAt, link.id).run();
+        }
 
-    return response({
-        ...subject,
-        interactions: interactions.results,
-        locations: locations.results,
-        media: media.results,
-        intel: intel.results,
-        relationships: relationships.results,
-        meta: link.duration_seconds ? { remaining_seconds: link.remaining_seconds ?? Math.floor(link.duration_seconds) } : null
-    });
+        const elapsed = (now - new Date(startedAt).getTime()) / 1000;
+        const remaining = link.duration_seconds - elapsed;
+
+        if (remaining <= 0) {
+            await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
+            return errorResponse('LINK EXPIRED', 410);
+        }
+        
+        await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
+
+        // FETCH ALL INFOS
+        const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
+        const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+        const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+        const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+        const relationships = await db.prepare(`
+            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+            FROM subject_relationships r
+            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+        `).bind(link.subject_id, link.subject_id, link.subject_id).all();
+
+
+        return response({
+            ...subject,
+            interactions: interactions.results,
+            locations: locations.results,
+            media: media.results,
+            intel: intel.results,
+            relationships: relationships.results,
+            meta: { remaining_seconds: Math.floor(remaining) }
+        });
+    }
+    return errorResponse('INVALID CONFIG', 500);
 }
 
 // --- Frontend: Shared Link View ---
@@ -550,7 +456,6 @@ function serveSharedHtml(token) {
 
         <!-- CONTENT -->
         <div v-else class="space-y-6 animate-fade-in">
-            
             <!-- HEADER / IDENTITY -->
             <div class="glass p-6 md:p-8 relative overflow-hidden">
                 <div class="absolute top-0 right-0 p-4 opacity-10">
@@ -599,9 +504,9 @@ function serveSharedHtml(token) {
                 </button>
             </div>
 
-            <!-- TAB CONTENT -->
-            
-            <!-- 1. PROFILE TAB -->
+            <!-- TAB CONTENT: PROFILE, INTEL, TIMELINE, NETWORK, FILES, LOCATIONS -->
+            <!-- ... (Keeping existing tab implementations for brevity, similar to previous) ... -->
+            <!-- PROFILE TAB -->
             <div v-if="activeTab === 'profile'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Physical Stats -->
                 <div class="glass p-6 md:col-span-1">
@@ -641,8 +546,8 @@ function serveSharedHtml(token) {
                     </div>
                 </div>
             </div>
-
-            <!-- 2. INTEL TAB -->
+            
+            <!-- INTEL TAB -->
             <div v-if="activeTab === 'intel'" class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Core Intel -->
                 <div class="glass p-6 md:col-span-2 space-y-6">
@@ -675,28 +580,28 @@ function serveSharedHtml(token) {
                 </div>
             </div>
 
-            <!-- 3. TIMELINE TAB (UPDATED) -->
+            <!-- TIMELINE TAB -->
             <div v-if="activeTab === 'timeline'" class="max-w-3xl mx-auto">
                 <div class="glass p-6 md:p-8">
                     <h3 class="text-lg font-bold mb-6 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-slate-400"></i> Interaction History</h3>
-                    <div class="relative pl-8 border-l-2 border-slate-200 dark:border-slate-700 space-y-8 my-4">
+                    <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-700 space-y-8">
                         <div v-for="ix in data.interactions" class="relative group">
-                            <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
+                            <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-500"></div>
                             <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                 <span class="text-sm font-bold text-slate-900 dark:text-white">{{ix.type}}</span>
                                 <span class="text-xs font-mono text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
                             </div>
-                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 border border-slate-100 dark:border-slate-700 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details.'}}</div>
+                            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
                         </div>
                         <div v-if="!data.interactions.length" class="text-center text-slate-400 italic py-8">No interactions recorded.</div>
                     </div>
                 </div>
             </div>
 
-            <!-- 4. NETWORK TAB -->
+            <!-- NETWORK TAB -->
             <div v-if="activeTab === 'network'" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <div v-for="rel in data.relationships" class="glass p-4 flex items-center gap-4 hover:border-blue-500 transition-colors">
-                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0">
+                    <div class="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0 border border-slate-600">
                         <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
                         <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
                     </div>
@@ -709,15 +614,15 @@ function serveSharedHtml(token) {
                 <div v-if="!data.relationships.length" class="col-span-full text-center py-12 text-slate-400 glass">No known associates.</div>
             </div>
 
-            <!-- 5. FILES TAB -->
+            <!-- FILES TAB -->
             <div v-if="activeTab === 'files'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div v-for="m in data.media" class="glass aspect-square relative group overflow-hidden rounded-xl">
-                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || ('/api/media/'+m.object_key+'?shareToken='+token)" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
                     <div v-else class="w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400">
                         <i class="fa-solid fa-file text-4xl mb-2"></i>
                         <span class="text-xs uppercase font-bold">{{m.content_type ? m.content_type.split('/')[1] : 'LINK'}}</span>
                     </div>
-                    <a :href="m.external_url || ('/api/media/'+m.object_key+'?shareToken='+token)" target="_blank" class="absolute inset-0 z-10"></a>
+                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
                     <div class="absolute bottom-0 inset-x-0 bg-black/60 backdrop-blur-sm p-2 text-white text-xs truncate opacity-0 group-hover:opacity-100 transition-opacity">
                         {{m.description || 'File'}}
                     </div>
@@ -725,7 +630,7 @@ function serveSharedHtml(token) {
                 <div v-if="!data.media.length" class="col-span-full text-center py-12 text-slate-400 glass">No files attached.</div>
             </div>
 
-             <!-- 6. LOCATIONS TAB -->
+             <!-- LOCATIONS TAB -->
              <div v-if="activeTab === 'locations'" class="space-y-4">
                 <div v-for="loc in data.locations" class="glass p-4 flex justify-between items-center">
                     <div>
@@ -739,7 +644,6 @@ function serveSharedHtml(token) {
                 </div>
                 <div v-if="!data.locations.length" class="text-center py-12 text-slate-400 glass">No locations recorded.</div>
              </div>
-
         </div>
     </div>
     <script>
@@ -762,7 +666,7 @@ function serveSharedHtml(token) {
                     {id: 'files', label: 'Files', icon: 'fa-solid fa-folder-open'}
                 ];
 
-                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/' + p + '?shareToken=' + token) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
+                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : 'https://ui-avatars.com/api/?background=random&name=' + (data.value?.full_name || 'User');
                 
                 const formatTime = (s) => {
                     if(s <= 0) return "EXPIRED";
@@ -835,7 +739,6 @@ function serveHtml() {
     :root { --primary: #3b82f6; --bg-dark: #020617; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-dark); color: #cbd5e1; }
     
-    /* Improved Glassmorphism for Dark Mode */
     .glass { 
         background: rgba(30, 41, 59, 0.7); 
         backdrop-filter: blur(12px); 
@@ -854,15 +757,12 @@ function serveHtml() {
     }
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(59, 130, 246, 0.2); }
 
-    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
-    /* Mobile Safe Area Padding */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     
-    /* Animation */
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.99); } to { opacity: 1; transform: scale(1); } }
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     
@@ -878,10 +778,7 @@ function serveHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative overflow-hidden bg-slate-950">
-        <div class="absolute inset-0 overflow-hidden">
-            <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-            <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl"></div>
-        </div>
+        <!-- ... (auth screen same as before) ... -->
         <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10 border border-slate-800">
             <div class="text-center mb-8">
                 <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg shadow-blue-500/20">
@@ -918,7 +815,7 @@ function serveHtml() {
             <button @click="handleLogout" class="text-slate-400 hover:text-red-500 p-4 transition-colors" title="Logout"><i class="fa-solid fa-power-off"></i></button>
         </nav>
 
-        <!-- MOBILE TOP BAR (Brand + Actions) -->
+        <!-- MOBILE TOP BAR -->
         <header class="md:hidden h-14 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 flex items-center justify-between px-4 z-20 shrink-0 sticky top-0">
             <div class="flex items-center gap-2.5">
                 <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm shadow-md">
@@ -936,10 +833,10 @@ function serveHtml() {
         <!-- CONTENT -->
         <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-20 md:pb-0 safe-area-pb">
 
-            <!-- DASHBOARD -->
+            <!-- DASHBOARD, TARGETS, MAP, NETWORK, DETAIL Tabs -->
+            <!-- (Reusing previous dashboard/targets layout for brevity) -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
-                <div class="max-w-6xl mx-auto space-y-6">
-                    <!-- Stats Grid -->
+                 <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-400 font-bold uppercase tracking-wider">Profiles</div>
@@ -963,7 +860,6 @@ function serveHtml() {
                         </button>
                     </div>
 
-                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                             <h3 class="text-sm font-bold text-slate-300">Recent Updates</h3>
@@ -983,10 +879,10 @@ function serveHtml() {
                             </div>
                         </div>
                     </div>
-                </div>
+                 </div>
             </div>
 
-            <!-- TARGETS LIST -->
+            <!-- TARGETS -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
                 <div class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="relative">
@@ -1013,7 +909,6 @@ function serveHtml() {
             <!-- GLOBAL MAP TAB (Updated) -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
-                
                 <!-- Live Map Search -->
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
@@ -1021,8 +916,7 @@ function serveHtml() {
                         <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-slate-400 group-focus-within:text-blue-500"></i>
                     </div>
                 </div>
-
-                <!-- Map Sidebar Overlay (Collapsible on Mobile) -->
+                <!-- Map Sidebar -->
                 <div class="absolute top-16 left-4 bottom-4 w-72 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 border-slate-700/50" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
                     <div class="p-3 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/80 backdrop-blur">
                         <h3 class="font-bold text-white text-sm">Active Points</h3>
@@ -1040,11 +934,7 @@ function serveHtml() {
                         </div>
                     </div>
                 </div>
-                
-                <!-- Toggle Button (Visible when sidebar hidden) -->
-                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar">
-                    <i class="fa-solid fa-list-ul"></i>
-                </button>
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-slate-900 p-2.5 rounded-full shadow-lg text-white border border-slate-700 active:scale-95 transition-transform" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
             </div>
 
             <!-- GLOBAL NETWORK TAB (Updated) -->
@@ -1058,7 +948,6 @@ function serveHtml() {
 
             <!-- SUBJECT DETAIL -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-950">
-                
                 <!-- DETAIL HEADER -->
                 <div class="h-16 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/80 backdrop-blur z-10 sticky top-0">
                     <div class="flex items-center gap-3">
@@ -1084,12 +973,11 @@ function serveHtml() {
                     </button>
                 </div>
 
-                <!-- DETAIL CONTENT (Same as before, skipped for brevity in diff but included in logic) -->
-                <!-- ... existing detail content ... -->
+                <!-- DETAIL CONTENT -->
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
                     <!-- PROFILE -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-slate-800 rounded-xl relative overflow-hidden group shadow-2xl border border-slate-700/50">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
@@ -1132,8 +1020,8 @@ function serveHtml() {
                         </div>
                     </div>
                     
-                    <!-- ATTRIBUTES -->
-                    <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
+                    <!-- ATTRIBUTES, TIMELINE, FILES (Same as before) -->
+                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg text-white">Detailed Attributes</h3>
                             <button @click="openModal('add-intel')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-transform">
@@ -1150,12 +1038,8 @@ function serveHtml() {
                                 </div>
                             </div>
                         </div>
-                        <div v-if="!selected.intel.length" class="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-dashed border-slate-800">
-                            No detailed attributes logged yet.
-                        </div>
                     </div>
 
-                    <!-- TIMELINE -->
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="flex justify-between items-center">
                              <h3 class="font-bold text-lg text-white">History</h3>
@@ -1164,7 +1048,7 @@ function serveHtml() {
                         <div class="flex-1 glass p-6 overflow-y-auto border-slate-700/50">
                             <div class="relative pl-8 border-l-2 border-slate-800 space-y-8 my-4">
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
-                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-slate-900 border-4 border-blue-600"></div>
+                                    <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white dark:bg-slate-900 border-4 border-blue-600"></div>
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                         <span class="text-sm font-bold text-white">{{ix.type}}</span>
                                         <span class="text-xs font-mono text-slate-500">{{new Date(ix.date).toLocaleString()}}</span>
@@ -1172,6 +1056,30 @@ function serveHtml() {
                                     <div class="bg-slate-900/50 p-4 rounded-lg text-sm text-slate-300 border border-slate-800 whitespace-pre-wrap">{{ix.transcript || ix.conclusion || 'No details recorded.'}}</div>
                                 </div>
                                 <div v-if="!selected.interactions.length" class="text-slate-500 italic">No history found.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="subTab === 'files'" class="space-y-6">
+                        <div class="flex flex-col md:flex-row gap-6">
+                            <div class="space-y-3 w-full md:w-56 shrink-0">
+                                <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
+                                    <span class="text-xs font-bold uppercase">Upload</span>
+                                </div>
+                                <div @click="openModal('add-media-link')" class="h-10 rounded-xl border border-slate-700 bg-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-700 transition-all text-slate-400 hover:text-white gap-2">
+                                    <i class="fa-solid fa-link text-sm"></i>
+                                    <span class="text-xs font-bold uppercase">Link URL</span>
+                                </div>
+                            </div>
+                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
+                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
+                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
+                                    <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
+                                    <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
+                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1209,31 +1117,6 @@ function serveHtml() {
                             <div id="relNetwork" class="absolute inset-0"></div>
                         </div>
                     </div>
-                    
-                    <!-- FILES (Detail) -->
-                    <div v-if="subTab === 'files'" class="space-y-6">
-                        <div class="flex flex-col md:flex-row gap-6">
-                            <div class="space-y-3 w-full md:w-56 shrink-0">
-                                <div @click="triggerUpload('media')" class="h-28 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/30 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/5 transition-all text-slate-500 hover:text-blue-400 group">
-                                    <i class="fa-solid fa-cloud-arrow-up text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
-                                    <span class="text-xs font-bold uppercase">Upload</span>
-                                </div>
-                                <div @click="openModal('add-media-link')" class="h-10 rounded-xl border border-slate-700 bg-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-700 transition-all text-slate-400 hover:text-white gap-2">
-                                    <i class="fa-solid fa-link text-sm"></i>
-                                    <span class="text-xs font-bold uppercase">Link URL</span>
-                                </div>
-                            </div>
-                            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                                <div v-for="m in selected.media" :key="m.id" class="glass group relative aspect-square overflow-hidden hover:shadow-xl transition-all rounded-xl border-slate-700/50">
-                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || mediaUrl(m.object_key)" class="w-full h-full object-cover transition-transform group-hover:scale-105" onerror="this.src='https://placehold.co/400?text=IMG'">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-slate-500 bg-slate-900"><i class="fa-solid fa-file text-4xl"></i></div>
-                                    <a :href="m.external_url || mediaUrl(m.object_key)" target="_blank" class="absolute inset-0 z-10"></a>
-                                    <div class="absolute bottom-0 inset-x-0 bg-black/80 p-2 text-[10px] font-medium truncate backdrop-blur-sm text-slate-300">{{m.description}}</div>
-                                    <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-1 right-1 bg-red-500/90 text-white w-6 h-6 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:scale-110"><i class="fa-solid fa-times text-xs"></i></button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -1251,7 +1134,20 @@ function serveHtml() {
 
     <!-- MODAL -->
     <div v-if="modal.active" class="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
+        <!-- Mini Profile Modal -->
+        <div v-if="modal.active === 'mini-profile'" class="w-full max-w-sm glass bg-slate-900 shadow-2xl flex flex-col animate-fade-in border border-slate-700 p-6 text-center">
+            <div class="w-24 h-24 rounded-full overflow-hidden border-2 border-slate-600 bg-slate-800 mx-auto mb-4">
+                <img :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover">
+            </div>
+            <h3 class="text-xl font-bold text-white mb-1">{{modal.data.full_name}}</h3>
+            <p class="text-sm text-slate-400 mb-6">{{modal.data.occupation || 'No Occupation'}}</p>
+            <div class="flex gap-2">
+                 <button @click="closeModal" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-lg text-sm">Close</button>
+                 <button @click="window.viewSubject(modal.data.id)" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg text-sm">View Profile</button>
+            </div>
+        </div>
+
+        <div v-else class="w-full max-w-2xl glass bg-slate-900 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in border border-slate-700">
             <div class="flex justify-between items-center p-4 border-b border-slate-800 shrink-0 bg-slate-900/50">
                 <h3 class="font-bold text-white">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
@@ -1271,9 +1167,9 @@ function serveHtml() {
                         </div>
                     </div>
                 </div>
-                
-                <!-- (OTHER FORMS FROM PREVIOUS VERSIONS GO HERE - REUSED FOR BREVITY) -->
-                <!-- Use the logic from previous response for forms (subject, interaction, etc.) -->
+
+                <!-- FORM TEMPLATES (Reused) -->
+                <!-- ADD/EDIT SUBJECT -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
@@ -1299,13 +1195,11 @@ function serveHtml() {
                              <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation / Group" class="glass-input w-full p-3 text-sm">
                         </div>
                     </div>
-                    
                     <div class="space-y-4">
                         <label class="block text-xs font-bold uppercase text-slate-500">Details</label>
                         <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                         <textarea v-model="forms.subject.weakness" placeholder="Sensitivities & Notes..." rows="3" class="glass-input w-full p-3 text-sm"></textarea>
                     </div>
-
                     <div class="pt-4 border-t border-slate-800">
                         <h4 class="text-xs font-bold uppercase text-slate-500 mb-4">Physical Stats</h4>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1314,13 +1208,13 @@ function serveHtml() {
                             <input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs">
                         </div>
                     </div>
-
                     <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-lg text-sm mt-4 shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
                         <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
                         {{ processing ? 'Saving...' : 'Save Profile' }}
                     </button>
                 </form>
 
+                <!-- ADD INTEL, SHARE, LOCATION, INTERACTION, REL, MEDIA (Standard forms) -->
                 <!-- ADD ATTRIBUTE -->
                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
@@ -1332,8 +1226,8 @@ function serveHtml() {
                         <option>Medical</option>
                         <option>Family</option>
                     </select>
-                    <input v-model="forms.intel.label" placeholder="Label (e.g., 'Instagram', 'University')" class="glass-input w-full p-3 text-sm" required>
-                    <textarea v-model="forms.intel.value" placeholder="Value / Detail" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
+                    <input v-model="forms.intel.label" placeholder="Label" class="glass-input w-full p-3 text-sm" required>
+                    <textarea v-model="forms.intel.value" placeholder="Value" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
                     <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
                         <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
                         {{ processing ? 'Adding...' : 'Add Attribute' }}
@@ -1342,8 +1236,8 @@ function serveHtml() {
 
                  <!-- ADD MEDIA LINK -->
                  <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
-                    <input v-model="forms.mediaLink.url" placeholder="Paste Image/File URL *" class="glass-input w-full p-3 text-sm" required>
-                    <input v-model="forms.mediaLink.description" placeholder="Description / Label" class="glass-input w-full p-3 text-sm">
+                    <input v-model="forms.mediaLink.url" placeholder="Paste URL *" class="glass-input w-full p-3 text-sm" required>
+                    <input v-model="forms.mediaLink.description" placeholder="Description" class="glass-input w-full p-3 text-sm">
                     <select v-model="forms.mediaLink.type" class="glass-input w-full p-3 text-sm">
                         <option value="image/jpeg">Image</option>
                         <option value="application/pdf">Document</option>
@@ -1358,7 +1252,7 @@ function serveHtml() {
 
                  <!-- SECURE SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                    <p class="text-sm text-slate-400">Create a temporary, secure link to share this profile dossier.</p>
+                    <p class="text-sm text-slate-400">Create a temporary secure link.</p>
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="glass-input w-32 p-2 text-sm">
                             <option :value="30">30 Mins</option>
@@ -1428,7 +1322,7 @@ function serveHtml() {
                     <select v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm">
                         <option v-for="s in subjects" :value="s.id">{{s.full_name}} ({{s.occupation}})</option>
                     </select>
-                    <input v-model="forms.rel.type" placeholder="Relationship (e.g., Colleague, Spouse)" class="glass-input w-full p-3 text-sm">
+                    <input v-model="forms.rel.type" placeholder="Relationship" class="glass-input w-full p-3 text-sm">
                     <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-lg shadow-blue-500/20 disabled:opacity-50">
                         <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
                         {{ processing ? 'Linking...' : 'Link Profiles' }}
@@ -1453,7 +1347,7 @@ function serveHtml() {
       setup() {
         const view = ref('auth');
         const loading = ref(false);
-        const processing = ref(false); // Global processing state
+        const processing = ref(false); 
         const auth = reactive({ email: '', password: '' });
         const tabs = [
             { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Dashboard' },
@@ -1474,7 +1368,7 @@ function serveHtml() {
         const selected = ref(null);
         const activeShareLinks = ref([]);
         const search = ref('');
-        const modal = reactive({ active: null });
+        const modal = reactive({ active: null, data: null });
         const analysisResult = ref(null);
         const mapData = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768); 
@@ -1497,7 +1391,7 @@ function serveHtml() {
             subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: { minutes: 60 }, mediaLink: {}
         });
 
-        // ... (computed properties same as before) ...
+        // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => 
             s.full_name.toLowerCase().includes(search.value.toLowerCase()) || 
             (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase()))
@@ -1532,6 +1426,8 @@ function serveHtml() {
             return results.slice(0, 5);
         });
 
+        const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
+
         const updateUrl = () => {
             const url = new URL(window.location);
             url.searchParams.set('tab', currentTab.value);
@@ -1548,20 +1444,10 @@ function serveHtml() {
              return m[modal.active] || 'Search';
         });
 
+        // API
         const api = async (ep, opts = {}) => {
             try {
-                const token = localStorage.getItem('auth_token');
-                const headers = { ...(opts.headers || {}) };
-                if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-                if (token) headers['Authorization'] = 'Bearer ' + token;
-
-                const res = await fetch('/api' + ep, { ...opts, headers });
-                if (res.status === 401) {
-                    localStorage.removeItem('auth_token');
-                    localStorage.removeItem('admin_id');
-                    view.value = 'auth';
-                    throw new Error('Please log in again.');
-                }
+                const res = await fetch('/api' + ep, opts);
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 return data;
@@ -1572,18 +1458,18 @@ function serveHtml() {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
-                localStorage.setItem('auth_token', res.token);
-                localStorage.removeItem('admin_id');
+                localStorage.setItem('admin_id', res.id);
                 view.value = 'app';
                 fetchData();
             } catch(e) {} finally { loading.value = false; }
         };
 
         const fetchData = async () => {
+            const adminId = localStorage.getItem('admin_id');
             const [d, s, sugg] = await Promise.all([
-                api('/dashboard'),
-                api('/subjects'),
-                api('/suggestions')
+                api('/dashboard?adminId='+adminId),
+                api('/subjects?adminId='+adminId),
+                api('/suggestions?adminId='+adminId)
             ]);
             stats.value = d.stats;
             feed.value = d.feed;
@@ -1597,6 +1483,7 @@ function serveHtml() {
             if(!isRestoring) subTab.value = 'overview'; 
             analysisResult.value = analyzeLocal(selected.value);
             updateUrl();
+            if(modal.active) closeModal(); // Close mini-profile if open
         };
 
         const analyzeLocal = (s) => {
@@ -1608,7 +1495,7 @@ function serveHtml() {
              return { summary: \`Profile is \${completeness}% complete based on collected data points.\`, tags };
         };
 
-        // Initialize Map Logic (FIXED RESIZING ISSUE)
+        // MAPS
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
@@ -1621,7 +1508,6 @@ function serveHtml() {
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-            // FIX: Invalidate size for ALL maps after a short delay to ensure correct rendering
             setTimeout(() => map.invalidateSize(), 200);
 
             if(isPicker) {
@@ -1654,6 +1540,8 @@ function serveHtml() {
                 return acc;
             }, {});
 
+            const allPoints = [];
+
             Object.values(grouped).forEach(group => {
                 if(group.locations.length > 1) {
                     const latlngs = group.locations.map(l => [l.lat, l.lng]);
@@ -1661,21 +1549,33 @@ function serveHtml() {
                 }
                 group.locations.forEach(loc => {
                     if(!loc.lat) return;
-                    const avatarUrl = resolveImg(loc.avatar_path);
+                    allPoints.push([loc.lat, loc.lng]);
+                    
+                    const avatarUrl = resolveImg(loc.avatar_path) || 'https://ui-avatars.com/api/?background=random&name='+loc.full_name;
                     const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-slate-800">
                         <img src="\${avatarUrl}">
                         <div class="marker-label">\${loc.name}</div>
                     </div>\`;
                     const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20] });
                     const marker = L.marker([loc.lat, loc.lng], { icon }).addTo(map);
-                    marker.bindPopup(\`
-                        <div class="text-slate-800">
+                    
+                    // Custom Popup with Action
+                    const popupContent = document.createElement('div');
+                    popupContent.innerHTML = \`
+                        <div class="text-slate-800 text-sm">
                             <strong>\${loc.full_name}</strong><br>
-                            \${loc.name} (\${loc.type})
+                            <span class="text-xs">\${loc.name} (\${loc.type})</span>
+                            <button class="mt-2 w-full bg-blue-600 text-white text-xs py-1 rounded hover:bg-blue-700" onclick="window.viewSubject(\${loc.subject_id})">View Profile</button>
                         </div>
-                    \`);
+                    \`;
+                    marker.bindPopup(popupContent);
                 });
             });
+
+            // Auto-Zoom to fit bounds
+            if (allPoints.length > 0) {
+                map.fitBounds(allPoints, { padding: [50, 50] });
+            }
         };
 
         const updateMapFilter = () => { if(warRoomMapInstance) renderMapData(warRoomMapInstance, filteredMapData.value); };
@@ -1687,12 +1587,11 @@ function serveHtml() {
             }
         };
         
-        // Use this specific flyTo for subject detail map
         const flyTo = (loc) => {
              if(mapInstance) mapInstance.flyTo([loc.lat, loc.lng], 15);
         };
 
-        // ... (Debounce, SelectLocation, etc. same as before) ...
+        // Utility
         const debounceSearch = () => {
             clearTimeout(searchTimeout);
             isSearching.value = true;
@@ -1715,13 +1614,13 @@ function serveHtml() {
             }
         };
 
-          const changeTab = (t) => { currentTab.value = t; updateUrl(); };
-          const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
-          const openModal = (t) => {
-               modal.active = t;
-               if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
-               if(t === 'edit-profile') forms.subject = { ...selected.value };
-               if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
+        const changeTab = (t) => { currentTab.value = t; updateUrl(); };
+        const changeSubTab = (t) => { subTab.value = t; updateUrl(); };
+        const openModal = (t) => {
+             modal.active = t;
+             if(t === 'add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
+             if(t === 'edit-profile') forms.subject = { ...selected.value };
+             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
@@ -1733,34 +1632,78 @@ function serveHtml() {
              if(t === 'share-secure') fetchShareLinks();
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
         };
-        const closeModal = () => modal.active = null;
+        const closeModal = () => { modal.active = null; modal.data = null; };
 
+        // Watchers
         watch(() => subTab.value, (val) => {
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
             if(val === 'network') nextTick(() => {
                  const container = document.getElementById('relNetwork');
                  if(!container || !selected.value) return;
-                 const nodes = [{id: selected.value.id, label: selected.value.full_name, color: '#2563eb', size: 30}];
+                 
+                 const mainAvatar = resolveImg(selected.value.avatar_path) || 'https://ui-avatars.com/api/?name='+selected.value.full_name;
+                 
+                 const nodes = [{
+                     id: selected.value.id, 
+                     label: selected.value.full_name, 
+                     color: '#2563eb', 
+                     size: 30,
+                     shape: 'circularImage',
+                     image: mainAvatar
+                 }];
+                 
                  const edges = [];
                  selected.value.relationships.forEach(r => {
                     const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
-                    nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, color: '#94a3b8' });
+                    const targetAvatar = resolveImg(r.target_avatar) || 'https://ui-avatars.com/api/?name='+r.target_name;
+                    
+                    nodes.push({ 
+                        id: targetId || 'ext-'+r.id, 
+                        label: r.target_name, 
+                        color: '#94a3b8',
+                        shape: 'circularImage',
+                        image: targetAvatar
+                    });
                     edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.relationship_type, font: { align: 'middle' } });
                  });
-                 new vis.Network(container, { nodes, edges }, { nodes: { shape: 'dot' } });
+                 
+                 const network = new vis.Network(container, { nodes, edges }, { nodes: { shape: 'circularImage', borderWidth: 2 } });
+                 
+                 // Handle Click on Personal Network
+                 network.on("click", (params) => {
+                     if(params.nodes.length > 0) {
+                         const nodeId = params.nodes[0];
+                         if(nodeId === selected.value.id) return; // Ignore clicking self
+                         
+                         const rel = selected.value.relationships.find(r => 
+                             (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) ||
+                             (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId)
+                         );
+                         
+                         if(rel) {
+                             modal.data = {
+                                 id: nodeId,
+                                 full_name: rel.target_name,
+                                 occupation: rel.target_role,
+                                 avatar_path: rel.target_avatar // raw path, resolveImg called in template
+                             };
+                             modal.active = 'mini-profile';
+                         }
+                     }
+                 });
             });
         });
 
-          watch(() => currentTab.value, (val) => {
-               updateUrl();
-               if(val === 'map') nextTick(async () => {
-                   const d = await api('/map-data');
-                   mapData.value = d;
-                   initMap('warRoomMap', d);
-               });
-               if(val === 'network') nextTick(async () => {
-                 const data = await api('/global-network');
-                 const container = document.getElementById('globalNetworkGraph');
+        watch(() => currentTab.value, (val) => {
+             updateUrl();
+             if(val === 'map') nextTick(async () => {
+                 const d = await api('/map-data?adminId=' + localStorage.getItem('admin_id'));
+                 mapData.value = d;
+                 initMap('warRoomMap', d);
+             });
+             if(val === 'network') nextTick(async () => {
+                const data = await api('/global-network?adminId=' + localStorage.getItem('admin_id'));
+                const container = document.getElementById('globalNetworkGraph');
                 const options = {
                     nodes: { 
                         shape: 'circularImage', borderWidth: 2, size: 25, 
@@ -1771,13 +1714,30 @@ function serveHtml() {
                     physics: { stabilization: true }
                 };
                 
-                 data.nodes.forEach(n => {
-                     n.image = n.image ? (n.image.startsWith('http') ? n.image : mediaUrl(n.image)) : 'https://ui-avatars.com/api/?background=random&name='+n.label;
-                     if(n.group === 'Critical') n.color = { border: '#ef4444' };
-                     if(n.group === 'High') n.color = { border: '#f97316' };
-                 });
+                data.nodes.forEach(n => { 
+                    n.image = n.image ? (n.image.startsWith('http') ? n.image : '/api/media/'+n.image) : 'https://ui-avatars.com/api/?background=random&name='+n.label;
+                    if(n.group === 'Critical') n.color = { border: '#ef4444' };
+                    if(n.group === 'High') n.color = { border: '#f97316' };
+                });
 
-                new vis.Network(container, data, options);
+                const network = new vis.Network(container, data, options);
+                
+                // Handle Click on Global Network
+                network.on("click", (params) => {
+                    if(params.nodes.length > 0) {
+                         const nodeId = params.nodes[0];
+                         const nodeData = data.nodes.find(n => n.id === nodeId);
+                         if(nodeData) {
+                             modal.data = {
+                                 id: nodeId,
+                                 full_name: nodeData.label,
+                                 occupation: nodeData.occupation,
+                                 avatar_path: nodeData.image // already resolved URL in API logic or raw
+                             };
+                             modal.active = 'mini-profile';
+                         }
+                    }
+                });
              });
         });
 
@@ -1853,13 +1813,6 @@ function serveHtml() {
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => navigator.clipboard.writeText(t);
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
-        const mediaUrl = (p) => {
-            if (!p) return null;
-            if (p.startsWith('http')) return p;
-            const token = localStorage.getItem('auth_token');
-            return '/api/media/' + p + (token ? '?auth=' + token : '');
-        };
-        const resolveImg = (p) => mediaUrl(p);
         const getThreatColor = (l, isBg = false) => {
              const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'amber', 'Low': 'emerald' }[l] || 'slate';
              return isBg ? \`bg-\${c}-100 text-\${c}-700\` : \`text-\${c}-600\`;
@@ -1876,16 +1829,22 @@ function serveHtml() {
         // NEW LOGOUT FUNCTION
         const handleLogout = () => {
              if(confirm("Are you sure you want to log out?")) {
-                 localStorage.removeItem('auth_token');
+                 localStorage.removeItem('admin_id');
                  localStorage.removeItem('active_tab');
                  location.reload();
              }
         };
 
         onMounted(() => {
-            if(localStorage.getItem('auth_token')) {
+            if(localStorage.getItem('admin_id')) {
                 view.value = 'app';
                 fetchData();
+                
+                // Expose ViewSubject to window for Leaflet popups
+                window.viewSubject = (id) => {
+                    viewSubject(id);
+                };
+                
                 const id = params.get('id');
                 if(id) viewSubject(id, true);
             }
@@ -1898,7 +1857,7 @@ function serveHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData, mediaUrl
+            isSearching, mapData, showMapSidebar, flyToGlobal, flyTo, fileInput, submitMediaLink, mapSearchQuery, updateMapFilter, filteredMapData
         };
       }
     }).mount('#app');
@@ -1907,201 +1866,3 @@ function serveHtml() {
 </html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
-
-// --- Route Handling ---
-
-  export default {
-    async fetch(req, env) {
-      const url = new URL(req.url);
-      const path = url.pathname;
-
-      try {
-          if (!schemaInitialized) await ensureSchema(env.DB);
-
-          const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-          const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-          const isMediaWithShareToken = path.startsWith('/api/media/') && url.searchParams.get('shareToken');
-          const isMediaWithAuthToken = path.startsWith('/api/media/') && url.searchParams.get('auth');
-          const isPublicApi = path === '/api/login' || !!shareApiMatch || isMediaWithShareToken || isMediaWithAuthToken;
-          let adminId = null;
-
-          if (path.startsWith('/api') && !isPublicApi) {
-              adminId = await authenticate(req, env);
-          }
-
-          // Share Page
-          if (req.method === 'GET' && shareMatch) return new Response(serveSharedHtml(shareMatch[1]), { headers: {'Content-Type': 'text/html'} });
-
-        // Main App
-        if (req.method === 'GET' && path === '/') return serveHtml();
-
-        // Auth
-        if (path === '/api/login') {
-            const { email, password } = await req.json();
-            const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-            let adminId = admin?.id;
-
-            if (!admin) {
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                adminId = res.meta.last_row_id;
-            } else {
-                const hashed = await hashPassword(password);
-                if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
-            }
-
-            const session = await createSession(env.DB, adminId, env.AUTH_SECRET || '');
-            return response({ token: session.token, adminId, expires_at: session.expires_at });
-        }
-
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, adminId);
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, adminId);
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, adminId);
-        
-        // Subject CRUD
-        if (path === '/api/subjects') {
-            if(req.method === 'POST') {
-                const p = await req.json();
-                const now = isoTimestamp();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(safeVal(adminId), safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
-                return response({success:true});
-            }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(adminId).all();
-            return response(res.results);
-        }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, adminId);
-
-        const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
-        if (idMatch) {
-            const id = idMatch[1];
-            await requireSubject(env.DB, id, adminId);
-            if(req.method === 'PATCH') {
-                const p = await req.json();
-                
-                // FIXED: Use whitelist to prevent "no such column" error
-                const keys = Object.keys(p).filter(k => SUBJECT_COLUMNS.includes(k));
-                
-                if(keys.length > 0) {
-                    const set = keys.map(k => `${k} = ?`).join(', ') + ", updated_at = ?";
-                    const vals = keys.map(k => safeVal(p[k]));
-                    vals.push(isoTimestamp());
-                    await env.DB.prepare(`UPDATE subjects SET ${set} WHERE id = ?`).bind(...vals, id).run();
-                }
-                
-                return response({success:true});
-            }
-            return handleGetSubjectFull(env.DB, id);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            await requireSubject(env.DB, p.subject_id, adminId);
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            await requireSubject(env.DB, p.subject_id, adminId);
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            await requireSubject(env.DB, p.subject_id, adminId);
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            await requireSubject(env.DB, p.subjectA, adminId);
-            await requireSubject(env.DB, p.targetId, adminId);
-            await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, created_at) VALUES (?,?,?,?)')
-                .bind(p.subjectA, p.targetId, p.type, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/media-link') {
-            const { subjectId, url, type, description } = await req.json();
-            await requireSubject(env.DB, subjectId, adminId);
-            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        // Sharing
-        if (path === '/api/share-links') {
-            if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'), adminId);
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin, adminId);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), adminId);
-        }
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
-
-        if (path === '/api/delete') {
-            const { table, id } = await req.json();
-            const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
-            if(safeTables.includes(table)) {
-                await ensureRecordOwnership(env.DB, adminId, table, id);
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
-                else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-                return response({success:true});
-            }
-        }
-
-        // File Ops
-        if (path === '/api/upload-avatar' || path === '/api/upload-media') {
-            const { subjectId, data, filename, contentType } = await req.json();
-            await requireSubject(env.DB, subjectId, adminId);
-            const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
-            const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
-            await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
-            
-            if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
-            else await env.DB.prepare('INSERT INTO subject_media (subject_id, object_key, content_type, description, created_at) VALUES (?,?,?,?,?)').bind(subjectId, key, contentType, 'Attached File', isoTimestamp()).run();
-            return response({success:true});
-        }
-
-        if (path.startsWith('/api/media/')) {
-            const key = path.replace('/api/media/', '');
-            const shareToken = url.searchParams.get('shareToken');
-            const authToken = url.searchParams.get('auth');
-
-            if (!adminId && authToken) {
-                adminId = await validateSessionToken(authToken, env);
-            }
-
-            if (!adminId) {
-                if (shareToken) {
-                    const link = await validateShareAccess(env.DB, shareToken);
-                    const media = await env.DB.prepare('SELECT subject_id FROM subject_media WHERE object_key = ?').bind(key).first();
-                    const avatarOwner = await env.DB.prepare('SELECT id as subject_id FROM subjects WHERE avatar_path = ?').bind(key).first();
-                    const subjectId = media?.subject_id || avatarOwner?.subject_id;
-                    if (!subjectId || subjectId !== link.subject_id) return errorResponse('FORBIDDEN', 403);
-                } else {
-                    throw httpError('UNAUTHORIZED', 401);
-                }
-            }
-
-            const obj = await env.BUCKET.get(key);
-            if (!obj) return new Response('Not found', { status: 404 });
-            return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
-        }
-
-        if (path === '/api/nuke') {
-            await nukeDatabase(env.DB);
-            return response({success:true});
-        }
-
-        return new Response('Not Found', { status: 404 });
-    } catch(e) {
-        if (e instanceof Response) return e;
-        if (e.status) return errorResponse(e.message, e.status);
-        return errorResponse(e.message);
-    }
-  }
-};
