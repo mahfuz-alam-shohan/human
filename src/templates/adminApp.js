@@ -1,8 +1,8 @@
-// --- Frontend: Main Admin App (Feature Complete + Light Theme) ---
+// --- Frontend: Main Admin App (Feature Complete + Light Theme + Mobile Fixes) ---
 
 export function serveAdminHtml() {
   const html = `<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-50">
+<html lang="en" class="h-[100dvh] bg-slate-50">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
@@ -50,7 +50,7 @@ export function serveAdminHtml() {
     .marker-label { position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); background: white; color: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
   </style>
 </head>
-<body class="h-full overflow-hidden text-slate-800">
+<body class="h-[100dvh] overflow-hidden text-slate-800">
   <div id="app" class="h-full flex flex-col">
 
     <!-- TOAST NOTIFICATIONS -->
@@ -89,7 +89,7 @@ export function serveAdminHtml() {
     <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative bg-slate-50">
         
         <!-- SIDEBAR -->
-        <nav class="hidden md:flex flex-col w-20 bg-white border-r border-slate-200 items-center py-6 z-20 shadow-sm">
+        <nav class="hidden md:flex flex-col w-20 bg-white border-r border-slate-200 items-center py-6 z-20 shadow-sm shrink-0">
             <div class="mb-8 text-blue-600 text-2xl"><i class="fa-solid fa-layer-group"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
                 <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-transparent'" class="w-full aspect-square rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all group border" :title="t.label">
@@ -119,7 +119,7 @@ export function serveAdminHtml() {
         <main class="flex-1 relative overflow-hidden bg-slate-50 flex flex-col pb-20 md:pb-0 safe-area-pb">
 
             <!-- DASHBOARD -->
-            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
+            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0">
                 <div class="max-w-6xl mx-auto space-y-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                         <div class="glass p-4 border-l-4 border-blue-500 relative overflow-hidden">
@@ -147,7 +147,7 @@ export function serveAdminHtml() {
                             <h3 class="text-sm font-bold text-slate-700">Recent Activity</h3>
                             <button @click="fetchData" class="text-slate-400 hover:text-blue-600"><i class="fa-solid fa-arrows-rotate"></i></button>
                         </div>
-                        <div class="divide-y divide-slate-100 overflow-y-auto flex-1">
+                        <div class="divide-y divide-slate-100 overflow-y-auto flex-1 min-h-0">
                             <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-slate-50 cursor-pointer flex gap-4 items-start transition-colors">
                                 <div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-blue-600 shrink-0 border border-slate-200">
                                     <i class="fa-solid" :class="item.type === 'interaction' ? 'fa-comments' : (item.type === 'location' ? 'fa-location-dot' : 'fa-user')"></i>
@@ -163,15 +163,16 @@ export function serveAdminHtml() {
             </div>
 
             <!-- TARGETS LIST -->
-            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col min-h-0">
-                <div class="p-4 border-b border-slate-200 bg-white/90 backdrop-blur z-10 sticky top-0 shadow-sm">
+            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col min-h-0 h-full">
+                <div class="p-4 border-b border-slate-200 bg-white/90 backdrop-blur z-10 sticky top-0 shadow-sm shrink-0">
                     <div class="relative max-w-2xl mx-auto">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
                         <input v-model="search" placeholder="Search database..." class="glass-input w-full py-3 pl-10 text-sm">
                     </div>
                 </div>
-                <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:border-blue-400 transition-all group relative overflow-hidden flex gap-4 items-center">
+                <!-- Added min-h-0 to the scrollable container specifically -->
+                <div class="flex-1 overflow-y-auto min-h-0 p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
+                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:border-blue-400 transition-all group relative overflow-hidden flex gap-4 items-center shrink-0">
                          <div class="w-14 h-14 bg-slate-100 rounded-lg overflow-hidden shrink-0 border border-slate-200 shadow-sm">
                             <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
                             <div v-else class="w-full h-full flex items-center justify-center text-slate-400 text-lg font-bold">{{ s.full_name.charAt(0) }}</div>
@@ -186,7 +187,7 @@ export function serveAdminHtml() {
             </div>
 
             <!-- GLOBAL MAP TAB (Restored Sidebar) -->
-            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-100">
+            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-100 min-h-0">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
@@ -199,7 +200,7 @@ export function serveAdminHtml() {
                         <h3 class="font-bold text-slate-700 text-sm">Active Points</h3>
                         <div class="text-[10px] font-mono bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{{filteredMapData.length}}</div>
                     </div>
-                    <div class="flex-1 overflow-y-auto p-2 space-y-2 bg-white">
+                    <div class="flex-1 overflow-y-auto p-2 space-y-2 bg-white min-h-0">
                         <div v-for="loc in filteredMapData" @click="flyToGlobal(loc)" class="p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200 transition-all flex items-center gap-3">
                              <div class="w-8 h-8 rounded-full overflow-hidden border border-slate-200 bg-slate-100 shrink-0"><img :src="resolveImg(loc.avatar_path) || 'https://ui-avatars.com/api/?name='+loc.full_name" class="w-full h-full object-cover"></div>
                              <div class="min-w-0"><div class="font-bold text-xs text-slate-800 truncate">{{loc.full_name}}</div><div class="text-[10px] text-slate-500 truncate">{{loc.name}}</div></div>
@@ -210,15 +211,15 @@ export function serveAdminHtml() {
             </div>
 
             <!-- GLOBAL NETWORK TAB -->
-            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-50 relative">
+            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-50 relative min-h-0">
                 <div id="globalNetworkGraph" class="w-full h-full bg-slate-50"></div>
             </div>
 
             <!-- SUBJECT DETAIL -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 bg-slate-50">
+            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 bg-slate-50 h-full">
                 
                 <!-- HEADER -->
-                <div class="h-16 border-b border-slate-200 flex items-center px-4 justify-between bg-white z-10 sticky top-0 shadow-sm">
+                <div class="h-16 border-b border-slate-200 flex items-center px-4 justify-between bg-white z-10 sticky top-0 shadow-sm shrink-0">
                     <div class="flex items-center gap-3">
                         <button @click="changeTab('targets')" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
                         <div class="min-w-0">
@@ -245,7 +246,7 @@ export function serveAdminHtml() {
                 </div>
 
                 <!-- DETAIL CONTENT -->
-                <div class="flex-1 overflow-y-auto p-4 md:p-8">
+                <div class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0">
                     <!-- OVERVIEW -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -313,7 +314,7 @@ export function serveAdminHtml() {
                              <h3 class="font-bold text-lg text-slate-800">History Log</h3>
                              <button @click="openModal('add-interaction')" class="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-4 py-2 rounded-lg text-sm font-bold">Log Event</button>
                         </div>
-                        <div class="flex-1 glass p-6 overflow-y-auto">
+                        <div class="flex-1 glass p-6 overflow-y-auto min-h-0">
                             <div class="relative pl-8 border-l-2 border-slate-200 space-y-8 my-4">
                                 <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
                                     <div class="absolute -left-[41px] top-1 w-5 h-5 rounded-full bg-white border-4 border-blue-500 shadow-sm"></div>
@@ -334,11 +335,11 @@ export function serveAdminHtml() {
                             <h3 class="font-bold text-lg text-slate-800">Known Locations</h3>
                             <button @click="openModal('add-location')" class="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold">Add Location</button>
                         </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 min-h-0">
                             <div class="md:col-span-2 bg-slate-100 rounded-xl overflow-hidden relative h-64 md:h-full min-h-[300px] border border-slate-200 shadow-inner">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
                             </div>
-                            <div class="space-y-3 overflow-y-auto max-h-[600px]">
+                            <div class="space-y-3 overflow-y-auto max-h-[600px] min-h-0">
                                 <div v-for="loc in selected.locations" :key="loc.id" class="glass p-4 cursor-pointer hover:border-blue-400 transition-all" @click="flyTo(loc)">
                                     <div class="flex justify-between items-center mb-1">
                                         <div class="font-bold text-slate-800 text-sm">{{loc.name}}</div>
