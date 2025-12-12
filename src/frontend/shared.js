@@ -171,7 +171,9 @@ export function serveSharedHtml(token) {
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
 
                 const formatTime = (s) => {
-                    const m = Math.floor(s / 60); const sec = s % 60; return `${m}m ${sec}s`;
+                    const m = Math.floor(s / 60);
+                    const sec = s % 60;
+                    return m + 'm ' + sec + 's';
                 };
 
                 const isFamily = (rel) => {
