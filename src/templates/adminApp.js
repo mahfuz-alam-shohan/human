@@ -1,4 +1,4 @@
-// --- Frontend: Main Admin App (Light Theme + Full Features) ---
+// --- Frontend: Main Admin App (Feature Complete + Light Theme) ---
 
 export function serveAdminHtml() {
   const html = `<!DOCTYPE html>
@@ -19,11 +19,10 @@ export function serveAdminHtml() {
     :root { --primary: #2563eb; --bg-light: #f8fafc; --text-main: #1e293b; --text-muted: #64748b; }
     body { font-family: 'Inter', sans-serif; background-color: var(--bg-light); color: var(--text-main); }
     
-    /* Light Theme Glass/Card */
     .glass { 
         background: white; 
         border: 1px solid #e2e8f0; 
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
         border-radius: 0.75rem; 
         transition: all 0.2s;
     }
@@ -38,20 +37,15 @@ export function serveAdminHtml() {
     .glass-input:focus { border-color: var(--primary); outline: none; ring: 2px solid rgba(37, 99, 235, 0.1); }
     .glass-input::placeholder { color: #94a3b8; }
 
-    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
-    /* Mobile Safe Area */
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
-    
     .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
     
-    /* Marker Styles */
-    .avatar-marker { position: relative; }
-    .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 3px 6px rgba(0,0,0,0.2); transition: transform 0.2s; }
+    .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 3px 6px rgba(0,0,0,0.15); transition: transform 0.2s; }
     .avatar-marker:hover img { transform: scale(1.1); border-color: var(--primary); z-index: 500; }
     .marker-label { position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); background: white; color: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
   </style>
@@ -59,7 +53,7 @@ export function serveAdminHtml() {
 <body class="h-full overflow-hidden text-slate-800">
   <div id="app" class="h-full flex flex-col">
 
-    <!-- TOAST NOTIFICATION -->
+    <!-- TOAST NOTIFICATIONS -->
     <div class="fixed top-4 right-4 z-[200] space-y-2 pointer-events-none">
         <div v-for="t in toasts" :key="t.id" class="pointer-events-auto bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-fade-in min-w-[300px]">
             <i :class="t.icon" class="text-lg" :style="{color: t.color}"></i>
@@ -71,11 +65,7 @@ export function serveAdminHtml() {
     </div>
 
     <!-- AUTH SCREEN -->
-    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-slate-50 relative overflow-hidden">
-        <div class="absolute inset-0 overflow-hidden">
-            <div class="absolute -top-24 -left-24 w-96 h-96 bg-blue-100 rounded-full blur-3xl opacity-50"></div>
-            <div class="absolute top-1/2 right-0 w-64 h-64 bg-indigo-100 rounded-full blur-3xl opacity-50"></div>
-        </div>
+    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 bg-slate-50 relative">
         <div class="w-full max-w-sm glass p-8 shadow-2xl relative z-10">
             <div class="text-center mb-8">
                 <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl shadow-lg shadow-blue-500/20">
@@ -87,7 +77,7 @@ export function serveAdminHtml() {
             <form @submit.prevent="handleAuth" class="space-y-4">
                 <input v-model="auth.email" type="email" placeholder="Identity" class="glass-input w-full p-3.5 text-sm" required>
                 <input v-model="auth.password" type="password" placeholder="Passcode" class="glass-input w-full p-3.5 text-sm" required>
-                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg shadow-blue-500/30 flex items-center justify-center">
+                <button type="submit" :disabled="loading" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm transition-all shadow-lg flex items-center justify-center">
                     <i v-if="loading" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
                     {{ loading ? 'Verifying...' : 'Access System' }}
                 </button>
@@ -131,31 +121,27 @@ export function serveAdminHtml() {
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
                 <div class="max-w-6xl mx-auto space-y-6">
-                    <!-- Stats Grid -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-                        <div class="glass p-4 md:p-5 border-l-4 border-blue-500 relative overflow-hidden">
+                        <div class="glass p-4 border-l-4 border-blue-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-500 font-bold uppercase tracking-wider">Subjects</div>
                             <div class="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{{ stats.targets || 0 }}</div>
                             <i class="fa-solid fa-users absolute -bottom-2 -right-2 text-4xl text-slate-200"></i>
                         </div>
-                        <div class="glass p-4 md:p-5 border-l-4 border-amber-500 relative overflow-hidden">
+                        <div class="glass p-4 border-l-4 border-amber-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-500 font-bold uppercase tracking-wider">Events</div>
                             <div class="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{{ stats.encounters || 0 }}</div>
                             <i class="fa-solid fa-comments absolute -bottom-2 -right-2 text-4xl text-slate-200"></i>
                         </div>
-                        <div class="glass p-4 md:p-5 border-l-4 border-emerald-500 relative overflow-hidden">
+                        <div class="glass p-4 border-l-4 border-emerald-500 relative overflow-hidden">
                             <div class="text-[10px] md:text-xs text-slate-500 font-bold uppercase tracking-wider">Evidence</div>
                             <div class="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{{ stats.evidence || 0 }}</div>
                             <i class="fa-solid fa-file absolute -bottom-2 -right-2 text-4xl text-slate-200"></i>
                         </div>
-                        <button @click="openModal('add-subject')" :disabled="processing" class="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-md shadow-blue-200 md:hover:scale-[1.02]">
-                            <i v-if="processing" class="fa-solid fa-circle-notch fa-spin text-xl"></i>
-                            <i v-else class="fa-solid fa-plus text-xl"></i>
-                            <span class="text-xs font-bold uppercase tracking-wider">New Profile</span>
+                        <button @click="openModal('add-subject')" class="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-md">
+                            <i class="fa-solid fa-plus text-xl"></i><span class="text-xs font-bold uppercase tracking-wider">New Profile</span>
                         </button>
                     </div>
 
-                    <!-- Activity Feed -->
                     <div class="glass overflow-hidden flex flex-col h-[50vh] md:h-auto">
                         <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                             <h3 class="text-sm font-bold text-slate-700">Recent Activity</h3>
@@ -181,7 +167,7 @@ export function serveAdminHtml() {
                 <div class="p-4 border-b border-slate-200 bg-white/90 backdrop-blur z-10 sticky top-0 shadow-sm">
                     <div class="relative max-w-2xl mx-auto">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
-                        <input v-model="search" placeholder="Search database..." class="glass-input w-full py-3 pl-10 text-sm focus:ring-blue-500">
+                        <input v-model="search" placeholder="Search database..." class="glass-input w-full py-3 pl-10 text-sm">
                     </div>
                 </div>
                 <div class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
@@ -199,7 +185,7 @@ export function serveAdminHtml() {
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB -->
+            <!-- GLOBAL MAP TAB (Restored Sidebar) -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-100">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
@@ -208,6 +194,19 @@ export function serveAdminHtml() {
                         <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-slate-400"></i>
                     </div>
                 </div>
+                <div class="absolute top-16 left-4 bottom-4 w-72 glass z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
+                    <div class="p-3 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                        <h3 class="font-bold text-slate-700 text-sm">Active Points</h3>
+                        <div class="text-[10px] font-mono bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{{filteredMapData.length}}</div>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-2 space-y-2 bg-white">
+                        <div v-for="loc in filteredMapData" @click="flyToGlobal(loc)" class="p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200 transition-all flex items-center gap-3">
+                             <div class="w-8 h-8 rounded-full overflow-hidden border border-slate-200 bg-slate-100 shrink-0"><img :src="resolveImg(loc.avatar_path) || 'https://ui-avatars.com/api/?name='+loc.full_name" class="w-full h-full object-cover"></div>
+                             <div class="min-w-0"><div class="font-bold text-xs text-slate-800 truncate">{{loc.full_name}}</div><div class="text-[10px] text-slate-500 truncate">{{loc.name}}</div></div>
+                        </div>
+                    </div>
+                </div>
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-white p-2.5 rounded-full shadow-lg text-slate-600 border border-slate-200" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
             </div>
 
             <!-- GLOBAL NETWORK TAB -->
@@ -231,7 +230,7 @@ export function serveAdminHtml() {
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 transition-colors"><i class="fa-solid fa-download"></i> Export</button>
                         <button @click="deleteProfile" class="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold border border-red-100"><i class="fa-solid fa-trash md:mr-2"></i><span class="hidden md:inline">Delete</span></button>
                         <button @click="openModal('edit-profile')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200"><i class="fa-solid fa-pen md:mr-2"></i><span class="hidden md:inline">Edit</span></button>
-                        <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md shadow-blue-200"><i class="fa-solid fa-share-nodes md:mr-2"></i><span class="hidden md:inline">Share</span></button>
+                        <button @click="openModal('share-secure')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-share-nodes md:mr-2"></i><span class="hidden md:inline">Share</span></button>
                     </div>
                 </div>
 
@@ -247,7 +246,7 @@ export function serveAdminHtml() {
 
                 <!-- DETAIL CONTENT -->
                 <div class="flex-1 overflow-y-auto p-4 md:p-8">
-                    <!-- PROFILE OVERVIEW -->
+                    <!-- OVERVIEW -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
@@ -352,23 +351,19 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
-                    <!-- NETWORK (Detail) -->
+                    <!-- NETWORK (Detail with Family Box Restored) -->
                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-lg text-slate-800">Connections Graph</h3>
                             <button @click="openModal('add-rel')" class="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold">Add Connection</button>
                         </div>
+                        <!-- FAMILY UNIT WIDGET -->
                         <div v-if="selected.familyReport && selected.familyReport.length > 0" class="glass p-4 mb-6 border-l-4 border-purple-500 bg-purple-50/50">
                              <h4 class="text-sm font-bold text-purple-700 mb-3 flex items-center gap-2"><i class="fa-solid fa-people-roof"></i> Family Unit</h4>
                              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                  <div v-for="fam in selected.familyReport" class="flex items-center gap-3 p-2 rounded bg-white border border-slate-200 hover:border-purple-400 transition-colors cursor-pointer" @click="viewSubject(fam.id)">
-                                     <div class="w-8 h-8 rounded-full bg-slate-200 overflow-hidden shrink-0">
-                                         <img :src="resolveImg(fam.avatar)" class="w-full h-full object-cover">
-                                     </div>
-                                     <div>
-                                         <div class="text-xs font-bold text-slate-800">{{fam.name}}</div>
-                                         <div class="text-[10px] text-purple-500 uppercase tracking-wide font-bold">{{fam.role}}</div>
-                                     </div>
+                                     <div class="w-8 h-8 rounded-full bg-slate-200 overflow-hidden shrink-0"><img :src="resolveImg(fam.avatar)" class="w-full h-full object-cover"></div>
+                                     <div><div class="text-xs font-bold text-slate-800">{{fam.name}}</div><div class="text-[10px] text-purple-500 uppercase tracking-wide font-bold">{{fam.role}}</div></div>
                                  </div>
                              </div>
                         </div>
@@ -384,10 +379,7 @@ export function serveAdminHtml() {
                                             <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
                                             <div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name.charAt(0)}}</div>
                                         </div>
-                                        <div>
-                                            <div class="text-sm font-bold text-slate-800">{{rel.target_name}}</div>
-                                            <div class="text-xs text-blue-500">{{rel.relationship_type}} &harr; {{rel.role_b || 'Associate'}}</div>
-                                        </div>
+                                        <div><div class="text-sm font-bold text-slate-800">{{rel.target_name}}</div><div class="text-xs text-blue-500">{{rel.relationship_type}} &harr; {{rel.role_b || 'Associate'}}</div></div>
                                     </div>
                                     <div class="flex gap-2">
                                         <button @click="openModal('edit-rel', rel)" class="text-slate-400 hover:text-slate-600 p-2"><i class="fa-solid fa-pen"></i></button>
@@ -401,12 +393,10 @@ export function serveAdminHtml() {
                     <div v-if="subTab === 'files'" class="space-y-6">
                          <div class="flex gap-4">
                             <div @click="triggerUpload('media')" class="h-24 w-32 rounded-xl border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:text-blue-500 transition-all text-slate-400 group">
-                                <i class="fa-solid fa-cloud-arrow-up text-xl mb-1"></i>
-                                <span class="text-xs font-bold uppercase">Upload</span>
+                                <i class="fa-solid fa-cloud-arrow-up text-xl mb-1"></i><span class="text-xs font-bold uppercase">Upload</span>
                             </div>
                             <div @click="openModal('add-media-link')" class="h-24 w-32 rounded-xl border border-slate-200 bg-white flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-all text-slate-500 hover:text-slate-800 gap-1">
-                                <i class="fa-solid fa-link text-lg"></i>
-                                <span class="text-xs font-bold uppercase">Link URL</span>
+                                <i class="fa-solid fa-link text-lg"></i><span class="text-xs font-bold uppercase">Link URL</span>
                             </div>
                         </div>
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -421,7 +411,6 @@ export function serveAdminHtml() {
                     </div>
                 </div>
             </div>
-
         </main>
         
         <!-- MOBILE NAV -->
@@ -431,148 +420,154 @@ export function serveAdminHtml() {
                 <span class="text-[10px] font-medium">{{t.label}}</span>
             </button>
         </nav>
-
-    </div>
-
-    <!-- MODALS -->
-    <div v-if="modal.active" class="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-2xl glass bg-white shadow-2xl flex flex-col max-h-[90vh] animate-fade-in overflow-hidden">
-             
-             <div class="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50/50">
-                <h3 class="font-bold text-slate-800">{{ modalTitle }}</h3>
-                <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-800"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            
-            <div class="overflow-y-auto p-4 md:p-6 space-y-6">
-                <!-- COMMAND PALETTE -->
-                <div v-if="modal.active === 'cmd'">
-                    <input ref="cmdInput" v-model="cmdQuery" placeholder="Jump to..." class="glass-input w-full p-4 text-lg mb-4 bg-slate-50 border-slate-200 focus:border-blue-500">
-                    <div class="space-y-1">
-                        <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-lg hover:bg-blue-50 cursor-pointer flex justify-between items-center border border-transparent hover:border-blue-100">
-                             <div><div class="font-bold text-sm text-slate-800">{{res.title}}</div><div class="text-xs text-slate-500">{{res.desc}}</div></div>
-                             <i class="fa-solid fa-arrow-right text-slate-400 text-xs"></i>
-                        </div>
-                    </div>
+        
+        <!-- MODALS (All logic restored) -->
+        <div v-if="modal.active" class="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
+            <!-- MINI PROFILE MODAL (Restored) -->
+            <div v-if="modal.active === 'mini-profile'" class="w-full max-w-sm glass bg-white shadow-2xl flex flex-col animate-fade-in border border-slate-200 p-6 text-center">
+                <div class="w-24 h-24 rounded-full overflow-hidden border-2 border-slate-200 bg-slate-100 mx-auto mb-4">
+                    <img :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover">
                 </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-1">{{modal.data.full_name}}</h3>
+                <p class="text-sm text-slate-500 mb-6">{{modal.data.occupation || 'No Occupation'}}</p>
+                <div class="flex gap-2">
+                     <button @click="closeModal" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-lg text-sm">Close</button>
+                     <button @click="viewSubject(modal.data.id)" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-sm">View Profile</button>
+                </div>
+            </div>
 
-                <!-- ADD/EDIT REL (Restored Presets) -->
-                 <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
-                    <div class="p-4 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 mb-4">
-                        {{ modal.active === 'edit-rel' ? 'Editing connection for' : 'Connect' }} <strong>{{selected.full_name}}</strong>
-                    </div>
-                    <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
-                        <option value="" disabled selected>Select a Person</option>
-                        <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
-                    </select>
-                    <div class="border-t border-slate-200 pt-4 mt-2">
-                         <label class="block text-xs font-bold uppercase text-slate-400 mb-2">Relationship Roles</label>
-                         <div class="grid grid-cols-2 gap-4">
-                             <div><div class="text-[10px] text-slate-400 mb-1">Role of {{selected.full_name}}</div><input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="glass-input w-full p-3 text-sm" @input="autoFillReciprocal"></div>
-                             <div><div class="text-[10px] text-slate-400 mb-1">Role of Target</div><input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="glass-input w-full p-3 text-sm"></div>
-                         </div>
-                         <div class="flex flex-wrap gap-2 mt-3"><div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-2 py-1 bg-slate-100 border border-slate-200 rounded cursor-pointer hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{{p.a}} &harr; {{p.b}}</div></div>
-                    </div>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">{{ processing ? 'Saving...' : 'Save Connection' }}</button>
-                 </form>
-
-                <!-- ADD/EDIT SUBJECT -->
-                <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                        <div class="space-y-4">
-                            <label class="block text-xs font-bold uppercase text-slate-400">Identity</label>
-                            <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
-                            <input v-model="forms.subject.alias" placeholder="Nickname" class="glass-input w-full p-3 text-sm">
-                            <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Occupation" class="glass-input w-full p-3 text-sm">
-                            <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
-                        </div>
-                        <div class="space-y-4">
-                             <label class="block text-xs font-bold uppercase text-slate-400">Status</label>
-                             <select v-model="forms.subject.threat_level" class="glass-input w-full p-3 text-sm">
-                                <option value="Low">Low Priority</option>
-                                <option value="Medium">Medium Priority</option>
-                                <option value="High">High Priority</option>
-                                <option value="Critical">Critical</option>
-                            </select>
-                            <div class="grid grid-cols-2 gap-2">
-                                <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-600">
-                                <input type="number" v-model="forms.subject.age" placeholder="Age" class="glass-input w-full p-3 text-sm">
+            <!-- OTHER MODALS -->
+            <div v-else class="w-full max-w-2xl glass bg-white shadow-2xl flex flex-col max-h-[90vh] animate-fade-in overflow-hidden">
+                <div class="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50/50">
+                    <h3 class="font-bold text-slate-800">{{ modalTitle }}</h3>
+                    <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-800"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                
+                <div class="overflow-y-auto p-4 md:p-6 space-y-6">
+                    <!-- COMMAND PALETTE (Restored) -->
+                    <div v-if="modal.active === 'cmd'">
+                        <input ref="cmdInput" v-model="cmdQuery" placeholder="Jump to..." class="glass-input w-full p-4 text-lg mb-4 bg-slate-50 border-slate-200 focus:border-blue-500">
+                        <div class="space-y-1">
+                            <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-lg hover:bg-blue-50 cursor-pointer flex justify-between items-center border border-transparent hover:border-blue-100">
+                                 <div><div class="font-bold text-sm text-slate-800">{{res.title}}</div><div class="text-xs text-slate-500">{{res.desc}}</div></div>
+                                 <i class="fa-solid fa-arrow-right text-slate-400 text-xs"></i>
                             </div>
-                             <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation" class="glass-input w-full p-3 text-sm">
                         </div>
                     </div>
-                    <div class="space-y-4"><label class="block text-xs font-bold uppercase text-slate-400">Notes</label><textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea><textarea v-model="forms.subject.weakness" placeholder="Sensitivities..." rows="3" class="glass-input w-full p-3 text-sm"></textarea></div>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">{{ processing ? 'Saving...' : 'Save Profile' }}</button>
-                </form>
 
-                <!-- ADD INTEL -->
-                <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                    <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
-                        <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
-                    </select>
-                    <input v-model="forms.intel.label" placeholder="Label" class="glass-input w-full p-3 text-sm" required>
-                    <textarea v-model="forms.intel.value" placeholder="Value" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Add Attribute</button>
-                 </form>
-
-                 <!-- ADD MEDIA LINK -->
-                 <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
-                    <input v-model="forms.mediaLink.url" placeholder="Paste URL *" class="glass-input w-full p-3 text-sm" required>
-                    <input v-model="forms.mediaLink.description" placeholder="Description" class="glass-input w-full p-3 text-sm">
-                    <select v-model="forms.mediaLink.type" class="glass-input w-full p-3 text-sm"><option value="image/jpeg">Image</option><option value="application/pdf">Document</option><option value="video/mp4">Video</option><option value="text/plain">Other</option></select>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Save Link</button>
-                 </form>
-
-                 <!-- SHARE -->
-                 <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                    <p class="text-sm text-slate-500">Create a temporary secure link for external access.</p>
-                    <div class="flex gap-2">
-                        <select v-model="forms.share.minutes" class="glass-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
-                        <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-md">Generate Link</button>
-                    </div>
-                    <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
-                        <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <div><div class="text-xs font-mono text-slate-500">...{{link.token.slice(-8)}}</div><div class="text-[10px] text-slate-400">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div></div>
-                            <div class="flex gap-2"><button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-600 hover:text-blue-800 p-2"><i class="fa-regular fa-copy"></i></button><button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 p-2"><i class="fa-solid fa-ban"></i></button></div>
+                    <!-- ADD/EDIT REL (Restored Presets) -->
+                     <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
+                        <div class="p-4 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 mb-4">{{ modal.active === 'edit-rel' ? 'Editing connection for' : 'Connect' }} <strong>{{selected.full_name}}</strong></div>
+                        <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="glass-input w-full p-3 text-sm" required>
+                            <option value="" disabled selected>Select a Person</option>
+                            <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
+                        </select>
+                        <div class="border-t border-slate-200 pt-4 mt-2">
+                             <label class="block text-xs font-bold uppercase text-slate-400 mb-2">Relationship Roles</label>
+                             <div class="grid grid-cols-2 gap-4">
+                                 <div><div class="text-[10px] text-slate-400 mb-1">Role of {{selected.full_name}}</div><input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="glass-input w-full p-3 text-sm" @input="autoFillReciprocal"></div>
+                                 <div><div class="text-[10px] text-slate-400 mb-1">Role of Target</div><input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="glass-input w-full p-3 text-sm"></div>
+                             </div>
+                             <div class="flex flex-wrap gap-2 mt-3"><div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-2 py-1 bg-slate-100 border border-slate-200 rounded cursor-pointer hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{{p.a}} &harr; {{p.b}}</div></div>
                         </div>
-                    </div>
-                 </div>
-                 
-                 <!-- LOCATION PICKER (Restored) -->
-                 <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
-                    <div class="relative">
-                         <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
-                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
-                         <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-slate-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-50">
-                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-50 cursor-pointer text-xs border-b border-slate-100 text-slate-700">{{ res.display_name }}</div>
-                         </div>
-                    </div>
-                    <div class="h-48 w-full bg-slate-100 rounded-lg border border-slate-200 relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
-                    <input v-model="forms.location.name" placeholder="Name (e.g. Safehouse)" class="glass-input w-full p-3 text-sm">
-                    <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Add Pin</button>
-                </form>
+                        <button type="submit" :disabled="processing" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">{{ processing ? 'Saving...' : 'Save Connection' }}</button>
+                     </form>
 
-                <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm" required>
-                        <select v-model="forms.interaction.type" class="glass-input p-3 text-sm"><option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option></select>
-                    </div>
-                    <textarea v-model="forms.interaction.transcript" placeholder="Details & Notes" rows="5" class="glass-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Log Event</button>
-                </form>
+                    <!-- ADD/EDIT SUBJECT (Restored Full Fields) -->
+                    <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                            <div class="space-y-4">
+                                <label class="block text-xs font-bold uppercase text-slate-400">Identity</label>
+                                <input v-model="forms.subject.full_name" placeholder="Full Name *" class="glass-input w-full p-3 text-sm" required>
+                                <input v-model="forms.subject.alias" placeholder="Nickname" class="glass-input w-full p-3 text-sm">
+                                <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Occupation" class="glass-input w-full p-3 text-sm">
+                                <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Nationality" class="glass-input w-full p-3 text-sm">
+                            </div>
+                            <div class="space-y-4">
+                                 <label class="block text-xs font-bold uppercase text-slate-400">Status</label>
+                                 <select v-model="forms.subject.threat_level" class="glass-input w-full p-3 text-sm">
+                                    <option value="Low">Low Priority</option><option value="Medium">Medium Priority</option><option value="High">High Priority</option><option value="Critical">Critical</option>
+                                </select>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <input type="date" v-model="forms.subject.dob" class="glass-input w-full p-3 text-sm text-slate-600">
+                                    <input type="number" v-model="forms.subject.age" placeholder="Age" class="glass-input w-full p-3 text-sm">
+                                </div>
+                                 <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Affiliation" class="glass-input w-full p-3 text-sm">
+                            </div>
+                        </div>
+                        <div class="pt-4 border-t border-slate-200"><h4 class="text-xs font-bold uppercase text-slate-400 mb-4">Physical Stats</h4><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><input v-model="forms.subject.height" placeholder="Height" class="glass-input p-2 text-xs"><input v-model="forms.subject.weight" placeholder="Weight" class="glass-input p-2 text-xs"><input v-model="forms.subject.blood_type" placeholder="Blood Type" class="glass-input p-2 text-xs"></div></div>
+                        <div class="space-y-4"><label class="block text-xs font-bold uppercase text-slate-400">Notes</label><textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits..." rows="3" class="glass-input w-full p-3 text-sm"></textarea><textarea v-model="forms.subject.weakness" placeholder="Sensitivities..." rows="3" class="glass-input w-full p-3 text-sm"></textarea></div>
+                        <button type="submit" :disabled="processing" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">{{ processing ? 'Saving...' : 'Save Profile' }}</button>
+                    </form>
+
+                    <!-- ADD INTEL -->
+                    <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
+                        <select v-model="forms.intel.category" class="glass-input w-full p-3 text-sm">
+                            <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
+                        </select>
+                        <input v-model="forms.intel.label" placeholder="Label" class="glass-input w-full p-3 text-sm" required>
+                        <textarea v-model="forms.intel.value" placeholder="Value" rows="3" class="glass-input w-full p-3 text-sm" required></textarea>
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Add Attribute</button>
+                     </form>
+
+                     <!-- ADD MEDIA LINK -->
+                     <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
+                        <input v-model="forms.mediaLink.url" placeholder="Paste URL *" class="glass-input w-full p-3 text-sm" required>
+                        <input v-model="forms.mediaLink.description" placeholder="Description" class="glass-input w-full p-3 text-sm">
+                        <select v-model="forms.mediaLink.type" class="glass-input w-full p-3 text-sm"><option value="image/jpeg">Image</option><option value="application/pdf">Document</option><option value="video/mp4">Video</option><option value="text/plain">Other</option></select>
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Save Link</button>
+                     </form>
+
+                     <!-- SHARE (Restored List) -->
+                     <div v-if="modal.active === 'share-secure'" class="space-y-6">
+                        <p class="text-sm text-slate-500">Create a temporary secure link for external access.</p>
+                        <div class="flex gap-2">
+                            <select v-model="forms.share.minutes" class="glass-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
+                            <button @click="createShareLink" class="flex-1 bg-blue-600 text-white font-bold rounded-lg text-sm shadow-md">Generate Link</button>
+                        </div>
+                        <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                <div><div class="text-xs font-mono text-slate-500">...{{link.token.slice(-8)}}</div><div class="text-[10px] text-slate-400">{{link.is_active ? 'Active' : 'Expired'}} &bull; {{link.views}} views</div></div>
+                                <div class="flex gap-2"><button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-600 hover:text-blue-800 p-2"><i class="fa-regular fa-copy"></i></button><button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-500 hover:text-red-700 p-2"><i class="fa-solid fa-ban"></i></button></div>
+                            </div>
+                        </div>
+                     </div>
+                     
+                     <!-- LOCATION PICKER (Restored Search) -->
+                     <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                        <div class="relative">
+                             <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search places..." class="glass-input w-full p-3 pl-10 text-sm">
+                             <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
+                             <div v-if="locationSearchResults.length" class="absolute w-full bg-white border border-slate-200 max-h-48 overflow-y-auto mt-1 shadow-xl rounded-lg z-50">
+                                 <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-slate-50 cursor-pointer text-xs border-b border-slate-100 text-slate-700">{{ res.display_name }}</div>
+                             </div>
+                        </div>
+                        <div class="h-48 w-full bg-slate-100 rounded-lg border border-slate-200 relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
+                        <input v-model="forms.location.name" placeholder="Name (e.g. Safehouse)" class="glass-input w-full p-3 text-sm">
+                        <select v-model="forms.location.type" class="glass-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Add Pin</button>
+                    </form>
+
+                    <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="datetime-local" v-model="forms.interaction.date" class="glass-input p-3 text-sm" required>
+                            <select v-model="forms.interaction.type" class="glass-input p-3 text-sm"><option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option></select>
+                        </div>
+                        <textarea v-model="forms.interaction.transcript" placeholder="Details & Notes" rows="5" class="glass-input w-full p-3 text-sm"></textarea>
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-lg text-sm shadow-md">Log Event</button>
+                    </form>
+                </div>
             </div>
         </div>
+
+        <!-- Hidden Input -->
+        <input type="file" ref="fileInput" class="absolute opacity-0 -z-10 w-0 h-0 overflow-hidden" @change="handleFile">
+        <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
+        <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
+        <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
+        <datalist id="preset-roles-a"><option v-for="p in presets" :value="p.a"></option></datalist>
+        <datalist id="preset-roles-b"><option v-for="p in presets" :value="p.b"></option></datalist>
     </div>
-
-    <!-- Hidden Input -->
-    <input type="file" ref="fileInput" class="absolute opacity-0 -z-10 w-0 h-0 overflow-hidden" @change="handleFile">
-    <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
-    <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
-    <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
-    <datalist id="preset-roles-a"><option v-for="p in presets" :value="p.a"></option></datalist>
-    <datalist id="preset-roles-b"><option v-for="p in presets" :value="p.b"></option></datalist>
-
-  </div>
 
   <script>
     const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
@@ -617,6 +612,7 @@ export function serveAdminHtml() {
         const mapSearchQuery = ref('');
         const presets = ref(PRESETS);
         const toasts = ref([]);
+        const showMapSidebar = ref(window.innerWidth >= 768);
         
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
@@ -747,22 +743,31 @@ export function serveAdminHtml() {
         const renderMapData = (map, data) => {
             if(!map) return;
             map.eachLayer(layer => { if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); });
-            const allPoints = [];
-            
-            data.forEach(loc => {
-                if(!loc.lat) return;
-                allPoints.push([loc.lat, loc.lng]);
-                const avatar = loc.avatar_path || (selected.value?.avatar_path);
-                const name = loc.full_name || (selected.value?.full_name);
-                const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-white"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
-                const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] });
-                L.marker([loc.lat, loc.lng], { icon }).addTo(map).bindPopup(\`<b>\${name}</b><br>\${loc.name}\`);
+            const grouped = data.reduce((acc, loc) => {
+                if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name };
+                if(loc.lat) acc[loc.subject_id].locations.push(loc);
+                return acc;
+            }, {});
+
+            Object.values(grouped).forEach(group => {
+                if(group.locations.length > 1) {
+                    const latlngs = group.locations.map(l => [l.lat, l.lng]);
+                    L.polyline(latlngs, { color: '#3b82f6', weight: 2, opacity: 0.6, dashArray: '5, 10' }).addTo(map);
+                }
+                group.locations.forEach(loc => {
+                    if(!loc.lat) return;
+                    const avatar = loc.avatar_path || (selected.value?.avatar_path);
+                    const name = loc.full_name || (selected.value?.full_name);
+                    const iconHtml = \`<div class="avatar-marker w-10 h-10 rounded-full border-2 border-white shadow-lg overflow-hidden bg-white"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
+                    const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] });
+                    L.marker([loc.lat, loc.lng], { icon }).addTo(map).bindPopup(\`<b>\${name}</b><br>\${loc.name}\`);
+                });
             });
-            if (allPoints.length) map.fitBounds(allPoints, { padding: [50, 50] });
         };
 
         const updateMapFilter = () => { if(warRoomMapInstance) renderMapData(warRoomMapInstance, filteredMapData.value); };
         const flyTo = (loc) => { if(mapInstance) mapInstance.flyTo([loc.lat, loc.lng], 15); };
+        const flyToGlobal = (loc) => { if(warRoomMapInstance) { warRoomMapInstance.flyTo([loc.lat, loc.lng], 15); if(window.innerWidth < 768) showMapSidebar.value = false; } };
 
         const debounceSearch = () => {
             clearTimeout(searchTimeout);
@@ -794,8 +799,14 @@ export function serveAdminHtml() {
              }
              if(t === 'share-secure') fetchShareLinks();
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
+             // MINI PROFILE LOGIC
+             if(t === 'mini-profile' && item) modal.data = item;
         };
         const closeModal = () => { modal.active = null; };
+
+        // Watchers
+        watch(() => forms.subject.dob, (val) => { if(val) forms.subject.age = new Date().getFullYear() - new Date(val).getFullYear(); });
+        watch(() => forms.subject.age, (val) => { if(val && !forms.subject.dob) forms.subject.dob = \`\${new Date().getFullYear()-val}-01-01\`; });
 
         // Submissions
         const submitSubject = async () => { processing.value = true; try { const isEdit = modal.active === 'edit-profile'; await api(isEdit ? '/subjects/' + selected.value.id : '/subjects', { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); closeModal(); notify('Success', 'Profile saved', 'success'); } finally { processing.value = false; } };
@@ -843,7 +854,16 @@ export function serveAdminHtml() {
                     nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, shape: 'circularImage', image: targetAvatar, color: {border: '#cbd5e1'} });
                     edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.subject_a_id === selected.value.id ? r.relationship_type : (r.role_b || r.relationship_type), font: { align: 'middle' } });
                  });
-                 new vis.Network(container, { nodes, edges }, { nodes: { borderWidth: 3 }, edges: { color: '#94a3b8' } });
+                 const network = new vis.Network(container, { nodes, edges }, { nodes: { borderWidth: 3 }, edges: { color: '#94a3b8' } });
+                 // CLICK HANDLER FOR MINI PROFILE
+                 network.on("click", (params) => {
+                     if(params.nodes.length > 0) {
+                         const nodeId = params.nodes[0];
+                         if(nodeId === selected.value.id) return;
+                         const rel = selected.value.relationships.find(r => (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) || (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId));
+                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar });
+                     }
+                 });
             });
         });
 
@@ -856,7 +876,14 @@ export function serveAdminHtml() {
                     n.image = resolveImg(n.image) || 'https://ui-avatars.com/api/?name='+n.label;
                     n.color = { border: n.group === 'Critical' ? '#ef4444' : '#e2e8f0', background: '#fff' };
                 });
-                new vis.Network(container, data, { nodes: { shape: 'circularImage', borderWidth: 2 }, edges: { color: '#94a3b8' } });
+                const network = new vis.Network(container, data, { nodes: { shape: 'circularImage', borderWidth: 2 }, edges: { color: '#94a3b8' } });
+                network.on("click", (params) => {
+                    if(params.nodes.length > 0) {
+                        const nodeId = params.nodes[0];
+                        const nodeData = data.nodes.find(n => n.id === nodeId);
+                        if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image });
+                    }
+                });
             });
         });
 
@@ -869,7 +896,8 @@ export function serveAdminHtml() {
             submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink
+            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
+            showMapSidebar, flyToGlobal, flyTo
         };
       }
     }).mount('#app');
