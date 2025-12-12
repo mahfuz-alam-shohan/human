@@ -55,6 +55,9 @@ export function serveAdminHtml() {
     .avatar-marker img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
     .avatar-marker:hover img { transform: scale(1.1); border-color: #3b82f6; z-index: 500; }
     .marker-label { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap; pointer-events: none; }
+    
+    /* Vis Network Customization */
+    .vis-network { outline: none; }
   </style>
 </head>
 <body class="h-full overflow-hidden text-slate-200">
@@ -118,7 +121,7 @@ export function serveAdminHtml() {
         </header>
 
         <!-- CONTENT -->
-        <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-20 md:pb-0 safe-area-pb">
+        <main class="flex-1 relative overflow-hidden bg-slate-950 flex flex-col pb-[70px] md:pb-0 safe-area-pb">
 
             <!-- DASHBOARD -->
             <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8">
@@ -194,7 +197,7 @@ export function serveAdminHtml() {
                 </div>
             </div>
 
-            <!-- GLOBAL MAP TAB (Updated) -->
+            <!-- GLOBAL MAP TAB -->
             <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-slate-900">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 
@@ -231,7 +234,7 @@ export function serveAdminHtml() {
                 </button>
             </div>
 
-            <!-- GLOBAL NETWORK TAB (Updated) -->
+            <!-- GLOBAL NETWORK TAB -->
             <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-slate-950 relative">
                 <div class="absolute top-4 left-4 z-10 glass px-4 py-2 border-slate-700/50">
                     <h3 class="font-bold text-white text-sm">Global Relations</h3>
@@ -697,8 +700,6 @@ export function serveAdminHtml() {
         let mapInstance = null;
         let warRoomMapInstance = null;
         let searchTimeout = null;
-        let polylineLayer = null;
-        let markerLayer = null;
         
         const cmdQuery = ref('');
         const cmdInput = ref(null);
@@ -1099,30 +1100,18 @@ export function serveAdminHtml() {
         const submitRel = async () => { 
             if (processing.value) return; processing.value = true; 
             try { 
-                // Determine Payload for Create vs Update
                 let payload = {};
                 const method = forms.rel.id ? 'PATCH' : 'POST';
-                
                 if (method === 'POST') {
-                    // Standard create: Current subject is A, Target is B
-                    payload = {
-                        subjectA: selected.value.id,
-                        targetId: forms.rel.targetId,
-                        type: forms.rel.type,        // Role of A
-                        reciprocal: forms.rel.reciprocal // Role of B
-                    };
+                    payload = { subjectA: selected.value.id, targetId: forms.rel.targetId, type: forms.rel.type, reciprocal: forms.rel.reciprocal };
                 } else {
-                     // Update Logic: Check orientation to map roles correctly
                      const originalRel = selected.value.relationships.find(r => r.id === forms.rel.id);
                      if (originalRel && originalRel.subject_a_id === selected.value.id) {
-                         // I am A. Update: relationship_type = type, role_b = reciprocal
                          payload = { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal };
                      } else {
-                         // I am B. Update: relationship_type = reciprocal, role_b = type
                          payload = { id: forms.rel.id, type: forms.rel.reciprocal, reciprocal: forms.rel.type };
                      }
                 }
-
                 await api('/relationship', { method: method, body: JSON.stringify(payload) }); 
                 viewSubject(selected.value.id); closeModal(); 
             } finally { processing.value = false; } 
@@ -1130,12 +1119,11 @@ export function serveAdminHtml() {
         const submitMediaLink = async () => { if (processing.value) return; processing.value = true; try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
         
-        // --- NEW DELETE PROFILE FUNCTION ---
         const deleteProfile = async () => {
              if(confirm('WARNING: DELETE THIS PROFILE? This action cannot be undone.')) {
                  await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) });
-                 fetchData(); // Refresh list
-                 changeTab('targets'); // Go back to list
+                 fetchData();
+                 changeTab('targets');
              }
         };
 
@@ -1170,17 +1158,10 @@ export function serveAdminHtml() {
                 view.value = 'app';
                 fetchData();
                 window.viewSubject = (id) => { viewSubject(id); };
-                
                 const id = params.get('id');
-                
-                // FIX: If we are on 'detail' tab but have no ID, force back to dashboard to prevent blank page
-                if (currentTab.value === 'detail' && !id) {
-                    currentTab.value = 'dashboard';
-                }
-                
+                if (currentTab.value === 'detail' && !id) currentTab.value = 'dashboard';
                 if(id) viewSubject(id, true);
             } else {
-                // Ensure we start at auth if no token
                 view.value = 'auth';
             }
         });
