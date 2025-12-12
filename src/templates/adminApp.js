@@ -163,7 +163,7 @@ export function serveAdminHtml() {
             </div>
 
             <!-- TARGETS LIST -->
-            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col h-full">
+            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col min-h-0">
                 <div class="p-4 border-b border-slate-200 bg-white/90 backdrop-blur z-10 sticky top-0 shadow-sm">
                     <div class="relative max-w-2xl mx-auto">
                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-slate-400"></i>
@@ -215,7 +215,7 @@ export function serveAdminHtml() {
             </div>
 
             <!-- SUBJECT DETAIL -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col h-full bg-slate-50">
+            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 bg-slate-50">
                 
                 <!-- HEADER -->
                 <div class="h-16 border-b border-slate-200 flex items-center px-4 justify-between bg-white z-10 sticky top-0 shadow-sm">
