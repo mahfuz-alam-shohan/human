@@ -86,13 +86,23 @@ export function serveAdminHtml() {
     .animate-bounce-in { animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
     @keyframes bounceIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
     
-    /* Marker */
+    /* Marker - FIXED */
     .avatar-marker-fun { 
         width: 100%; height: 100%; 
         border-radius: 50%; 
-        object-fit: cover; 
+        background: white;
         border: 3px solid white; 
-        outline: 3px solid black;
+        box-shadow: 0 0 0 3px black; /* Faux border that follows radius */
+        overflow: hidden; /* Clips image */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .avatar-marker-fun img {
+        width: 100%; 
+        height: 100%;
+        object-fit: cover;
+        display: block;
     }
   </style>
 </head>
@@ -100,7 +110,7 @@ export function serveAdminHtml() {
   <div id="app" class="h-full flex flex-col">
 
     <!-- TOAST NOTIFICATIONS -->
-    <div class="fixed top-4 right-4 z-[200] space-y-2 pointer-events-none">
+    <div class="fixed top-4 right-4 z-[9999] space-y-2 pointer-events-none">
         <div v-for="t in toasts" :key="t.id" class="pointer-events-auto bg-white border-4 border-black shadow-[4px_4px_0px_0px_#000] rounded-xl p-4 flex items-center gap-3 animate-bounce-in min-w-[300px]">
             <i :class="t.icon" class="text-2xl" :style="{color: t.color}"></i>
             <div class="flex-1">
@@ -240,7 +250,7 @@ export function serveAdminHtml() {
             </div>
 
             <!-- GLOBAL MAP TAB -->
-            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-blue-100 min-h-0 border-4 border-black m-4 rounded-xl overflow-hidden shadow-[4px_4px_0px_#000]">
+            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-blue-100 min-h-0 border-4 border-black m-2 md:m-4 rounded-xl overflow-hidden shadow-[4px_4px_0px_#000]">
                 <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                 <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
                     <div class="relative group">
@@ -471,8 +481,8 @@ export function serveAdminHtml() {
         </main>
         
         <!-- MOBILE NAV -->
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t-4 border-black flex justify-around items-center z-50 safe-area-pb shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full active:bg-gray-100 transition-all">
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 h-auto min-h-[4rem] bg-white border-t-4 border-black flex justify-around items-center z-50 safe-area-pb py-1 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
                 <i :class="t.icon" class="text-2xl mb-1 drop-shadow-md"></i>
                 <span class="text-[10px] font-black uppercase tracking-wide">{{t.label}}</span>
             </button>
