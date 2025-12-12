@@ -1,4 +1,4 @@
-// --- Frontend: Main Admin App (Feature Complete + Light Theme + Mobile Fixes) ---
+// --- Frontend: Main Admin App (Mobile Scroll Fix) ---
 
 export function serveAdminHtml() {
   const html = `<!DOCTYPE html>
@@ -162,7 +162,7 @@ export function serveAdminHtml() {
                 </div>
             </div>
 
-            <!-- TARGETS LIST -->
+            <!-- TARGETS LIST (Fix: Changed Grid to Flex-Col on Mobile) -->
             <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col min-h-0 h-full">
                 <div class="p-4 border-b border-slate-200 bg-white/90 backdrop-blur z-10 sticky top-0 shadow-sm shrink-0">
                     <div class="relative max-w-2xl mx-auto">
@@ -170,9 +170,9 @@ export function serveAdminHtml() {
                         <input v-model="search" placeholder="Search database..." class="glass-input w-full py-3 pl-10 text-sm">
                     </div>
                 </div>
-                <!-- Added min-h-0 to the scrollable container specifically -->
-                <div class="flex-1 overflow-y-auto min-h-0 p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:border-blue-400 transition-all group relative overflow-hidden flex gap-4 items-center shrink-0">
+                <!-- Fix applied below: flex flex-col for mobile, md:grid for desktop. Added min-h-0 to parent. Added min-h-[80px] to items. -->
+                <div class="flex-1 overflow-y-auto min-h-0 p-4 flex flex-col md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
+                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="glass p-4 cursor-pointer hover:border-blue-400 transition-all group relative overflow-hidden flex gap-4 items-center shrink-0 min-h-[80px]">
                          <div class="w-14 h-14 bg-slate-100 rounded-lg overflow-hidden shrink-0 border border-slate-200 shadow-sm">
                             <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
                             <div v-else class="w-full h-full flex items-center justify-center text-slate-400 text-lg font-bold">{{ s.full_name.charAt(0) }}</div>
