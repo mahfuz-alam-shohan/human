@@ -1,6 +1,6 @@
 // --- Frontend: Shared Link View ---
 export function serveSharedHtml(token) {
-    return `<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="utf-8" />
