@@ -32,7 +32,7 @@ export function serveAdminHtml() {
     /* Base & Reset */
     body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
     
-    /* Modern Card Styles (Light/Dark) */
+    /* Modern Card Styles */
     .card { 
         @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm transition-all;
     }
@@ -276,7 +276,7 @@ export function serveAdminHtml() {
                 </div>
             </div>
 
-            <!-- VIEW: MAP & NETWORK (Cleaned up containers) -->
+            <!-- VIEW: MAP (Active) -->
             <div v-if="currentTab === 'map'" class="flex-1 relative bg-slate-100 dark:bg-slate-900">
                  <div class="absolute inset-0 z-0" id="warRoomMap"></div>
                   <!-- Map Overlay -->
@@ -284,8 +284,29 @@ export function serveAdminHtml() {
                     <i class="fa-solid fa-location-dot text-primary-500 ml-2"></i>
                     <input v-model="mapSearchQuery" @input="updateMapFilter" placeholder="Filter locations..." class="bg-transparent border-none text-sm focus:ring-0 w-48">
                  </div>
+                 
+                 <!-- Active Locations Sidebar (Restored) -->
+                 <div class="absolute top-16 left-4 bottom-4 w-72 card z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
+                    <div class="p-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur">
+                        <h3 class="font-bold text-xs text-slate-500 uppercase">Active Points</h3>
+                        <div class="text-[10px] font-mono bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-600 dark:text-slate-300">{{filteredMapData.length}}</div>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                        <div v-for="loc in filteredMapData" @click="flyToGlobal(loc)" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors flex items-center gap-3">
+                             <div class="w-8 h-8 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 shrink-0">
+                                <img :src="resolveImg(loc.avatar_path)" class="w-full h-full object-cover">
+                             </div>
+                             <div class="min-w-0">
+                                <div class="font-bold text-xs text-slate-800 dark:text-slate-200 truncate">{{loc.full_name}}</div>
+                                <div class="text-[10px] text-slate-500 truncate">{{loc.name}}</div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-white dark:bg-slate-800 p-2 rounded-full shadow text-slate-500 border border-slate-200 dark:border-slate-700" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
             </div>
 
+            <!-- VIEW: NETWORK (Active) -->
             <div v-if="currentTab === 'network'" class="flex-1 relative bg-slate-50 dark:bg-slate-950">
                 <div class="absolute top-4 left-4 z-10 card px-4 py-2 shadow-sm">
                     <h3 class="font-bold text-sm text-slate-700 dark:text-slate-200">Global Relations</h3>
@@ -371,7 +392,7 @@ export function serveAdminHtml() {
                         </div>
                     </div>
                     
-                    <!-- Other Detail Tabs (Timeline, etc - Simplified structure) -->
+                    <!-- Other Detail Tabs -->
                     <div v-if="subTab === 'timeline'" class="max-w-4xl mx-auto space-y-4">
                         <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg">Interaction Log</h3>
@@ -380,10 +401,13 @@ export function serveAdminHtml() {
                         <div class="relative pl-6 border-l-2 border-slate-200 dark:border-slate-800 space-y-8 my-6">
                             <div v-for="ix in selected.interactions" :key="ix.id" class="relative">
                                 <div class="absolute -left-[31px] top-1 w-4 h-4 rounded-full bg-white dark:bg-slate-900 border-2 border-primary-500"></div>
-                                <div class="card p-4">
+                                <div class="card p-4 group">
                                     <div class="flex justify-between items-start mb-2">
                                         <div class="font-bold text-primary-600 text-sm">{{ix.type}}</div>
-                                        <div class="text-xs text-slate-400">{{new Date(ix.date).toLocaleString()}}</div>
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-xs text-slate-400">{{new Date(ix.date).toLocaleString()}}</span>
+                                            <button @click="deleteItem('subject_interactions', ix.id)" class="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-trash"></i></button>
+                                        </div>
                                     </div>
                                     <p class="text-sm text-slate-700 dark:text-slate-300">{{ix.transcript || ix.conclusion}}</p>
                                 </div>
@@ -392,7 +416,6 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
-                    <!-- Attributes Grid -->
                      <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                         <div class="flex justify-between items-center">
                             <h3 class="font-bold text-lg">Data Points</h3>
@@ -434,13 +457,52 @@ export function serveAdminHtml() {
                     </div>
 
                     <!-- Map/Network Placeholders for Detail View -->
-                    <div v-show="subTab === 'map'" class="h-[600px] card overflow-hidden relative">
-                         <div id="subjectMap" class="w-full h-full z-0"></div>
-                         <button @click="openModal('add-location')" class="absolute top-4 right-4 z-[400] bg-white text-slate-800 px-3 py-1.5 rounded shadow text-sm font-bold border border-slate-200">Add Location</button>
+                    <div v-show="subTab === 'map'" class="h-[600px] flex flex-col md:flex-row gap-4">
+                         <div class="flex-1 card overflow-hidden relative">
+                             <div id="subjectMap" class="w-full h-full z-0"></div>
+                             <button @click="openModal('add-location')" class="absolute top-4 right-4 z-[400] bg-white text-slate-800 px-3 py-1.5 rounded shadow text-sm font-bold border border-slate-200">Add Location</button>
+                         </div>
+                         <div class="w-64 space-y-2 overflow-y-auto">
+                             <div v-for="loc in selected.locations" :key="loc.id" class="card p-3 group relative cursor-pointer hover:border-primary-400" @click="flyTo(loc)">
+                                 <div class="font-bold text-sm">{{loc.name}}</div>
+                                 <div class="text-xs text-slate-500 truncate">{{loc.address}}</div>
+                                 <span class="text-[10px] uppercase font-bold text-slate-400">{{loc.type}}</span>
+                                 <button @click.stop="deleteItem('subject_locations', loc.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100"><i class="fa-solid fa-trash"></i></button>
+                             </div>
+                         </div>
                     </div>
-                     <div v-show="subTab === 'network'" class="h-[600px] card overflow-hidden relative">
-                         <div id="relNetwork" class="w-full h-full z-0"></div>
-                         <button @click="openModal('add-rel')" class="absolute top-4 right-4 z-[400] bg-white text-slate-800 px-3 py-1.5 rounded shadow text-sm font-bold border border-slate-200">Add Connection</button>
+                    
+                     <div v-show="subTab === 'network'" class="h-full flex flex-col">
+                         <div v-if="selected.familyReport && selected.familyReport.length" class="mb-6 card p-4 border-l-4 border-purple-500 bg-purple-50/50 dark:bg-purple-900/10">
+                             <h4 class="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase mb-3 flex items-center gap-2"><i class="fa-solid fa-people-roof"></i> Family Unit</h4>
+                             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                 <div v-for="fam in selected.familyReport" class="flex items-center gap-2 p-2 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-purple-300" @click="viewSubject(fam.id)">
+                                     <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-slate-200"><img :src="resolveImg(fam.avatar)" class="w-full h-full object-cover"></div>
+                                     <div><div class="text-xs font-bold">{{fam.name}}</div><div class="text-[10px] text-slate-500">{{fam.role}}</div></div>
+                                 </div>
+                             </div>
+                         </div>
+                         
+                         <div class="flex-1 card overflow-hidden relative min-h-[400px]">
+                             <div id="relNetwork" class="w-full h-full z-0"></div>
+                             <button @click="openModal('add-rel')" class="absolute top-4 right-4 z-[400] bg-white text-slate-800 px-3 py-1.5 rounded shadow text-sm font-bold border border-slate-200">Add Connection</button>
+                         </div>
+                         
+                         <div class="mt-6 space-y-2">
+                             <h4 class="text-xs font-bold uppercase text-slate-400">Connection List</h4>
+                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                 <div v-for="rel in selected.relationships" :key="rel.id" class="card p-3 flex justify-between items-center group">
+                                     <div class="flex items-center gap-3">
+                                         <div class="w-8 h-8 rounded-full bg-slate-100 overflow-hidden"><img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover"><div v-else class="w-full h-full flex items-center justify-center font-bold text-slate-400">{{rel.target_name[0]}}</div></div>
+                                         <div><div class="text-sm font-bold">{{rel.target_name}}</div><div class="text-xs text-primary-500">{{rel.relationship_type}} &harr; {{rel.role_b}}</div></div>
+                                     </div>
+                                     <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                         <button @click="openModal('edit-rel', rel)" class="text-slate-400 hover:text-primary-500"><i class="fa-solid fa-pen"></i></button>
+                                         <button @click="deleteItem('subject_relationships', rel.id)" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-trash"></i></button>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
                     </div>
 
                 </div>
@@ -460,7 +522,16 @@ export function serveAdminHtml() {
 
     <!-- UNIVERSAL MODAL -->
     <div v-if="modal.active" class="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-lg card bg-white dark:bg-slate-900 shadow-2xl flex flex-col max-h-[90vh] animate-slide-up">
+        <!-- Mini Profile (Graph Click) -->
+        <div v-if="modal.active === 'mini-profile'" class="w-full max-w-sm card p-6 text-center animate-slide-up relative">
+            <button @click="closeModal" class="absolute top-2 right-2 text-slate-400 hover:text-slate-600 p-2"><i class="fa-solid fa-xmark"></i></button>
+            <div class="w-20 h-20 rounded-full overflow-hidden border-2 border-slate-200 mx-auto mb-3"><img :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover"></div>
+            <h3 class="font-bold text-lg">{{modal.data.full_name}}</h3>
+            <p class="text-sm text-slate-500 mb-4">{{modal.data.occupation}}</p>
+            <button @click="viewSubject(modal.data.id)" class="w-full bg-primary-600 text-white font-bold py-2 rounded-lg">View Full Profile</button>
+        </div>
+
+        <div v-else class="w-full max-w-lg card bg-white dark:bg-slate-900 shadow-2xl flex flex-col max-h-[90vh] animate-slide-up">
             <div class="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
                 <h3 class="font-bold text-lg">{{ modalTitle }}</h3>
                 <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><i class="fa-solid fa-xmark"></i></button>
@@ -478,7 +549,7 @@ export function serveAdminHtml() {
                     </div>
                 </div>
 
-                <!-- DYNAMIC FORMS (Simplified) -->
+                <!-- DYNAMIC FORMS -->
                 <form v-else @submit.prevent="handleFormSubmit" class="space-y-4">
                     
                     <!-- Subject Form -->
@@ -491,33 +562,73 @@ export function serveAdminHtml() {
                             <input v-model="forms.subject.dob" type="date" class="input-field">
                         </div>
                         <textarea v-model="forms.subject.modus_operandi" placeholder="Routine & Habits" class="input-field h-24"></textarea>
+                        <textarea v-model="forms.subject.weakness" placeholder="Notes & Vulnerabilities" class="input-field h-24"></textarea>
+                    </div>
+
+                    <!-- Relationship Form -->
+                    <div v-if="['add-rel', 'edit-rel'].includes(modal.active)" class="space-y-4">
+                        <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="input-field" required>
+                            <option value="" disabled selected>Select Person</option>
+                            <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}}</option>
+                        </select>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="text-xs font-bold text-slate-400 block mb-1">Role of {{selected.full_name}}</label><input v-model="forms.rel.type" class="input-field" placeholder="e.g. Father" @input="autoFillReciprocal"></div>
+                            <div><label class="text-xs font-bold text-slate-400 block mb-1">Role of Target</label><input v-model="forms.rel.reciprocal" class="input-field" placeholder="e.g. Son"></div>
+                        </div>
+                        <div class="flex flex-wrap gap-2"><span v-for="p in presets" @click="applyPreset(p)" class="px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded text-xs cursor-pointer hover:bg-primary-100 hover:text-primary-600 border border-slate-200">{{p.a}} &harr; {{p.b}}</span></div>
                     </div>
 
                     <!-- Interaction Form -->
                     <div v-if="modal.active === 'add-interaction'" class="space-y-4">
                         <div class="grid grid-cols-2 gap-4">
                              <input type="datetime-local" v-model="forms.interaction.date" class="input-field" required>
-                             <select v-model="forms.interaction.type" class="input-field"><option>Meeting</option><option>Call</option><option>Observation</option></select>
+                             <select v-model="forms.interaction.type" class="input-field"><option>Meeting</option><option>Call</option><option>Observation</option><option>Email</option></select>
                         </div>
                         <textarea v-model="forms.interaction.transcript" placeholder="Notes..." class="input-field h-32"></textarea>
                     </div>
 
-                    <!-- Location Form -->
+                    <!-- Location Form (With Map Picker) -->
                     <div v-if="modal.active === 'add-location'" class="space-y-4">
-                        <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search address..." class="input-field">
-                        <div v-if="locationSearchResults.length" class="border rounded-lg max-h-40 overflow-y-auto divide-y"><div v-for="r in locationSearchResults" @click="selectLocation(r)" class="p-2 text-xs hover:bg-slate-50 cursor-pointer">{{r.display_name}}</div></div>
+                        <div class="relative">
+                            <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Search address..." class="input-field pl-9">
+                            <i class="fa-solid fa-search absolute left-3 top-3 text-slate-400"></i>
+                            <div v-if="locationSearchResults.length" class="absolute w-full bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg max-h-40 overflow-y-auto divide-y z-50 shadow-xl mt-1"><div v-for="r in locationSearchResults" @click="selectLocation(r)" class="p-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">{{r.display_name}}</div></div>
+                        </div>
+                        <div id="locationPickerMap" class="h-40 w-full rounded-lg bg-slate-100 border border-slate-200"></div>
                         <input v-model="forms.location.name" placeholder="Location Name (e.g. Safehouse)" class="input-field">
+                        <select v-model="forms.location.type" class="input-field"><option>Residence</option><option>Workplace</option><option>Frequent</option></select>
                     </div>
 
                     <!-- Intel Form -->
                     <div v-if="modal.active === 'add-intel'" class="space-y-4">
-                        <select v-model="forms.intel.category" class="input-field"><option>General</option><option>Contact Info</option><option>Digital</option><option>Financial</option></select>
+                        <select v-model="forms.intel.category" class="input-field"><option>General</option><option>Contact Info</option><option>Digital</option><option>Financial</option><option>Medical</option></select>
                         <input v-model="forms.intel.label" placeholder="Label (e.g. Phone)" class="input-field">
                         <input v-model="forms.intel.value" placeholder="Value" class="input-field">
                     </div>
 
+                    <!-- Share Form -->
+                    <div v-if="modal.active === 'share-secure'" class="space-y-4">
+                        <div class="flex gap-2">
+                            <select v-model="forms.share.minutes" class="input-field w-32"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
+                            <button type="button" @click="createShareLink" class="flex-1 bg-primary-600 text-white font-bold rounded-lg shadow">Generate Link</button>
+                        </div>
+                        <div class="space-y-2 max-h-40 overflow-y-auto">
+                            <div v-for="link in activeShareLinks" class="flex justify-between items-center p-2 bg-slate-50 dark:bg-slate-800 rounded border border-slate-100 dark:border-slate-700">
+                                <div><div class="font-mono text-xs">{{link.token.slice(0,8)}}...</div><div class="text-[10px] text-slate-400">{{link.is_active ? 'Active' : 'Expired'}}</div></div>
+                                <div class="flex gap-2"><button type="button" @click="copyToClipboard(getShareUrl(link.token))" class="text-primary-600"><i class="fa-regular fa-copy"></i></button><button type="button" @click="revokeLink(link.token)" class="text-red-500"><i class="fa-solid fa-ban"></i></button></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Media Link Form -->
+                    <div v-if="modal.active === 'add-media-link'" class="space-y-4">
+                        <input v-model="forms.mediaLink.url" placeholder="URL *" class="input-field" required>
+                        <input v-model="forms.mediaLink.description" placeholder="Description" class="input-field">
+                        <select v-model="forms.mediaLink.type" class="input-field"><option value="image/jpeg">Image</option><option value="application/pdf">Document</option><option value="video/mp4">Video</option></select>
+                    </div>
+
                     <!-- Submit Button -->
-                    <button type="submit" :disabled="processing" class="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-3 rounded-lg shadow-sm flex items-center justify-center">
+                    <button v-if="modal.active !== 'share-secure'" type="submit" :disabled="processing" class="w-full bg-primary-600 hover:bg-primary-700 text-white font-bold py-3 rounded-lg shadow-sm flex items-center justify-center">
                         <i v-if="processing" class="fa-solid fa-circle-notch fa-spin mr-2"></i> {{ processing ? 'Processing...' : 'Save Changes' }}
                     </button>
                 </form>
@@ -534,6 +645,12 @@ export function serveAdminHtml() {
 
   <script>
     const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+
+    const PRESETS = [
+        { a: 'Father', b: 'Child' }, { a: 'Mother', b: 'Child' }, { a: 'Parent', b: 'Child' },
+        { a: 'Son', b: 'Parent' }, { a: 'Daughter', b: 'Parent' }, { a: 'Brother', b: 'Sibling' },
+        { a: 'Husband', b: 'Wife' }, { a: 'Spouse', b: 'Spouse' }, { a: 'Associate', b: 'Associate' }
+    ];
 
     createApp({
       setup() {
@@ -553,6 +670,8 @@ export function serveAdminHtml() {
         const subTab = ref('overview');
         const listView = ref(false);
         const toasts = ref([]);
+        const showMapSidebar = ref(true);
+        const activeShareLinks = ref([]);
         
         // Data Refs
         const stats = ref({});
@@ -573,10 +692,11 @@ export function serveAdminHtml() {
         const locationSearchResults = ref([]);
         let searchTimeout = null;
         let mapInstances = {};
+        let pickerMapInstance = null;
 
         // Forms
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: {}, share: {}, mediaLink: {}
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60 }, mediaLink: {}
         });
 
         // --- THEME LOGIC ---
@@ -637,6 +757,7 @@ export function serveAdminHtml() {
             currentTab.value = 'detail';
             subTab.value = 'overview';
             analysisResult.value = analyzeLocal(selected.value);
+            closeModal();
         };
 
         const analyzeLocal = (s) => {
@@ -651,29 +772,49 @@ export function serveAdminHtml() {
             nextTick(() => initLeaflet('warRoomMap', mapData.value, true));
         };
 
-        const initLeaflet = (id, data, isGlobal = false) => {
+        const filteredMapData = computed(() => {
+            if (!mapSearchQuery.value) return mapData.value;
+            const q = mapSearchQuery.value.toLowerCase();
+            return mapData.value.filter(d => d.full_name.toLowerCase().includes(q) || d.name.toLowerCase().includes(q));
+        });
+
+        const flyToGlobal = (loc) => { if(mapInstances['warRoomMap']) mapInstances['warRoomMap'].flyTo([loc.lat, loc.lng], 16); };
+        const flyTo = (loc) => { if(mapInstances['subjectMap']) mapInstances['subjectMap'].flyTo([loc.lat, loc.lng], 16); };
+
+        const initLeaflet = (id, data, isGlobal = false, isPicker = false) => {
             const el = document.getElementById(id);
             if (!el) return;
-            if (mapInstances[id]) { mapInstances[id].remove(); delete mapInstances[id]; }
+            // Clean up existing map
+            if (id === 'locationPickerMap' && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
+            else if (mapInstances[id]) { mapInstances[id].remove(); delete mapInstances[id]; }
             
             const map = L.map(id, { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
             
-            const bounds = [];
-            data.forEach(loc => {
-                if (loc.lat) {
-                    const latlng = [loc.lat, loc.lng];
-                    bounds.push(latlng);
-                    const avatar = isGlobal ? loc.avatar_path : (selected.value?.avatar_path);
-                    const name = isGlobal ? loc.full_name : selected.value?.full_name;
-                    const html = \`<div class="avatar-marker w-10 h-10"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
-                    L.marker(latlng, { icon: L.divIcon({ html, className: '', iconSize: [40,40] }) }).addTo(map).bindPopup(\`<b>\${loc.name}</b><br>\${name}\`);
-                }
-            });
-            
-            if (bounds.length) map.fitBounds(bounds, { padding: [50, 50] });
-            mapInstances[id] = map;
+            if(isPicker) {
+                pickerMapInstance = map;
+                map.on('click', e => {
+                    forms.location.lat = e.latlng.lat;
+                    forms.location.lng = e.latlng.lng;
+                    map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
+                    L.marker(e.latlng).addTo(map);
+                });
+            } else {
+                const bounds = [];
+                data.forEach(loc => {
+                    if (loc.lat) {
+                        const latlng = [loc.lat, loc.lng];
+                        bounds.push(latlng);
+                        const avatar = isGlobal ? loc.avatar_path : (selected.value?.avatar_path);
+                        const name = isGlobal ? loc.full_name : selected.value?.full_name;
+                        const html = \`<div class="avatar-marker w-10 h-10"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
+                        L.marker(latlng, { icon: L.divIcon({ html, className: '', iconSize: [40,40] }) }).addTo(map).bindPopup(\`<b>\${loc.name}</b><br>\${name}\`);
+                    }
+                });
+                if (bounds.length) map.fitBounds(bounds, { padding: [50, 50] });
+                mapInstances[id] = map;
+            }
         };
 
         // --- NETWORK ---
@@ -683,12 +824,33 @@ export function serveAdminHtml() {
                 const container = document.getElementById('globalNetworkGraph');
                 const options = {
                     nodes: { shape: 'circularImage', size: 25, borderWidth: 2, color: { border: '#e2e8f0', background: '#fff' } },
-                    edges: { color: { color: '#cbd5e1' }, width: 1 }
+                    edges: { color: { color: '#cbd5e1' }, width: 1 },
+                    interaction: { hover: true }
                 };
-                // Fix image paths
                 data.nodes.forEach(n => n.image = resolveImg(n.image) || 'https://ui-avatars.com/api/?name='+n.label);
-                new vis.Network(container, data, options);
+                const network = new vis.Network(container, data, options);
+                network.on("click", (p) => {
+                    if(p.nodes.length) {
+                        const n = data.nodes.find(x => x.id === p.nodes[0]);
+                        if(n) { modal.data = { id: n.id, full_name: n.label, occupation: n.occupation, avatar_path: n.image }; modal.active = 'mini-profile'; }
+                    }
+                });
             });
+        };
+        
+        const initVis = (id, subject) => {
+             const container = document.getElementById(id);
+             if(!container || !subject) return;
+             const mainAvatar = resolveImg(subject.avatar_path) || 'https://ui-avatars.com/api/?name='+subject.full_name;
+             const nodes = [{ id: subject.id, label: subject.full_name, shape: 'circularImage', image: mainAvatar, size: 30 }];
+             const edges = [];
+             subject.relationships.forEach(r => {
+                 const tid = r.subject_a_id === subject.id ? r.subject_b_id : r.subject_a_id;
+                 const tAvatar = resolveImg(r.target_avatar) || 'https://ui-avatars.com/api/?name='+r.target_name;
+                 nodes.push({ id: tid, label: r.target_name, shape: 'circularImage', image: tAvatar });
+                 edges.push({ from: subject.id, to: tid });
+             });
+             new vis.Network(container, { nodes, edges }, { nodes: { borderWidth: 2 }, interaction: { hover: true } });
         };
 
         // --- MODALS & FORMS ---
@@ -697,8 +859,14 @@ export function serveAdminHtml() {
             if(t==='add-subject') forms.subject = { admin_id: localStorage.getItem('admin_id'), threat_level: 'Low', status: 'Active' };
             if(t==='edit-profile') forms.subject = { ...selected.value };
             if(t==='add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
-            if(t==='add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; }
+            if(t==='add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; locationSearchResults.value = []; nextTick(() => initLeaflet('locationPickerMap', [], false, true)); }
             if(t==='add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
+            if(t==='add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' };
+            if(t==='edit-rel' && d) { 
+                forms.rel = { id: d.id, subjectA: selected.value.id, targetId: d.subject_a_id === selected.value.id ? d.subject_b_id : d.subject_a_id, type: d.subject_a_id === selected.value.id ? d.relationship_type : d.role_b, reciprocal: d.subject_a_id === selected.value.id ? d.role_b : d.relationship_type };
+            }
+            if(t==='share-secure') fetchShareLinks();
+            if(t==='add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
             if(t==='cmd') nextTick(() => cmdInput.value?.focus());
         };
         const closeModal = () => { modal.active = null; };
@@ -721,12 +889,27 @@ export function serveAdminHtml() {
                 } else if(modal.active === 'add-intel') {
                     await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) });
                     viewSubject(selected.value.id);
+                } else if (modal.active === 'add-rel' || modal.active === 'edit-rel') {
+                    const method = forms.rel.id ? 'PATCH' : 'POST';
+                    const payload = method === 'POST' ? { subjectA: selected.value.id, targetId: forms.rel.targetId, type: forms.rel.type, reciprocal: forms.rel.reciprocal } : { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal };
+                    await api('/relationship', { method, body: JSON.stringify(payload) });
+                    viewSubject(selected.value.id);
+                } else if(modal.active === 'add-media-link') {
+                    await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) });
+                    viewSubject(selected.value.id);
                 }
                 notify('Saved successfully');
-                closeModal();
+                if(modal.active !== 'share-secure') closeModal();
             } catch(e) { /* Error handled by api wrapper */ } 
             finally { processing.value = false; }
         };
+
+        // Sharing Logic
+        const fetchShareLinks = async () => { activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id); };
+        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); fetchShareLinks(); };
+        const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
+        const copyToClipboard = (t) => navigator.clipboard.writeText(t);
+        const getShareUrl = (t) => window.location.origin + '/share/' + t;
 
         const deleteItem = async (table, id) => {
              if(confirm('Are you sure?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); notify('Item deleted'); }
@@ -740,6 +923,11 @@ export function serveAdminHtml() {
             await api('/subjects/' + selected.value.id, { method: 'PATCH', body: JSON.stringify({ threat_level: selected.value.threat_level }) });
             notify('Threat level updated');
         };
+
+        // Utils for Relationships
+        const presets = PRESETS;
+        const applyPreset = (p) => { forms.rel.type = p.a; forms.rel.reciprocal = p.b; };
+        const autoFillReciprocal = () => { const f = PRESETS.find(p => p.a.toLowerCase() === forms.rel.type.toLowerCase()); if(f) forms.rel.reciprocal = f.b; };
 
         // --- UTILS ---
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
@@ -765,8 +953,8 @@ export function serveAdminHtml() {
                 locationSearchResults.value = await res.json();
             }, 500);
         };
-        const selectLocation = (r) => { forms.location.lat = parseFloat(r.lat); forms.location.lng = parseFloat(r.lon); forms.location.address = r.display_name; locationSearchResults.value = []; };
-        const modalTitle = computed(() => ({ 'add-subject':'New Profile', 'add-interaction':'Log Event', 'cmd':'Quick Search' }[modal.active] || 'Edit Data'));
+        const selectLocation = (r) => { forms.location.lat = parseFloat(r.lat); forms.location.lng = parseFloat(r.lon); forms.location.address = r.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([r.lat, r.lon], 15); L.marker([r.lat, r.lon]).addTo(pickerMapInstance); } };
+        const modalTitle = computed(() => ({ 'add-subject':'New Profile', 'add-interaction':'Log Event', 'cmd':'Quick Search', 'add-rel': 'New Connection', 'share-secure': 'Share Profile', 'add-location': 'Pin Location' }[modal.active] || 'Edit Data'));
 
         // File Upload
         const fileInput = ref(null);
@@ -778,8 +966,8 @@ export function serveAdminHtml() {
              reader.readAsDataURL(f);
              reader.onload = async (ev) => {
                  const b64 = ev.target.result.split(',')[1];
-                 const ep = modal.active ? '/upload-media' : '/upload-avatar'; // Simplified logic
-                 await api('/upload-avatar', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: b64, filename: f.name, contentType: f.type }) });
+                 const ep = modal.active ? '/upload-media' : '/upload-avatar'; 
+                 await api(ep, { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: b64, filename: f.name, contentType: f.type }) });
                  viewSubject(selected.value.id);
                  notify('Upload complete');
              };
@@ -800,7 +988,8 @@ export function serveAdminHtml() {
             toasts, notify, removeToast, toggleTheme, handleAuth, fetchData, changeTab, changeSubTab, viewSubject, openModal, closeModal, handleFormSubmit,
             deleteItem, deleteProfile, saveThreat, resolveImg, getThreatColor, getThreatBadge, groupedIntel, cmdQuery, cmdResults, cmdInput,
             locationSearchQuery, locationSearchResults, debounceSearch, selectLocation, modalTitle, triggerUpload, handleFile, handleLogout: () => { localStorage.removeItem('admin_id'); location.reload(); },
-            mapSearchQuery, updateMapFilter: () => {}, flyToGlobal: () => {}, analysisResult, activeShareLinks: [], suggestions
+            mapSearchQuery, updateMapFilter: () => {}, flyToGlobal, flyTo, analysisResult, activeShareLinks, suggestions, presets, applyPreset, autoFillReciprocal,
+            showMapSidebar, filteredMapData, fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl
         };
       }
     }).mount('#app');
