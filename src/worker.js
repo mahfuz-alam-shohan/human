@@ -6,30 +6,6 @@ const encoder = new TextEncoder();
 // --- Configuration & Constants ---
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
-const RELATION_PRESETS = [
-    { a: 'Father', b: 'Child', family: true },
-    { a: 'Mother', b: 'Child', family: true },
-    { a: 'Parent', b: 'Child', family: true },
-    { a: 'Son', b: 'Parent', family: true },
-    { a: 'Daughter', b: 'Parent', family: true },
-    { a: 'Brother', b: 'Sibling', family: true },
-    { a: 'Sister', b: 'Sibling', family: true },
-    { a: 'Husband', b: 'Wife', family: true },
-    { a: 'Wife', b: 'Husband', family: true },
-    { a: 'Spouse', b: 'Spouse', family: true },
-    { a: 'Uncle', b: 'Niece/Nephew', family: true },
-    { a: 'Aunt', b: 'Niece/Nephew', family: true },
-    { a: 'Grandfather', b: 'Grandchild', family: true },
-    { a: 'Grandmother', b: 'Grandchild', family: true },
-    { a: 'Teacher', b: 'Student', family: false },
-    { a: 'Employer', b: 'Employee', family: false },
-    { a: 'Colleague', b: 'Colleague', family: false },
-    { a: 'Associate', b: 'Associate', family: false },
-    { a: 'Friend', b: 'Friend', family: false },
-];
-
-const FAMILY_KEYWORDS = ['father', 'mother', 'parent', 'son', 'daughter', 'child', 'brother', 'sister', 'sibling', 'husband', 'wife', 'spouse', 'uncle', 'aunt', 'niece', 'nephew', 'grand'];
-
 // Whitelist for Subject Columns
 const SUBJECT_COLUMNS = [
     'full_name', 'alias', 'dob', 'age', 'gender', 'occupation', 'nationality', 
@@ -44,10 +20,38 @@ const SUBJECT_COLUMNS = [
 
 function isoTimestamp() { return new Date().toISOString(); }
 
-async function hashPassword(secret) {
-  const data = encoder.encode(secret);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+// --- SECURITY: PBKDF2 Password Hashing ---
+// Generates a salt and hashes the password. Returns "salt:hash" string.
+async function hashPassword(password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+    const hash = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" }, key, 256);
+    
+    const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return `${saltHex}:${hashHex}`;
+}
+
+// Verifies a password against a stored "salt:hash".
+async function verifyPassword(password, storedHash) {
+    const [saltHex, originalHashHex] = storedHash.split(':');
+    if (!saltHex || !originalHashHex) return false;
+
+    const salt = new Uint8Array(saltHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+    const hash = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" }, key, 256);
+    
+    const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex === originalHashHex;
+}
+
+// Legacy SHA-256 check for backward compatibility during migration
+async function checkLegacyHash(password, storedHash) {
+    const data = encoder.encode(password);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const hash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hash === storedHash;
 }
 
 function sanitizeFileName(name) {
@@ -198,13 +202,6 @@ async function ensureSchema(db) {
         )`)
       ]);
 
-      // --- AUTO-MIGRATION: Fix missing role_b column ---
-      try {
-          await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run();
-      } catch (e) {
-          // Ignore error if column already exists
-      }
-
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
@@ -253,6 +250,8 @@ function analyzeProfile(subject, interactions, intel) {
         generated_at: isoTimestamp()
     };
 }
+
+const FAMILY_KEYWORDS = ['father', 'mother', 'parent', 'son', 'daughter', 'child', 'brother', 'sister', 'sibling', 'husband', 'wife', 'spouse', 'uncle', 'aunt', 'niece', 'nephew', 'grand'];
 
 function generateFamilyReport(relationships, subjectId) {
     const family = [];
@@ -341,11 +340,13 @@ async function handleGetSubjectFull(db, id) {
 
 async function handleGetGlobalNetwork(db, adminId) {
     const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
-    
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
 
     const subjectIds = subjects.results.map(s => s.id).join(',');
     
+    // Fix: Handle empty list case directly
+    if (!subjectIds) return response({ nodes: [], edges: [] });
+
     const relationships = await db.prepare(`
         SELECT subject_a_id, subject_b_id, relationship_type, role_b
         FROM subject_relationships 
@@ -433,7 +434,6 @@ async function handleGetSharedSubject(db, token) {
         
         await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
 
-        // FETCH ALL INFOS
         const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
         const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
         const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
@@ -445,7 +445,6 @@ async function handleGetSharedSubject(db, token) {
             LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
         `).bind(link.subject_id, link.subject_id, link.subject_id).all();
-
 
         return response({
             ...subject,
@@ -482,13 +481,30 @@ export default {
         if (path === '/api/login') {
             const { email, password } = await req.json();
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+            
+            // New Registration
             if (!admin) {
                 const hash = await hashPassword(password);
                 const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
                 return response({ id: res.meta.last_row_id });
             }
-            const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
+
+            // Verify Password (Try New PBKDF2 first)
+            let isValid = await verifyPassword(password, admin.password_hash);
+            
+            // MIGRATION: If invalid, try Legacy SHA-256
+            if (!isValid) {
+                const isLegacyValid = await checkLegacyHash(password, admin.password_hash);
+                if (isLegacyValid) {
+                    // It was a legacy password. Re-hash it securely and update DB immediately.
+                    console.log(`Migrating password for user ${admin.id} to PBKDF2...`);
+                    const newHash = await hashPassword(password);
+                    await env.DB.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').bind(newHash, admin.id).run();
+                    isValid = true;
+                }
+            }
+
+            if (!isValid) return errorResponse('ACCESS DENIED', 401);
             return response({ id: admin.id });
         }
 
@@ -589,11 +605,15 @@ export default {
             }
         }
 
-        // File Ops
+        // File Ops (Requires R2 binding)
         if (path === '/api/upload-avatar' || path === '/api/upload-media') {
             const { subjectId, data, filename, contentType } = await req.json();
             const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
             const binary = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+            
+            // Check if R2 is bound
+            if (!env.BUCKET) return errorResponse("Storage Bucket Not Configured", 500);
+
             await env.BUCKET.put(key, binary, { httpMetadata: { contentType } });
             
             if (path.includes('avatar')) await env.DB.prepare('UPDATE subjects SET avatar_path = ? WHERE id = ?').bind(key, subjectId).run();
@@ -603,6 +623,7 @@ export default {
 
         if (path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
+             if (!env.BUCKET) return errorResponse("Storage Bucket Not Configured", 500);
             const obj = await env.BUCKET.get(key);
             if (!obj) return new Response('Not found', { status: 404 });
             return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
