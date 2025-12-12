@@ -435,6 +435,8 @@ async function handleGetSharedSubject(db, token) {
 
         // FETCH ALL INFOS
         const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
+        if (!subject) return errorResponse('Subject not found', 404); // ADDED SAFETY CHECK
+
         const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
         const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
         const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
