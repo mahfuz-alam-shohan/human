@@ -959,13 +959,65 @@ export function serveAdminHtml() {
              if(val === 'network') nextTick(async () => {
                 const data = await api('/global-network');
                 const container = document.getElementById('globalNetworkGraph');
+                
+                // --- CLUSTER CENTROID LOGIC ---
+                let totalX = 0, totalY = 0, count = 0;
+                data.nodes.forEach(n => {
+                    if (n.x !== null && n.y !== null && n.x !== undefined && n.y !== undefined) {
+                        totalX += n.x;
+                        totalY += n.y;
+                        count++;
+                    }
+                });
+                
+                const avgX = count > 0 ? totalX / count : 0;
+                const avgY = count > 0 ? totalY / count : 0;
+
                 data.nodes.forEach(n => { 
                     n.image = resolveImg(n.image) || 'https://ui-avatars.com/api/?name='+n.label;
                     n.borderWidth = 3;
                     n.color = { border: '#000000', background: '#ffffff' };
-                    n.font = { face: 'Fredoka', size: 14, color: '#000000' };
+                    n.font = { face: 'Fredoka', size: 14, color: '#000000', background: '#ffffff' };
+                    
+                    // IF NO POSITION SAVED, PLACE NEAR CLUSTER OR RANDOM
+                    if (n.x === null || n.x === undefined) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const radius = 100 + Math.random() * 200; // Place in a ring around center
+                        n.x = avgX + Math.cos(angle) * radius;
+                        n.y = avgY + Math.sin(angle) * radius;
+                    }
                 });
-                const network = new vis.Network(container, data, { nodes: { shape: 'circularImage', borderWidth: 3 }, edges: { color: '#000000', width: 2 } });
+
+                const options = { 
+                    nodes: { 
+                        shape: 'circularImage', 
+                        borderWidth: 3,
+                        physics: false // KEY CHANGE: Nodes don't push each other
+                    }, 
+                    edges: { color: '#000000', width: 2 },
+                    physics: { 
+                        enabled: false, // GLOBAL DISABLE: No physics simulation at all
+                        stabilization: false
+                    },
+                    interaction: { dragNodes: true, dragView: true, zoomView: true } 
+                };
+
+                const network = new vis.Network(container, data, options);
+                
+                // Focus on the cluster
+                network.moveTo({ position: { x: avgX, y: avgY } });
+
+                // --- SAVE POSITION ON DRAG END ---
+                network.on("dragEnd", function (params) {
+                    if (params.nodes.length > 0) {
+                        const positions = network.getPositions(params.nodes);
+                        Object.keys(positions).forEach(id => {
+                            const pos = positions[id];
+                            api('/subjects/'+id, { method: 'PATCH', body: JSON.stringify({ network_x: Math.round(pos.x), network_y: Math.round(pos.y) }) });
+                        });
+                    }
+                });
+
                 network.on("click", (params) => {
                     if(params.nodes.length > 0) {
                         const nodeId = params.nodes[0];
