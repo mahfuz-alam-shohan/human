@@ -939,9 +939,23 @@ export function serveAdminHtml() {
                     const targetId = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
                     const targetAvatar = resolveImg(r.target_avatar) || 'https://ui-avatars.com/api/?name='+r.target_name;
                     nodes.push({ id: targetId || 'ext-'+r.id, label: r.target_name, shape: 'circularImage', image: targetAvatar, borderWidth: 3, color: {border: '#000000', background: '#ffffff'} });
-                    edges.push({ from: selected.value.id, to: targetId || 'ext-'+r.id, label: r.subject_a_id === selected.value.id ? r.relationship_type : (r.role_b || r.relationship_type), font: { align: 'middle', face: 'Comic Neue', size: 14, strokeWidth: 3, strokeColor: '#ffffff' }, color: {color:'#000000', width: 2} });
+                    edges.push({ 
+                        from: selected.value.id, 
+                        to: targetId || 'ext-'+r.id, 
+                        label: r.subject_a_id === selected.value.id ? r.relationship_type : (r.role_b || r.relationship_type), 
+                        // Updated Edge Style
+                        font: { align: 'middle', face: 'Comic Neue', size: 14, strokeWidth: 0, background: 'white', color: '#000000' }, 
+                        color: {color:'#000000', width: 2, highlight: '#8B5CF6'},
+                        smooth: { type: 'continuous', roundness: 0.5 },
+                        arrows: { to: { enabled: true, scaleFactor: 1, type: 'arrow' } }
+                    });
                  });
-                 const network = new vis.Network(container, { nodes, edges }, { nodes: { borderWidth: 3, font: { face: 'Fredoka', size: 14, color: '#000000' } }, edges: { color: '#000000', width: 2 } });
+                 const network = new vis.Network(container, { nodes, edges }, { 
+                     nodes: { borderWidth: 3, font: { face: 'Fredoka', size: 14, color: '#000000' } }, 
+                     edges: { color: '#000000', width: 2, smooth: { type: 'continuous', forceDirection: 'none' } },
+                     physics: { enabled: false }, // Static 
+                     interaction: { dragNodes: true, zoomView: true, dragView: true, hover: true }
+                 });
                  // CLICK HANDLER FOR MINI PROFILE
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
@@ -988,18 +1002,45 @@ export function serveAdminHtml() {
                     }
                 });
 
+                // GLOBAL NETWORK OPTIONS
                 const options = { 
                     nodes: { 
                         shape: 'circularImage', 
                         borderWidth: 3,
                         physics: false // KEY CHANGE: Nodes don't push each other
                     }, 
-                    edges: { color: '#000000', width: 2 },
+                    edges: { 
+                        color: { color: '#000000', highlight: '#8B5CF6' },
+                        width: 2,
+                        selectionWidth: 4,
+                        hoverWidth: 3,
+                        arrows: { to: { enabled: true, scaleFactor: 1, type: 'arrow' } },
+                        smooth: {
+                            enabled: true,
+                            type: 'continuous', // Fixes the "0,0 reference" curve issue
+                            roundness: 0.5,
+                            forceDirection: 'none'
+                        },
+                        font: {
+                            align: 'middle',
+                            size: 12,
+                            face: 'Comic Neue',
+                            background: 'white',
+                            strokeWidth: 0,
+                            color: '#000000'
+                        }
+                    },
                     physics: { 
                         enabled: false, // GLOBAL DISABLE: No physics simulation at all
                         stabilization: false
                     },
-                    interaction: { dragNodes: true, dragView: true, zoomView: true } 
+                    interaction: { 
+                        dragNodes: true, 
+                        dragView: true, 
+                        zoomView: true, 
+                        hover: true, // Highlights edges on hover
+                        selectConnectedEdges: true
+                    } 
                 };
 
                 const network = new vis.Network(container, data, options);
