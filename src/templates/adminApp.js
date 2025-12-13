@@ -986,7 +986,8 @@ export function serveAdminHtml() {
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
-            showMapSidebar, flyToGlobal, flyTo
+            showMapSidebar, flyToGlobal, flyTo,
+            fileInput // <--- This was missing before! Now the hidden input works.
         };
       }
     }).mount('#app');
