@@ -15,6 +15,7 @@ export function serveAdminHtml() {
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
   <style>
     /* Kiddy Theme Config */
@@ -300,7 +301,7 @@ export function serveAdminHtml() {
 
                 <!-- SUB TABS -->
                 <div class="flex border-b-4 border-black overflow-x-auto bg-white shrink-0 no-scrollbar p-2 gap-2">
-                    <button v-for="t in ['Overview', 'Attributes', 'Timeline', 'Map', 'Network', 'Files']" 
+                    <button v-for="t in ['Overview', 'Capabilities', 'Attributes', 'Timeline', 'Map', 'Network', 'Files']" 
                         @click="changeSubTab(t.toLowerCase())" 
                         :class="subTab === t.toLowerCase() ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'"
                         class="px-4 py-2 text-sm font-black font-heading rounded-lg border-2 border-black transition-all whitespace-nowrap">
@@ -359,6 +360,26 @@ export function serveAdminHtml() {
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CAPABILITIES (NEW!) -->
+                    <div v-show="subTab === 'capabilities'" class="max-w-5xl mx-auto h-full flex flex-col md:flex-row gap-6">
+                        <div class="w-full md:w-1/3 fun-card p-4 space-y-4">
+                            <h3 class="font-black font-heading text-lg">Skill Set</h3>
+                            <div v-for="skill in ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth']" :key="skill" class="space-y-1">
+                                <div class="flex justify-between text-xs font-bold">
+                                    <span>{{skill}}</span>
+                                    <span>{{ getSkillScore(skill) }}%</span>
+                                </div>
+                                <input type="range" min="0" max="100" :value="getSkillScore(skill)" @input="e => updateSkill(skill, e.target.value)" class="w-full accent-violet-500">
+                            </div>
+                        </div>
+                        <div class="flex-1 fun-card p-4 flex items-center justify-center bg-white relative">
+                            <div class="absolute top-2 left-2 text-xs font-bold text-gray-400 uppercase">Analysis Radar</div>
+                            <div class="w-full max-w-md aspect-square relative">
+                                <canvas id="skillsChart"></canvas>
                             </div>
                         </div>
                     </div>
@@ -500,7 +521,7 @@ export function serveAdminHtml() {
     </div>
 
     <!-- MODALS -->
-    <div v-if="modal.active" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
+    <div v-if="modal.active && modal.active !== 'mini-profile'" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
         <div class="w-full max-w-2xl fun-card flex flex-col max-h-[90vh] animate-bounce-in overflow-hidden border-4">
              
              <div class="flex justify-between items-center p-4 border-b-4 border-black bg-yellow-300">
@@ -645,10 +666,17 @@ export function serveAdminHtml() {
         <div class="w-full max-w-sm fun-card bg-white shadow-2xl flex flex-col animate-bounce-in border-4 border-black p-6 text-center pointer-events-auto relative">
             <button @click="closeModal" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-100 text-red-500 border-2 border-black flex items-center justify-center font-bold hover:bg-red-200"><i class="fa-solid fa-times"></i></button>
             <div class="w-24 h-24 rounded-full overflow-hidden border-4 border-black bg-gray-100 mx-auto mb-4 shadow-[4px_4px_0px_#000]">
-                <img :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover">
+                <img v-if="resolveImg(modal.data.avatar_path)" :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover">
+                <div v-else class="w-full h-full flex items-center justify-center text-4xl font-black text-gray-300">{{modal.data.full_name.charAt(0)}}</div>
             </div>
             <h3 class="text-2xl font-black text-black mb-1 font-heading">{{modal.data.full_name}}</h3>
-            <p class="text-sm font-bold text-gray-500 mb-6 bg-gray-100 inline-block px-3 py-1 rounded-full mx-auto border-2 border-gray-200">{{modal.data.occupation || 'No Job'}}</p>
+            
+            <div class="flex flex-wrap justify-center gap-2 mb-6">
+                <span class="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-full border-2 border-gray-200">{{modal.data.occupation || 'No Job'}}</span>
+                <span v-if="modal.data.nationality" class="text-xs font-bold text-blue-500 bg-blue-50 px-3 py-1 rounded-full border-2 border-blue-100">{{modal.data.nationality}}</span>
+                <span v-if="modal.data.threat_level" class="text-xs font-bold px-3 py-1 rounded-full border-2" :class="getThreatColor(modal.data.threat_level, true)">{{modal.data.threat_level}}</span>
+            </div>
+
             <button @click="viewSubject(modal.data.id)" class="w-full bg-blue-500 hover:bg-blue-400 text-white font-black py-3 rounded-xl text-lg fun-btn shadow-[3px_3px_0px_#000] active:shadow-none active:translate-y-1">Open Folder</button>
         </div>
     </div>
@@ -714,6 +742,9 @@ export function serveAdminHtml() {
             subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60 }, mediaLink: {}
         });
 
+        // Charts
+        let skillsChartInstance = null;
+
         // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
@@ -774,6 +805,49 @@ export function serveAdminHtml() {
              if(s.intel?.some(i => i.category === 'Social Media')) tags.push('Digital');
              if(s.interactions?.length > 5) tags.push('Frequent Contact');
              return { summary: \`Profile is \${completeness}% complete based on data density.\`, tags };
+        };
+
+        // Skills Logic
+        const getSkillScore = (name) => selected.value.skills?.find(s => s.skill_name === name)?.score || 50;
+        const updateSkill = async (name, val) => {
+            await api('/skills', { method: 'POST', body: JSON.stringify({ subject_id: selected.value.id, skill_name: name, score: val }) });
+            // Update local
+            const idx = selected.value.skills.findIndex(s => s.skill_name === name);
+            if(idx > -1) selected.value.skills[idx].score = parseInt(val);
+            else selected.value.skills.push({ skill_name: name, score: parseInt(val) });
+            renderSkillsChart();
+        };
+
+        const renderSkillsChart = () => {
+            const ctx = document.getElementById('skillsChart');
+            if(!ctx) return;
+            if(skillsChartInstance) skillsChartInstance.destroy();
+            
+            const labels = ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth'];
+            const data = labels.map(l => getSkillScore(l));
+
+            skillsChartInstance = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Capabilities',
+                        data: data,
+                        fill: true,
+                        backgroundColor: 'rgba(139, 92, 246, 0.2)', // Violet-500
+                        borderColor: 'rgb(139, 92, 246)',
+                        pointBackgroundColor: 'rgb(139, 92, 246)',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: 'rgb(139, 92, 246)'
+                    }]
+                },
+                options: {
+                    elements: { line: { borderWidth: 3 } },
+                    scales: { r: { angleLines: { display: true }, suggestedMin: 0, suggestedMax: 100 } },
+                    plugins: { legend: { display: false } }
+                }
+            });
         };
 
         // Relation Presets
@@ -929,6 +1003,7 @@ export function serveAdminHtml() {
 
         watch(subTab, (val) => {
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
+            if(val === 'capabilities') nextTick(renderSkillsChart); // RENDER CHART ON TAB CHANGE
             if(val === 'network') nextTick(() => {
                  const container = document.getElementById('relNetwork');
                  if(!container || !selected.value) return;
@@ -962,7 +1037,7 @@ export function serveAdminHtml() {
                          const nodeId = params.nodes[0];
                          if(nodeId === selected.value.id) return;
                          const rel = selected.value.relationships.find(r => (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) || (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId));
-                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar });
+                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar, nationality: rel.target_nationality, threat_level: rel.target_threat });
                      }
                  });
             });
@@ -1063,7 +1138,7 @@ export function serveAdminHtml() {
                     if(params.nodes.length > 0) {
                         const nodeId = params.nodes[0];
                         const nodeData = data.nodes.find(n => n.id === nodeId);
-                        if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image });
+                        if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image, nationality: nodeData.group === 'Low' ? '' : '', threat_level: nodeData.group });
                     }
                 });
             });
@@ -1080,7 +1155,8 @@ export function serveAdminHtml() {
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
             showMapSidebar, flyToGlobal, flyTo,
-            fileInput // <--- This was missing before! Now the hidden input works.
+            fileInput,
+            getSkillScore, updateSkill // New Capability Functions
         };
       }
     }).mount('#app');
