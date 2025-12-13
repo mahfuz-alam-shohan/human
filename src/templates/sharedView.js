@@ -199,7 +199,7 @@ export function serveSharedHtml(token) {
                 </div>
 
                 <!-- Map -->
-                <div v-show="activeTab === 'Map'" class="h-[500px] flex flex-col md:flex-row gap-4">
+                <div v-show="activeTab === 'Map'" class="h-[300px] md:h-[500px] flex flex-col md:flex-row gap-4">
                     <div class="flex-1 bg-white rounded-3xl overflow-hidden relative min-h-[300px] border-4 border-slate-800 shadow-[6px_6px_0px_#000]">
                         <div id="sharedMap" class="w-full h-full z-0"></div>
                     </div>
