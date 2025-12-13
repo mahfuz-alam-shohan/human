@@ -29,7 +29,7 @@ const SUBJECT_COLUMNS = [
     'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
     'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
     'digital_identifiers',
-    'network_x', 'network_y' // <--- ADDED THESE FOR GRAPH POSITIONING
+    'network_x', 'network_y' // <--- COORDINATES SAVED HERE
 ];
 
 // --- JWT Security Helpers ---
@@ -360,6 +360,7 @@ async function handleGetSubjectFull(db, id, adminId) {
 }
 
 async function handleGetGlobalNetwork(db, adminId) {
+    // SELECT X AND Y COORDINATES
     const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
