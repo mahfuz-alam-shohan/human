@@ -392,7 +392,18 @@ export function serveAdminHtml() {
                         </div>
                         <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
                             <h4 class="text-sm font-black uppercase text-gray-400 border-b-2 border-gray-300 pb-1 ml-2">{{ category }}</h4>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            
+                            <!-- SOCIAL MEDIA GRID -->
+                            <div v-if="category === 'Social Media'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
+                                    <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
+                                    <div class="font-bold text-xs text-black">{{item.label}}</div>
+                                    <button @click.prevent="deleteItem('subject_intel', item.id)" class="absolute top-1 right-1 text-red-300 hover:text-red-500 text-[10px]"><i class="fa-solid fa-times"></i></button>
+                                </a>
+                            </div>
+
+                            <!-- STANDARD GRID -->
+                            <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
                                     <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
                                     <div class="text-black font-bold break-words text-sm">{{item.value}}</div>
@@ -599,7 +610,7 @@ export function serveAdminHtml() {
                         <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
                     </select>
                     <input v-model="forms.intel.label" placeholder="Label (e.g. Phone)" class="fun-input w-full p-3 text-sm" required>
-                    <textarea v-model="forms.intel.value" placeholder="Value" rows="3" class="fun-input w-full p-3 text-sm" required></textarea>
+                    <textarea v-model="forms.intel.value" @input="handleIntelInput" placeholder="Value" rows="3" class="fun-input w-full p-3 text-sm" required></textarea>
                     <button type="submit" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
                  </form>
 
@@ -744,6 +755,33 @@ export function serveAdminHtml() {
 
         // Charts
         let skillsChartInstance = null;
+
+        // Social Media Detection
+        const socialMap = [
+            { regex: /facebook\.com/, name: 'Facebook', icon: 'fa-brands fa-facebook', color: '#1877F2' },
+            { regex: /twitter\.com|x\.com/, name: 'X / Twitter', icon: 'fa-brands fa-x-twitter', color: '#000000' },
+            { regex: /instagram\.com/, name: 'Instagram', icon: 'fa-brands fa-instagram', color: '#E1306C' },
+            { regex: /linkedin\.com/, name: 'LinkedIn', icon: 'fa-brands fa-linkedin', color: '#0077B5' },
+            { regex: /github\.com/, name: 'GitHub', icon: 'fa-brands fa-github', color: '#333' },
+            { regex: /youtube\.com/, name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#FF0000' },
+            { regex: /t\.me/, name: 'Telegram', icon: 'fa-brands fa-telegram', color: '#0088cc' },
+            { regex: /wa\.me/, name: 'WhatsApp', icon: 'fa-brands fa-whatsapp', color: '#25D366' },
+            { regex: /tiktok\.com/, name: 'TikTok', icon: 'fa-brands fa-tiktok', color: '#000000' },
+            { regex: /reddit\.com/, name: 'Reddit', icon: 'fa-brands fa-reddit', color: '#FF4500' },
+        ];
+
+        const getSocialInfo = (url) => {
+            return socialMap.find(s => s.regex.test(url)) || { name: 'Website', icon: 'fa-solid fa-globe', color: '#6B7280' };
+        };
+
+        const handleIntelInput = () => {
+            const val = forms.intel.value;
+            const social = socialMap.find(s => s.regex.test(val));
+            if (social) {
+                forms.intel.category = 'Social Media';
+                forms.intel.label = social.name;
+            }
+        };
 
         // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
@@ -1156,7 +1194,8 @@ export function serveAdminHtml() {
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
             showMapSidebar, flyToGlobal, flyTo,
             fileInput,
-            getSkillScore, updateSkill // New Capability Functions
+            getSkillScore, updateSkill, // New Capability Functions
+            getSocialInfo, handleIntelInput // Social Media Logic
         };
       }
     }).mount('#app');
