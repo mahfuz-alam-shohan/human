@@ -314,10 +314,20 @@ export function serveAdminHtml() {
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="space-y-4">
-                                <div class="aspect-[4/5] bg-white rounded-2xl relative overflow-hidden group shadow-[6px_6px_0px_#000] border-4 border-black">
+                                <div class="aspect-[4/5] bg-white rounded-2xl relative overflow-hidden group shadow-[6px_6px_0px_#000] border-4 border-black max-w-[220px] mx-auto md:max-w-none md:mx-0">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    <button @click="triggerUpload('avatar')" class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-bold transition-all backdrop-blur-sm"><i class="fa-solid fa-camera mr-2"></i> New Pic</button>
+                                    
+                                    <!-- Desktop Hover Button -->
+                                    <button @click="triggerUpload('avatar')" class="hidden md:flex absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 items-center justify-center text-white font-bold transition-all backdrop-blur-sm">
+                                        <i class="fa-solid fa-camera mr-2"></i> New Pic
+                                    </button>
+
+                                    <!-- Mobile Floating Button (Always Visible) -->
+                                    <button @click="triggerUpload('avatar')" class="md:hidden absolute bottom-3 right-3 bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg border-2 border-white z-10 active:scale-90 transition-transform">
+                                        <i class="fa-solid fa-camera"></i>
+                                    </button>
                                 </div>
+                                
                                 <div class="fun-card p-4 text-center">
                                     <div class="text-xs text-gray-400 font-black uppercase mb-1">Threat Level</div>
                                     <span class="text-xl font-black px-3 py-1 rounded-lg border-2 border-black inline-block" :class="getThreatColor(selected.threat_level, true)">{{selected.threat_level}}</span>
@@ -530,6 +540,13 @@ export function serveAdminHtml() {
 
                 <!-- ADD/EDIT SUBJECT -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
+                    <div v-if="modal.active === 'edit-profile'" class="bg-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-between">
+                         <div class="text-sm font-bold text-gray-600">Profile Picture</div>
+                         <button type="button" @click="triggerUpload('avatar')" class="bg-white px-4 py-2 rounded-lg border-2 border-black font-bold text-xs hover:bg-gray-50 flex items-center gap-2">
+                            <i class="fa-solid fa-camera"></i> Change Photo
+                         </button>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                         <div class="space-y-4">
                             <label class="block text-xs font-black uppercase text-gray-400">Who is it?</label>
@@ -897,6 +914,7 @@ export function serveAdminHtml() {
              reader.onload = async (ev) => {
                  await api(uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: ev.target.result.split(',')[1], filename: f.name, contentType: f.type }) });
                  viewSubject(selected.value.id);
+                 e.target.value = ''; // Reset input to allow re-uploading same file
              };
         };
 
