@@ -28,7 +28,8 @@ const SUBJECT_COLUMNS = [
     'modus_operandi', 'notes', 'weakness', 'avatar_path', 'is_archived', 
     'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
     'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
-    'digital_identifiers'
+    'digital_identifiers',
+    'network_x', 'network_y' // <--- ADDED THESE FOR GRAPH POSITIONING
 ];
 
 // --- JWT Security Helpers ---
@@ -217,12 +218,12 @@ async function ensureSchema(db) {
         )`)
       ]);
 
-      // --- AUTO-MIGRATION: Fix missing role_b column ---
-      try {
-          await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run();
-      } catch (e) {
-          // Ignore error if column already exists
-      }
+      // --- AUTO-MIGRATIONS ---
+      try { await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run(); } catch (e) {}
+      
+      // Migration for Network Coordinates
+      try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
 
       schemaInitialized = true;
   } catch (err) { 
@@ -359,7 +360,7 @@ async function handleGetSubjectFull(db, id, adminId) {
 }
 
 async function handleGetGlobalNetwork(db, adminId) {
-    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
+    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
 
@@ -378,7 +379,9 @@ async function handleGetGlobalNetwork(db, adminId) {
             group: s.threat_level,
             image: s.avatar_path,
             shape: 'circularImage',
-            occupation: s.occupation
+            occupation: s.occupation,
+            x: s.network_x,
+            y: s.network_y
         })),
         edges: relationships.results.map(r => ({
             from: r.subject_a_id,
