@@ -29,7 +29,7 @@ const SUBJECT_COLUMNS = [
     'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
     'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
     'digital_identifiers',
-    'network_x', 'network_y' // <--- COORDINATES SAVED HERE
+    'network_x', 'network_y'
 ];
 
 // --- JWT Security Helpers ---
@@ -143,8 +143,18 @@ async function ensureSchema(db) {
           identifying_marks TEXT, 
           social_links TEXT, 
           digital_identifiers TEXT, 
+          network_x REAL,
+          network_y REAL,
           created_at TEXT, 
           updated_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS subject_skills (
+          id INTEGER PRIMARY KEY, 
+          subject_id INTEGER, 
+          skill_name TEXT, 
+          score INTEGER,
+          created_at TEXT
         )`),
 
         db.prepare(`CREATE TABLE IF NOT EXISTS subject_intel (
@@ -220,8 +230,6 @@ async function ensureSchema(db) {
 
       // --- AUTO-MIGRATIONS ---
       try { await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run(); } catch (e) {}
-      
-      // Migration for Network Coordinates
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
 
@@ -235,7 +243,7 @@ async function nukeDatabase(db) {
     const tables = [
         'subject_shares', 'subject_locations', 'subject_interactions', 
         'subject_relationships', 'subject_media', 'subject_intel', 
-        'subjects', 'admins'
+        'subject_skills', 'subjects', 'admins'
     ];
     
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
@@ -333,7 +341,7 @@ async function handleGetSubjectFull(db, id, adminId) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
     if (!subject) return errorResponse("Subject not found", 404);
 
-    const [media, intel, relationships, interactions, locations] = await Promise.all([
+    const [media, intel, relationships, interactions, locations, skills] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
         db.prepare('SELECT * FROM subject_intel WHERE subject_id = ? ORDER BY created_at ASC').bind(id).all(),
         db.prepare(`
@@ -343,7 +351,8 @@ async function handleGetSubjectFull(db, id, adminId) {
             WHERE r.subject_a_id = ? OR r.subject_b_id = ?
         `).bind(id, id, id).all(),
         db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(id).all(),
-        db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all()
+        db.prepare('SELECT * FROM subject_locations WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
+        db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(id).all()
     ]);
 
     const familyReport = generateFamilyReport(relationships.results, id);
@@ -355,12 +364,12 @@ async function handleGetSubjectFull(db, id, adminId) {
         relationships: relationships.results,
         interactions: interactions.results,
         locations: locations.results,
+        skills: skills.results,
         familyReport: familyReport
     });
 }
 
 async function handleGetGlobalNetwork(db, adminId) {
-    // SELECT X AND Y COORDINATES
     const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
@@ -435,7 +444,6 @@ async function handleListShareLinks(db, subjectId, adminId) {
 }
 
 async function handleRevokeShareLink(db, token) {
-    // In production you should verify admin owns the token, but token is unique entropy so low risk
     await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
     return response({ success: true });
 }
@@ -471,6 +479,7 @@ async function handleGetSharedSubject(db, token) {
         const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
         const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
         const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+        const skills = await db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(link.subject_id).all();
         const relationships = await db.prepare(`
             SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
             FROM subject_relationships r
@@ -485,6 +494,7 @@ async function handleGetSharedSubject(db, token) {
             locations: locations.results,
             media: media.results,
             intel: intel.results,
+            skills: skills.results,
             relationships: relationships.results,
             meta: { remaining_seconds: Math.floor(remaining) }
         });
@@ -572,7 +582,6 @@ export default {
         if (idMatch) {
             const id = idMatch[1];
             
-            // Verify ownership first
             const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
             if(!owner) return errorResponse("Subject not found", 404);
 
@@ -618,10 +627,19 @@ export default {
                 .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
             return response({success:true});
         }
+        if (path === '/api/skills') {
+            const p = await req.json();
+            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
+            if(!owner) return errorResponse("Unauthorized", 403);
+
+            // Upsert logic basically: Delete existing skill by name for this subject then insert new
+            await env.DB.prepare('DELETE FROM subject_skills WHERE subject_id = ? AND skill_name = ?').bind(p.subject_id, p.skill_name).run();
+            await env.DB.prepare('INSERT INTO subject_skills (subject_id, skill_name, score, created_at) VALUES (?,?,?,?)')
+                .bind(p.subject_id, p.skill_name, p.score, isoTimestamp()).run();
+            return response({success:true});
+        }
         if (path === '/api/relationship') {
             const p = await req.json();
-            // Complex verification: assuming if you know the IDs you are likely the admin for this MVP scope
-            // Or ideally verify subjectA belongs to admin
             if (req.method === 'PATCH') {
                 await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
                     .bind(p.type, p.reciprocal, p.id).run();
