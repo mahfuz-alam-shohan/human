@@ -13,6 +13,7 @@ export function serveSharedHtml(token) {
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         /* Kiddy Theme Variables */
         :root {
@@ -117,7 +118,7 @@ export function serveSharedHtml(token) {
 
             <!-- Fun Tabs -->
             <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                <button v-for="t in ['Profile', 'Intel', 'History', 'Network', 'Files', 'Map']" 
+                <button v-for="t in ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']" 
                     @click="activeTab = t" 
                     :class="['px-5 py-2.5 rounded-xl border-2 border-black font-bold font-fun text-sm transition-all shadow-[3px_3px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[1px_1px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none whitespace-nowrap', activeTab === t ? 'bg-blue-400 text-white' : 'bg-white text-slate-700 hover:bg-slate-50']">
                     <i class="fa-solid mr-1" :class="getIcon(t)"></i> {{ t }}
@@ -147,15 +148,36 @@ export function serveSharedHtml(token) {
                 </div>
 
                 <!-- Intel -->
-                <div v-if="activeTab === 'Intel'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                     <div v-for="item in data.intel" class="fun-card p-4 bg-white relative overflow-hidden">
-                         <div class="absolute top-0 right-0 w-16 h-16 bg-yellow-100 rounded-bl-full -mr-8 -mt-8 z-0"></div>
-                         <div class="relative z-10">
-                             <div class="text-xs font-black uppercase text-slate-400 mb-1 font-fun tracking-wider">{{item.category}}</div>
-                             <div class="text-sm font-bold text-blue-500 mb-1">{{item.label}}</div>
-                             <div class="text-base text-slate-800 font-medium">{{item.value}}</div>
+                <div v-if="activeTab === 'Intel'" class="space-y-6">
+                     <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-2">
+                         <h4 class="text-sm font-black uppercase text-slate-400 border-b-2 border-slate-200 pb-1 ml-1">{{category}}</h4>
+                         
+                         <!-- SOCIAL GRID -->
+                         <div v-if="category === 'Social Media'" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                             <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
+                                <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
+                                <div class="font-bold text-xs text-slate-800">{{item.label}}</div>
+                            </a>
+                         </div>
+
+                         <!-- STANDARD GRID -->
+                         <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                             <div v-for="item in items" :key="item.id" class="fun-card p-4 bg-white relative overflow-hidden">
+                                 <div class="absolute top-0 right-0 w-16 h-16 bg-yellow-100 rounded-bl-full -mr-8 -mt-8 z-0"></div>
+                                 <div class="relative z-10">
+                                     <div class="text-xs font-black uppercase text-slate-400 mb-1 font-fun tracking-wider">{{item.label}}</div>
+                                     <div class="text-base text-slate-800 font-medium">{{item.value}}</div>
+                                 </div>
+                             </div>
                          </div>
                      </div>
+                </div>
+
+                <!-- Capabilities -->
+                <div v-show="activeTab === 'Capabilities'" class="fun-card p-4 flex items-center justify-center bg-white relative min-h-[400px]">
+                    <div class="w-full max-w-md aspect-square relative">
+                        <canvas id="skillsChart"></canvas>
+                    </div>
                 </div>
 
                 <!-- History -->
@@ -216,7 +238,7 @@ export function serveSharedHtml(token) {
         </div>
     </div>
     <script>
-        const { createApp, ref, onMounted, watch, nextTick } = Vue;
+        const { createApp, ref, onMounted, watch, nextTick, computed } = Vue;
         createApp({
             setup() {
                 const loading = ref(true);
@@ -226,6 +248,7 @@ export function serveSharedHtml(token) {
                 const activeTab = ref('Profile');
                 const token = window.location.pathname.split('/').pop();
                 let mapInstance = null;
+                let chartInstance = null;
 
                 const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
                 const formatTime = (s) => {
@@ -235,7 +258,27 @@ export function serveSharedHtml(token) {
                 };
                 
                 const getIcon = (t) => {
-                    return { 'Profile':'fa-id-card', 'Intel':'fa-lightbulb', 'History':'fa-clock', 'Network':'fa-users', 'Files':'fa-folder-open', 'Map':'fa-map' }[t];
+                    return { 'Profile':'fa-id-card', 'Intel':'fa-lightbulb', 'Capabilities': 'fa-chart-radar', 'History':'fa-clock', 'Network':'fa-users', 'Files':'fa-folder-open', 'Map':'fa-map' }[t];
+                };
+
+                const groupedIntel = computed(() => data.value?.intel ? data.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
+
+                // Social Media Detection
+                const socialMap = [
+                    { regex: /facebook\.com/, name: 'Facebook', icon: 'fa-brands fa-facebook', color: '#1877F2' },
+                    { regex: /twitter\.com|x\.com/, name: 'X / Twitter', icon: 'fa-brands fa-x-twitter', color: '#000000' },
+                    { regex: /instagram\.com/, name: 'Instagram', icon: 'fa-brands fa-instagram', color: '#E1306C' },
+                    { regex: /linkedin\.com/, name: 'LinkedIn', icon: 'fa-brands fa-linkedin', color: '#0077B5' },
+                    { regex: /github\.com/, name: 'GitHub', icon: 'fa-brands fa-github', color: '#333' },
+                    { regex: /youtube\.com/, name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#FF0000' },
+                    { regex: /t\.me/, name: 'Telegram', icon: 'fa-brands fa-telegram', color: '#0088cc' },
+                    { regex: /wa\.me/, name: 'WhatsApp', icon: 'fa-brands fa-whatsapp', color: '#25D366' },
+                    { regex: /tiktok\.com/, name: 'TikTok', icon: 'fa-brands fa-tiktok', color: '#000000' },
+                    { regex: /reddit\.com/, name: 'Reddit', icon: 'fa-brands fa-reddit', color: '#FF4500' },
+                ];
+
+                const getSocialInfo = (url) => {
+                    return socialMap.find(s => s.regex.test(url)) || { name: 'Website', icon: 'fa-solid fa-globe', color: '#6B7280' };
                 };
 
                 const initMap = () => {
@@ -263,9 +306,42 @@ export function serveSharedHtml(token) {
                     mapInstance = map;
                 };
 
+                const initChart = () => {
+                    const ctx = document.getElementById('skillsChart');
+                    if(!ctx || !data.value.skills) return;
+                    if(chartInstance) chartInstance.destroy();
+
+                    const labels = ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth'];
+                    const scores = labels.map(l => data.value.skills.find(s => s.skill_name === l)?.score || 50);
+
+                    chartInstance = new Chart(ctx, {
+                        type: 'radar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Capabilities',
+                                data: scores,
+                                fill: true,
+                                backgroundColor: 'rgba(59, 130, 246, 0.2)', // Blue-500
+                                borderColor: 'rgb(59, 130, 246)',
+                                pointBackgroundColor: 'rgb(59, 130, 246)',
+                                pointBorderColor: '#fff'
+                            }]
+                        },
+                        options: {
+                            elements: { line: { borderWidth: 3 } },
+                            scales: { r: { angleLines: { display: true }, suggestedMin: 0, suggestedMax: 100, pointLabels: { font: { family: 'Fredoka', size: 12 } } } },
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                }
+
                 const flyTo = (loc) => { if(mapInstance && loc.lat) mapInstance.flyTo([loc.lat, loc.lng], 16); };
 
-                watch(activeTab, (val) => { if(val === 'Map') nextTick(initMap); });
+                watch(activeTab, (val) => { 
+                    if(val === 'Map') nextTick(initMap); 
+                    if(val === 'Capabilities') nextTick(initChart);
+                });
 
                 onMounted(async () => {
                     try {
@@ -278,7 +354,7 @@ export function serveSharedHtml(token) {
                         setInterval(() => { if(timer.value > 0) timer.value--; }, 1000);
                     } catch(e) { error.value = e.message; loading.value = false; }
                 });
-                return { loading, error, data, timer, activeTab, resolveImg, formatTime, flyTo, getIcon };
+                return { loading, error, data, timer, activeTab, resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo };
             }
         }).mount('#app');
     </script>
