@@ -250,7 +250,13 @@ export function serveSharedHtml(token) {
                 let mapInstance = null;
                 let chartInstance = null;
 
-                const resolveImg = (p) => p ? (p.startsWith('http') ? p : '/api/media/'+p) : null;
+                // FIXED RESOLVE IMG
+                const resolveImg = (p) => {
+                    if (!p) return null;
+                    if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/api/media/')) return p;
+                    return '/api/media/' + p;
+                };
+
                 const formatTime = (s) => {
                     const h = Math.floor(s / 3600);
                     const m = Math.floor((s % 3600) / 60);
