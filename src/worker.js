@@ -440,7 +440,26 @@ async function handleListShareLinks(db, subjectId, adminId) {
     const owner = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
     if (!owner) return response([]);
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    return response(res.results);
+    
+    // EXPIRE OLD LINKS ON LIST
+    const links = res.results;
+    const now = Date.now();
+    const updates = [];
+
+    for (const link of links) {
+        if (link.is_active === 1 && link.started_at && link.duration_seconds) {
+            const start = new Date(link.started_at).getTime();
+            const elapsed = (now - start) / 1000;
+            if (elapsed > link.duration_seconds) {
+                link.is_active = 0; // Local update
+                updates.push(db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id));
+            }
+        }
+    }
+    
+    if (updates.length > 0) await db.batch(updates);
+
+    return response(links);
 }
 
 async function handleRevokeShareLink(db, token) {
