@@ -176,8 +176,8 @@ export function serveSharedHtml(token) {
             </div>
 
             <!-- Fun Tabs -->
-            <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                <button v-for="t in ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']" 
+            <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" v-if="allowedTabs.length > 0">
+                <button v-for="t in allowedTabs" :key="t" 
                     @click="activeTab = t" 
                     :class="['px-5 py-2.5 rounded-xl border-2 border-black font-bold font-fun text-sm transition-all shadow-[3px_3px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[1px_1px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none whitespace-nowrap', activeTab === t ? 'bg-blue-400 text-white' : 'bg-white text-slate-700 hover:bg-slate-50']">
                     <i class="fa-solid mr-1" :class="getIcon(t)"></i> {{ t }}
@@ -312,6 +312,7 @@ export function serveSharedHtml(token) {
                 const isLocationLocked = ref(false);
                 const locationLoading = ref(false);
                 const locationError = ref(null);
+                const allowedTabs = ref([]);
 
                 let mapInstance = null;
                 let chartInstance = null;
@@ -438,6 +439,11 @@ export function serveSharedHtml(token) {
                         isLocationLocked.value = false;
                         data.value = json;
                         timer.value = json.meta?.remaining_seconds || 0;
+                        allowedTabs.value = json.meta?.allowed_tabs || ['Profile'];
+                        
+                        // Set Active Tab to first allowed
+                        if(allowedTabs.value.length > 0) activeTab.value = allowedTabs.value[0];
+
                         loading.value = false;
                         
                         setInterval(() => { if(timer.value > 0) timer.value--; }, 1000);
@@ -488,7 +494,7 @@ export function serveSharedHtml(token) {
                 return { 
                     loading, error, data, timer, activeTab, 
                     isLocationLocked, locationLoading, locationError, attemptUnlock, partialData,
-                    resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo 
+                    resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo, allowedTabs 
                 };
             }
         }).mount('#app');
