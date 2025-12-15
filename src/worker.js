@@ -7,8 +7,7 @@ const encoder = new TextEncoder();
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
 const RELATION_PRESETS = [
-    { a: 'Father', b: 'Child', family: true },  { a: 'Father', b: 'Son', family: true }, 
-    { a: 'Father', b: 'Daughter', family: true }, { a: 'Mother', b: 'Child', family: true },
+    { a: 'Father', b: 'Child', family: true }, { a: 'Mother', b: 'Child', family: true },
     { a: 'Parent', b: 'Child', family: true }, { a: 'Son', b: 'Parent', family: true },
     { a: 'Daughter', b: 'Parent', family: true }, { a: 'Brother', b: 'Sibling', family: true },
     { a: 'Sister', b: 'Sibling', family: true }, { a: 'Husband', b: 'Wife', family: true },
