@@ -443,24 +443,48 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
-                    <!-- MAP (Detail) -->
-                    <div v-show="subTab === 'map'" class="h-full flex flex-col">
-                        <div class="flex justify-between items-center mb-4">
+                    <!-- MAP (Detail) with Mobile Drawer -->
+                    <div v-show="subTab === 'map'" class="h-full flex flex-col relative">
+                        <div class="flex justify-between items-center mb-4 shrink-0">
                             <h3 class="font-black font-heading text-2xl text-black">Locations</h3>
                             <button @click="openModal('add-location')" class="bg-blue-400 text-white hover:bg-blue-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Add Pin</button>
                         </div>
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 min-h-0">
-                            <div class="md:col-span-2 bg-white rounded-2xl overflow-hidden relative h-64 md:h-full min-h-[300px] border-4 border-black shadow-[4px_4px_0px_#000]">
+                        
+                        <!-- Main Layout: Full Height Flex for Mobile / Grid for Desktop -->
+                        <div class="flex-1 flex md:grid md:grid-cols-3 gap-6 min-h-0 relative overflow-hidden">
+                            
+                            <!-- MAP CONTAINER (Full on Mobile, Col-Span-2 on Desktop) -->
+                            <div class="w-full h-full md:col-span-2 bg-white rounded-2xl overflow-hidden relative border-4 border-black shadow-[4px_4px_0px_#000]">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
+                                
+                                <!-- Mobile: Toggle Button -->
+                                <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
+                                    <i class="fa-solid" :class="showProfileMapList ? 'fa-map' : 'fa-list'"></i> {{ showProfileMapList ? 'Hide List' : 'Locations' }}
+                                </button>
                             </div>
-                            <div class="space-y-3 overflow-y-auto max-h-[600px] min-h-0">
-                                <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 cursor-pointer hover:bg-blue-50" @click="flyTo(loc)">
-                                    <div class="flex justify-between items-center mb-1">
-                                        <div class="font-black text-black text-sm font-heading">{{loc.name}}</div>
-                                        <span class="text-[10px] uppercase bg-white text-black px-2 py-0.5 rounded border-2 border-black font-bold shadow-[2px_2px_0px_#000]">{{loc.type}}</span>
+
+                            <!-- LIST CONTAINER (Drawer on Mobile, Col-1 on Desktop) -->
+                            <div :class="[
+                                'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
+                                showProfileMapList ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
+                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0">
+                                
+                                <!-- Mobile Header -->
+                                <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200">
+                                    <h3 class="font-black font-heading text-xl">Saved Locations</h3>
+                                    <button @click="showProfileMapList = false" class="text-red-500 font-bold bg-red-100 p-2 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
+                                </div>
+
+                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1">
+                                    <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 cursor-pointer hover:bg-blue-50 border-2" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <div class="font-black text-black text-sm font-heading">{{loc.name}}</div>
+                                            <span class="text-[10px] uppercase bg-white text-black px-2 py-0.5 rounded border-2 border-black font-bold shadow-[2px_2px_0px_#000]">{{loc.type}}</span>
+                                        </div>
+                                        <div class="text-xs font-bold text-gray-500 mb-2">{{loc.address}}</div>
+                                        <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200">Delete</button>
                                     </div>
-                                    <div class="text-xs font-bold text-gray-500 mb-2">{{loc.address}}</div>
-                                    <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200">Delete</button>
+                                    <div v-if="selected.locations.length === 0" class="text-center text-gray-400 font-bold py-8">No locations saved yet.</div>
                                 </div>
                             </div>
                         </div>
@@ -766,6 +790,7 @@ export function serveAdminHtml() {
         const presets = ref(PRESETS);
         const toasts = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768);
+        const showProfileMapList = ref(false); // Mobile Drawer State
         
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
@@ -867,6 +892,7 @@ export function serveAdminHtml() {
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
+            showProfileMapList.value = false; // Reset drawer state
             analysisResult.value = analyzeLocal(selected.value);
             if(modal.active === 'cmd' || modal.active === 'mini-profile') closeModal(); 
         };
@@ -1119,9 +1145,8 @@ export function serveAdminHtml() {
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
-                         if(nodeId === selected.value.id) return;
-                         const rel = selected.value.relationships.find(r => (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) || (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId));
-                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar, nationality: rel.target_nationality, threat_level: rel.target_threat });
+                         const nodeData = data.nodes.find(n => n.id === nodeId);
+                         if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image, nationality: nodeData.group === 'Low' ? '' : '', threat_level: nodeData.group });
                      }
                  });
             });
@@ -1238,7 +1263,7 @@ export function serveAdminHtml() {
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
-            showMapSidebar, flyToGlobal, flyTo,
+            showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
             fileInput,
             getSkillScore, updateSkill, // New Capability Functions
             getSocialInfo, handleIntelInput // Social Media Logic
