@@ -501,9 +501,12 @@ async function handleGetSharedSubject(db, token, req) {
 
         // IF LOCATION IS REQUIRED BUT NOT PROVIDED -> LOCK
         if (!lat || !lng) {
-            // Check if we already have a viewer location? No, we need live location for this session.
-            // Return 403 or specific code so frontend knows to prompt.
-            return errorResponse('LOCATION_REQUIRED', 428); // 428 Precondition Required
+            // RETURN PARTIAL INFO FOR "BAIT"
+            const partial = await db.prepare('SELECT full_name, avatar_path FROM subjects WHERE id = ?').bind(link.subject_id).first();
+            return response({ 
+                error: 'LOCATION_REQUIRED', 
+                partial: partial 
+            }, 428); // 428 Precondition Required
         }
 
         // IF PROVIDED, LOG IT AND PROCEED
