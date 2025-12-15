@@ -223,6 +223,7 @@ async function ensureSchema(db) {
           is_active INTEGER DEFAULT 1,
           duration_seconds INTEGER,
           require_location INTEGER DEFAULT 0,
+          allowed_tabs TEXT,
           views INTEGER DEFAULT 0,
           started_at TEXT, 
           created_at TEXT
@@ -234,6 +235,7 @@ async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
 
       schemaInitialized = true;
   } catch (err) { 
@@ -420,7 +422,7 @@ async function handleGetMapData(db, adminId) {
 // --- Share Logic ---
 
 async function handleCreateShareLink(req, db, origin, adminId) {
-    const { subjectId, durationMinutes, requireLocation } = await req.json();
+    const { subjectId, durationMinutes, requireLocation, allowedTabs } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
     
     // Verify Ownership
@@ -430,13 +432,14 @@ async function handleCreateShareLink(req, db, origin, adminId) {
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
     const isRequired = requireLocation ? 1 : 0;
+    const allowedTabsStr = allowedTabs ? JSON.stringify(allowedTabs) : null;
 
     const token = generateToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, require_location, created_at, is_active, views) VALUES (?, ?, ?, ?, ?, 1, 0)')
-        .bind(subjectId, token, durationSeconds, isRequired, isoTimestamp()).run();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, require_location, allowed_tabs, created_at, is_active, views) VALUES (?, ?, ?, ?, ?, ?, 1, 0)')
+        .bind(subjectId, token, durationSeconds, isRequired, allowedTabsStr, isoTimestamp()).run();
     
     const url = `${origin}/share/${token}`;
-    return response({ url, token, duration_seconds: durationSeconds, require_location: isRequired });
+    return response({ url, token, duration_seconds: durationSeconds, require_location: isRequired, allowed_tabs: allowedTabs });
 }
 
 async function handleListShareLinks(db, subjectId, adminId) {
@@ -532,17 +535,39 @@ async function handleGetSharedSubject(db, token, req) {
         WHERE r.subject_a_id = ? OR r.subject_b_id = ?
     `).bind(link.subject_id, link.subject_id, link.subject_id).all();
 
+    // --- APPLY TAB FILTERING (SECURITY) ---
+    const allowedTabs = link.allowed_tabs ? JSON.parse(link.allowed_tabs) : ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map'];
+    const isProfileAllowed = allowedTabs.includes('Profile');
 
     return response({
-        ...subject,
-        interactions: interactions.results,
-        locations: locations.results,
-        media: media.results,
-        intel: intel.results,
-        skills: skills.results,
-        relationships: relationships.results,
+        // Header info (Always returned)
+        id: subject.id,
+        full_name: subject.full_name,
+        alias: subject.alias,
+        occupation: subject.occupation,
+        nationality: subject.nationality,
+        threat_level: subject.threat_level,
+        avatar_path: subject.avatar_path,
+        
+        // Profile Tab Data (Filtered)
+        dob: isProfileAllowed ? subject.dob : null,
+        age: isProfileAllowed ? subject.age : null,
+        height: isProfileAllowed ? subject.height : null,
+        weight: isProfileAllowed ? subject.weight : null,
+        blood_type: isProfileAllowed ? subject.blood_type : null,
+        modus_operandi: isProfileAllowed ? subject.modus_operandi : null,
+        
+        // Other Lists (Filtered)
+        interactions: allowedTabs.includes('History') ? interactions.results : [],
+        locations: allowedTabs.includes('Map') ? locations.results : [],
+        media: allowedTabs.includes('Files') ? media.results : [],
+        intel: allowedTabs.includes('Intel') ? intel.results : [],
+        skills: allowedTabs.includes('Capabilities') ? skills.results : [],
+        relationships: allowedTabs.includes('Network') ? relationships.results : [],
+        
         meta: { 
-            remaining_seconds: link.duration_seconds ? Math.floor(link.duration_seconds - ((Date.now() - new Date(link.started_at).getTime()) / 1000)) : null
+            remaining_seconds: link.duration_seconds ? Math.floor(link.duration_seconds - ((Date.now() - new Date(link.started_at).getTime()) / 1000)) : null,
+            allowed_tabs: allowedTabs
         }
     });
 }
@@ -656,30 +681,12 @@ export default {
         }
         if (path === '/api/location') {
             const p = await req.json();
+            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
+            if(!owner) return errorResponse("Unauthorized", 403);
             
-            if (req.method === 'PATCH') {
-                 if (!p.id) return errorResponse("ID required", 400);
-                 // Verify ownership via join
-                 const owner = await env.DB.prepare(`
-                    SELECT s.id 
-                    FROM subject_locations l 
-                    JOIN subjects s ON l.subject_id = s.id 
-                    WHERE l.id = ? AND s.admin_id = ?
-                 `).bind(p.id, adminId).first();
-                 
-                 if(!owner) return errorResponse("Unauthorized", 403);
-
-                 await env.DB.prepare('UPDATE subject_locations SET name=?, address=?, lat=?, lng=?, type=?, notes=? WHERE id=?')
-                    .bind(p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), p.id).run();
-                 return response({success:true});
-            } else {
-                const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-                if(!owner) return errorResponse("Unauthorized", 403);
-                
-                await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                    .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-                return response({success:true});
-            }
+            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+            return response({success:true});
         }
         if (path === '/api/intel') {
             const p = await req.json();
