@@ -670,6 +670,16 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
+                    <div class="space-y-2">
+                        <label class="block text-xs font-black uppercase text-gray-400">Allowed Access</label>
+                        <div class="flex flex-wrap gap-2">
+                            <label v-for="tab in ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']" :key="tab" class="flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-200 border-2 border-transparent has-[:checked]:border-black has-[:checked]:bg-white transition-all shadow-sm">
+                                <input type="checkbox" :value="tab" v-model="forms.share.allowedTabs" class="accent-black w-4 h-4">
+                                <span class="text-xs font-bold">{{ tab }}</span>
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="fun-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
                         <button @click="createShareLink" class="flex-1 bg-yellow-400 text-black font-black rounded-xl text-sm fun-btn hover:bg-yellow-500">Create Magic Link</button>
@@ -803,7 +813,8 @@ export function serveAdminHtml() {
         const cmdInput = ref(null);
 
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60, requireLocation: false }, mediaLink: {}
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, 
+            share: { minutes: 60, requireLocation: false, allowedTabs: [] }, mediaLink: {}
         });
 
         // Charts
@@ -1067,7 +1078,7 @@ export function serveAdminHtml() {
              if(t === 'edit-rel' && item) {
                 forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type };
              }
-             if(t === 'share-secure') { forms.share.requireLocation = false; fetchShareLinks(); }
+             if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
              // MINI PROFILE LOGIC
              if(t === 'mini-profile' && item) modal.data = item;
@@ -1103,7 +1114,7 @@ export function serveAdminHtml() {
         };
 
         const fetchShareLinks = async () => { activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id); };
-        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation }) }); fetchShareLinks(); };
+        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation, allowedTabs: forms.share.allowedTabs }) }); fetchShareLinks(); };
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
@@ -1145,8 +1156,9 @@ export function serveAdminHtml() {
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
-                         const nodeData = data.nodes.find(n => n.id === nodeId);
-                         if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image, nationality: nodeData.group === 'Low' ? '' : '', threat_level: nodeData.group });
+                         if(nodeId === selected.value.id) return;
+                         const rel = selected.value.relationships.find(r => (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) || (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId));
+                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar, nationality: rel.target_nationality, threat_level: rel.target_threat });
                      }
                  });
             });
