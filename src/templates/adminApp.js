@@ -105,6 +105,15 @@ export function serveAdminHtml() {
         object-fit: cover;
         display: block;
     }
+    
+    /* Toggle Switch */
+    .toggle-checkbox:checked {
+        right: 0;
+        border-color: #68D391;
+    }
+    .toggle-checkbox:checked + .toggle-label {
+        background-color: #68D391;
+    }
   </style>
 </head>
 <body class="h-[100dvh] overflow-hidden text-slate-900">
@@ -625,13 +634,32 @@ export function serveAdminHtml() {
                  <!-- SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <p class="text-sm font-bold text-gray-500">Make a secret link for others.</p>
+                    
+                    <div class="flex items-center gap-3 p-4 bg-yellow-100 rounded-xl border-2 border-yellow-500">
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="toggle" id="location-toggle" v-model="forms.share.requireLocation" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                            <label for="location-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer border-2 border-black"></label>
+                        </div>
+                        <div class="flex-1">
+                             <div class="text-xs font-black uppercase text-yellow-800">Lock with Location</div>
+                             <div class="text-[10px] font-bold text-yellow-700">Viewer MUST share location to see content.</div>
+                        </div>
+                    </div>
+
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="fun-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
                         <button @click="createShareLink" class="flex-1 bg-yellow-400 text-black font-black rounded-xl text-sm fun-btn hover:bg-yellow-500">Create Magic Link</button>
                     </div>
+                    
                     <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
                         <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-gray-100 rounded-xl border-2 border-gray-300">
-                            <div><div class="text-xs font-mono font-bold text-gray-600">...{{link.token.slice(-8)}}</div><div class="text-[10px] font-bold text-gray-400 uppercase">{{link.is_active ? 'Active' : 'Dead'}} &bull; {{link.views}} peeks</div></div>
+                            <div>
+                                <div class="text-xs font-mono font-bold text-gray-600">...{{link.token.slice(-8)}}</div>
+                                <div class="text-[10px] font-bold text-gray-400 uppercase">
+                                    {{link.is_active ? 'Active' : 'Dead'}} &bull; {{link.views}} peeks 
+                                    <span v-if="link.require_location" class="text-red-500 ml-1"><i class="fa-solid fa-lock"></i> LOC</span>
+                                </div>
+                            </div>
                             <div class="flex gap-2"><button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-700 font-bold p-2"><i class="fa-regular fa-copy"></i></button><button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-400 hover:text-red-600 p-2"><i class="fa-solid fa-ban"></i></button></div>
                         </div>
                     </div>
@@ -750,7 +778,7 @@ export function serveAdminHtml() {
         const cmdInput = ref(null);
 
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60 }, mediaLink: {}
+            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, share: { minutes: 60, requireLocation: false }, mediaLink: {}
         });
 
         // Charts
@@ -1002,7 +1030,7 @@ export function serveAdminHtml() {
              if(t === 'edit-rel' && item) {
                 forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type };
              }
-             if(t === 'share-secure') fetchShareLinks();
+             if(t === 'share-secure') { forms.share.requireLocation = false; fetchShareLinks(); }
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
              // MINI PROFILE LOGIC
              if(t === 'mini-profile' && item) modal.data = item;
@@ -1038,7 +1066,7 @@ export function serveAdminHtml() {
         };
 
         const fetchShareLinks = async () => { activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id); };
-        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes }) }); fetchShareLinks(); };
+        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation }) }); fetchShareLinks(); };
         const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
