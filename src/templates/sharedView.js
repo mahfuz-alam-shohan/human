@@ -71,21 +71,56 @@ export function serveSharedHtml(token) {
             transform: translateY(2px);
             box-shadow: 2px 2px 0px #1e293b !important;
         }
+
+        /* Unlock Button Style */
+        .unlock-btn {
+            border: 4px solid black;
+            box-shadow: 4px 4px 0px 0px black;
+            transition: all 0.1s;
+        }
+        .unlock-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0px 0px black;
+        }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
     <div id="app" class="max-w-4xl mx-auto space-y-6">
         
+        <!-- LOADING STATE -->
         <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh] animate-bounce">
             <i class="fa-solid fa-magnifying-glass text-5xl text-blue-500 mb-4"></i>
             <p class="text-xl font-bold font-fun text-slate-700">Hunting for clues...</p>
         </div>
 
+        <!-- NEW: LOCATION LOCKED STATE -->
+        <div v-else-if="isLocationLocked" class="fun-card p-8 md:p-12 text-center bg-yellow-50 flex flex-col items-center justify-center min-h-[60vh] border-yellow-600">
+            <div class="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center border-4 border-black mb-6 animate-pulse">
+                <i class="fa-solid fa-lock text-5xl text-red-500"></i>
+            </div>
+            <h1 class="text-3xl font-fun font-black text-slate-900 mb-2">Restricted Access</h1>
+            <p class="text-lg font-bold text-slate-600 max-w-md mx-auto mb-8">
+                This profile requires location verification. Access is blocked until we can confirm your location.
+            </p>
+            
+            <button @click="attemptUnlock" :disabled="locationLoading" class="bg-green-400 hover:bg-green-300 text-black font-black text-xl px-8 py-4 rounded-2xl unlock-btn flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i v-if="locationLoading" class="fa-solid fa-circle-notch fa-spin"></i>
+                <i v-else class="fa-solid fa-location-crosshairs"></i>
+                {{ locationLoading ? 'Verifying...' : 'Share Location & View' }}
+            </button>
+            
+            <div v-if="locationError" class="mt-6 text-red-600 font-bold bg-red-100 px-4 py-2 rounded-lg border-2 border-red-200 inline-block">
+                <i class="fa-solid fa-triangle-exclamation mr-1"></i> {{ locationError }}
+            </div>
+        </div>
+
+        <!-- ERROR STATE -->
         <div v-else-if="error" class="fun-card p-8 text-center bg-red-50 border-red-900">
             <h1 class="text-3xl font-fun text-red-600 mb-2">Uh Oh! 🚫</h1>
             <p class="text-lg font-bold">{{error}}</p>
         </div>
 
+        <!-- MAIN CONTENT (Only shown if unlocked) -->
         <div v-else class="space-y-6">
             <!-- Header Card -->
             <div class="fun-card p-6 flex flex-col md:flex-row gap-6 items-center md:items-start text-center md:text-left relative overflow-hidden">
@@ -247,6 +282,12 @@ export function serveSharedHtml(token) {
                 const timer = ref(0);
                 const activeTab = ref('Profile');
                 const token = window.location.pathname.split('/').pop();
+                
+                // NEW STATES FOR LOCATION
+                const isLocationLocked = ref(false);
+                const locationLoading = ref(false);
+                const locationError = ref(null);
+
                 let mapInstance = null;
                 let chartInstance = null;
 
@@ -349,18 +390,78 @@ export function serveSharedHtml(token) {
                     if(val === 'Capabilities') nextTick(initChart);
                 });
 
-                onMounted(async () => {
+                // --- MODIFIED LOAD FUNCTION ---
+                const loadData = async (params = '') => {
+                    loading.value = true;
+                    error.value = null;
                     try {
-                        const res = await fetch('/api/share/' + token);
+                        const res = await fetch('/api/share/' + token + params);
+                        
+                        // NEW: CHECK FOR 428 PRECONDITION REQUIRED
+                        if (res.status === 428) {
+                            isLocationLocked.value = true;
+                            loading.value = false;
+                            return; // STOP HERE, wait for user unlock
+                        }
+
                         const json = await res.json();
                         if(json.error) throw new Error(json.error);
+                        
+                        // IF SUCCESSFUL, UNLOCK
+                        isLocationLocked.value = false;
                         data.value = json;
                         timer.value = json.meta?.remaining_seconds || 0;
                         loading.value = false;
+                        
                         setInterval(() => { if(timer.value > 0) timer.value--; }, 1000);
-                    } catch(e) { error.value = e.message; loading.value = false; }
+
+                        if(activeTab.value === 'Map') nextTick(initMap);
+                        if(activeTab.value === 'Capabilities') nextTick(initChart);
+
+                    } catch(e) { 
+                        error.value = e.message; 
+                        loading.value = false; 
+                    }
+                };
+
+                // --- NEW UNLOCK FUNCTION ---
+                const attemptUnlock = () => {
+                    locationError.value = null;
+                    locationLoading.value = true;
+
+                    if (!navigator.geolocation) {
+                        locationError.value = "Geolocation is not supported by your browser.";
+                        locationLoading.value = false;
+                        return;
+                    }
+
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const { latitude, longitude } = position.coords;
+                            // Re-fetch with location data
+                            loadData(\`?lat=\${latitude}&lng=\${longitude}\`);
+                            locationLoading.value = false;
+                        },
+                        (err) => {
+                            console.error(err);
+                            if(err.code === 1) locationError.value = "Access denied. You must allow location to view this file.";
+                            else if(err.code === 2) locationError.value = "Location unavailable. Check your device settings.";
+                            else locationError.value = "Timeout. Please try again.";
+                            locationLoading.value = false;
+                        },
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    );
+                };
+
+                onMounted(() => {
+                    loadData();
                 });
-                return { loading, error, data, timer, activeTab, resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo };
+                
+                return { 
+                    loading, error, data, timer, activeTab, 
+                    isLocationLocked, locationLoading, locationError, attemptUnlock, // Expose new state/fn
+                    resolveImg, formatTime, flyTo, getIcon, groupedIntel, getSocialInfo 
+                };
             }
         }).mount('#app');
     </script>
