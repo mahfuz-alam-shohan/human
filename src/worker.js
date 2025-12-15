@@ -88,7 +88,7 @@ function response(data, status = 200) {
 }
 
 function errorResponse(msg, status = 500) {
-    return response({ error: msg }, status);
+    return response({ error: msg, code: msg }, status);
 }
 
 function safeVal(v) {
@@ -221,7 +221,8 @@ async function ensureSchema(db) {
           subject_id INTEGER REFERENCES subjects(id), 
           token TEXT UNIQUE, 
           is_active INTEGER DEFAULT 1,
-          duration_seconds INTEGER, 
+          duration_seconds INTEGER,
+          require_location INTEGER DEFAULT 0,
           views INTEGER DEFAULT 0,
           started_at TEXT, 
           created_at TEXT
@@ -232,6 +233,7 @@ async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
 
       schemaInitialized = true;
   } catch (err) { 
@@ -418,7 +420,7 @@ async function handleGetMapData(db, adminId) {
 // --- Share Logic ---
 
 async function handleCreateShareLink(req, db, origin, adminId) {
-    const { subjectId, durationMinutes } = await req.json();
+    const { subjectId, durationMinutes, requireLocation } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
     
     // Verify Ownership
@@ -427,13 +429,14 @@ async function handleCreateShareLink(req, db, origin, adminId) {
 
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
+    const isRequired = requireLocation ? 1 : 0;
 
     const token = generateToken();
-    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, created_at, is_active, views) VALUES (?, ?, ?, ?, 1, 0)')
-        .bind(subjectId, token, durationSeconds, isoTimestamp()).run();
+    await db.prepare('INSERT INTO subject_shares (subject_id, token, duration_seconds, require_location, created_at, is_active, views) VALUES (?, ?, ?, ?, ?, 1, 0)')
+        .bind(subjectId, token, durationSeconds, isRequired, isoTimestamp()).run();
     
     const url = `${origin}/share/${token}`;
-    return response({ url, token, duration_seconds: durationSeconds });
+    return response({ url, token, duration_seconds: durationSeconds, require_location: isRequired });
 }
 
 async function handleListShareLinks(db, subjectId, adminId) {
@@ -467,11 +470,12 @@ async function handleRevokeShareLink(db, token) {
     return response({ success: true });
 }
 
-async function handleGetSharedSubject(db, token) {
+async function handleGetSharedSubject(db, token, req) {
     const link = await db.prepare('SELECT * FROM subject_shares WHERE token = ?').bind(token).first();
     if (!link) return errorResponse('LINK INVALID', 404);
     if (!link.is_active) return errorResponse('LINK REVOKED', 410);
 
+    // --- CHECK EXPIRATION ---
     if (link.duration_seconds) {
         const now = Date.now();
         const startedAt = link.started_at || isoTimestamp();
@@ -487,38 +491,57 @@ async function handleGetSharedSubject(db, token) {
             await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE id = ?').bind(link.id).run();
             return errorResponse('LINK EXPIRED', 410);
         }
-        
-        await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
-
-        // FETCH ALL INFOS
-        const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
-        if (!subject) return errorResponse('Subject not found', 404);
-
-        const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
-        const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
-        const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
-        const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
-        const skills = await db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(link.subject_id).all();
-        const relationships = await db.prepare(`
-            SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
-            FROM subject_relationships r
-            LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
-            WHERE r.subject_a_id = ? OR r.subject_b_id = ?
-        `).bind(link.subject_id, link.subject_id, link.subject_id).all();
-
-
-        return response({
-            ...subject,
-            interactions: interactions.results,
-            locations: locations.results,
-            media: media.results,
-            intel: intel.results,
-            skills: skills.results,
-            relationships: relationships.results,
-            meta: { remaining_seconds: Math.floor(remaining) }
-        });
     }
-    return errorResponse('INVALID CONFIG', 500);
+
+    // --- LOCATION LOCK ---
+    if (link.require_location === 1) {
+        const url = new URL(req.url);
+        const lat = url.searchParams.get('lat');
+        const lng = url.searchParams.get('lng');
+
+        // IF LOCATION IS REQUIRED BUT NOT PROVIDED -> LOCK
+        if (!lat || !lng) {
+            // Check if we already have a viewer location? No, we need live location for this session.
+            // Return 403 or specific code so frontend knows to prompt.
+            return errorResponse('LOCATION_REQUIRED', 428); // 428 Precondition Required
+        }
+
+        // IF PROVIDED, LOG IT AND PROCEED
+        await db.prepare('INSERT INTO subject_locations (subject_id, name, type, lat, lng, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(link.subject_id, 'Anonymous Viewer', 'Viewer Sighting', parseFloat(lat), parseFloat(lng), `Accessed via Secure Link: ${token.slice(0,8)}...`, isoTimestamp()).run();
+    }
+        
+    await db.prepare('UPDATE subject_shares SET views = views + 1 WHERE id = ?').bind(link.id).run();
+
+    // FETCH ALL INFOS
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(link.subject_id).first();
+    if (!subject) return errorResponse('Subject not found', 404);
+
+    const interactions = await db.prepare('SELECT * FROM subject_interactions WHERE subject_id = ? ORDER BY date DESC').bind(link.subject_id).all();
+    const locations = await db.prepare('SELECT * FROM subject_locations WHERE subject_id = ?').bind(link.subject_id).all();
+    const media = await db.prepare('SELECT * FROM subject_media WHERE subject_id = ?').bind(link.subject_id).all();
+    const intel = await db.prepare('SELECT * FROM subject_intel WHERE subject_id = ?').bind(link.subject_id).all();
+    const skills = await db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(link.subject_id).all();
+    const relationships = await db.prepare(`
+        SELECT r.*, COALESCE(s.full_name, r.custom_name) as target_name, COALESCE(s.avatar_path, r.custom_avatar) as target_avatar, s.occupation as target_role
+        FROM subject_relationships r
+        LEFT JOIN subjects s ON s.id = (CASE WHEN r.subject_a_id = ? THEN r.subject_b_id ELSE r.subject_a_id END)
+        WHERE r.subject_a_id = ? OR r.subject_b_id = ?
+    `).bind(link.subject_id, link.subject_id, link.subject_id).all();
+
+
+    return response({
+        ...subject,
+        interactions: interactions.results,
+        locations: locations.results,
+        media: media.results,
+        intel: intel.results,
+        skills: skills.results,
+        relationships: relationships.results,
+        meta: { 
+            remaining_seconds: link.duration_seconds ? Math.floor(link.duration_seconds - ((Date.now() - new Date(link.started_at).getTime()) / 1000)) : null
+        }
+    });
 }
 
 
@@ -538,7 +561,7 @@ export default {
         const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
         if (req.method === 'GET' && shareMatch) return serveSharedHtml(shareMatch[1]);
         const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
-        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1]);
+        if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1], req);
 
         // Main App
         if (req.method === 'GET' && path === '/') return serveAdminHtml();
