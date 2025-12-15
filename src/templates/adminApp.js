@@ -305,8 +305,8 @@ export function serveAdminHtml() {
             <!-- SUBJECT DETAIL -->
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 h-full bg-white">
                 
-                <!-- HEADER -->
-                <div class="h-20 border-b-4 border-black flex items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0">
+                <!-- HEADER (FIXED HEIGHT) -->
+                <div class="min-h-[5rem] h-auto border-b-4 border-black flex items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0 py-2">
                     <div class="flex items-center gap-3 min-w-0">
                         <button @click="changeTab('targets')" class="w-10 h-10 rounded-full flex items-center justify-center text-black border-2 border-black bg-white hover:bg-gray-100 shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all shrink-0"><i class="fa-solid fa-arrow-left"></i></button>
                         <div class="min-w-0">
@@ -314,7 +314,8 @@ export function serveAdminHtml() {
                             <div class="text-xs font-bold text-gray-500 truncate uppercase tracking-widest">{{ selected.alias || 'The Profile' }}</div>
                         </div>
                     </div>
-                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2">
+                    <!-- WRAP ADDED HERE -->
+                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
                         <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
                         <button @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
@@ -333,7 +334,7 @@ export function serveAdminHtml() {
                 </div>
 
                 <!-- DETAIL CONTENT WRAPPER -->
-                <!-- UPDATED: Conditional classes for Map/Network to handle height properly -->
+                <!-- UPDATED: Fixed constraints for map view scrolling -->
                 <div :class="['flex-1 min-h-0 bg-yellow-50', (subTab === 'map' || subTab === 'network') ? 'relative overflow-hidden flex flex-col' : 'overflow-y-auto p-4 md:p-8']">
                     
                     <!-- OVERVIEW -->
@@ -342,18 +343,13 @@ export function serveAdminHtml() {
                             <div class="space-y-4">
                                 <div class="aspect-[4/5] bg-white rounded-2xl relative overflow-hidden group shadow-[6px_6px_0px_#000] border-4 border-black max-w-[220px] mx-auto md:max-w-none md:mx-0">
                                     <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    
-                                    <!-- Desktop Hover Button -->
                                     <button @click="triggerUpload('avatar')" class="hidden md:flex absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 items-center justify-center text-white font-bold transition-all backdrop-blur-sm">
                                         <i class="fa-solid fa-camera mr-2"></i> New Pic
                                     </button>
-
-                                    <!-- Mobile Floating Button (Always Visible) -->
                                     <button @click="triggerUpload('avatar')" class="md:hidden absolute bottom-3 right-3 bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg border-2 border-white z-10 active:scale-90 transition-transform">
                                         <i class="fa-solid fa-camera"></i>
                                     </button>
                                 </div>
-                                
                                 <div class="fun-card p-4 text-center">
                                     <div class="text-xs text-gray-400 font-black uppercase mb-1">Threat Level</div>
                                     <span class="text-xl font-black px-3 py-1 rounded-lg border-2 border-black inline-block" :class="getThreatColor(selected.threat_level, true)">{{selected.threat_level}}</span>
@@ -417,7 +413,6 @@ export function serveAdminHtml() {
                         </div>
                         <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
                             <h4 class="text-sm font-black uppercase text-gray-400 border-b-2 border-gray-300 pb-1 ml-2">{{ category }}</h4>
-                            
                             <div v-if="category === 'Social Media'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
                                     <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
@@ -425,7 +420,6 @@ export function serveAdminHtml() {
                                     <button @click.prevent="deleteItem('subject_intel', item.id)" class="absolute top-1 right-1 text-red-300 hover:text-red-500 text-[10px]"><i class="fa-solid fa-times"></i></button>
                                 </a>
                             </div>
-
                             <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
                                     <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
@@ -472,24 +466,26 @@ export function serveAdminHtml() {
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
                                 
                                 <!-- Mobile: Toggle Button -->
-                                <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
+                                <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur-sm p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
                                     <i class="fa-solid" :class="showProfileMapList ? 'fa-map' : 'fa-list'"></i> {{ showProfileMapList ? 'Hide List' : 'Locations' }}
                                 </button>
                             </div>
 
                             <!-- LIST CONTAINER -->
+                            <!-- FIX: overflow-hidden on parent to contain the inner scrollable div -->
                             <div :class="[
                                 'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
-                                showProfileMapList ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
-                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0">
+                                showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0'
+                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
                                 
                                 <!-- Mobile Header -->
-                                <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200">
+                                <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200 shrink-0">
                                     <h3 class="font-black font-heading text-xl">Saved Locations</h3>
                                     <button @click="showProfileMapList = false" class="text-red-500 font-bold bg-red-100 p-2 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
                                 </div>
 
-                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1">
+                                <!-- SCROLLING AREA -->
+                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4" style="touch-action: pan-y;">
                                     <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
                                         <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
                                             <div class="font-black text-black text-sm font-heading cursor-pointer">{{loc.name}}</div>
@@ -497,15 +493,15 @@ export function serveAdminHtml() {
                                         </div>
                                         <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
                                         
-                                        <!-- ACTION BUTTONS -->
+                                        <!-- ACTION BUTTONS: Wrapped for mobile -->
                                         <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200 flex-wrap">
-                                            <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1" title="Copy Coordinates">
+                                            <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1 shrink-0" title="Copy Coordinates">
                                                 <i class="fa-solid fa-copy"></i>
                                             </button>
-                                            <button @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200">
+                                            <button @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 shrink-0">
                                                 <i class="fa-solid fa-pen"></i> Edit
                                             </button>
-                                            <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200">
+                                            <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200 shrink-0">
                                                 <i class="fa-solid fa-trash"></i>
                                             </button>
                                         </div>
@@ -522,7 +518,6 @@ export function serveAdminHtml() {
                             <h3 class="font-black font-heading text-2xl text-black">Connections</h3>
                             <button @click="openModal('add-rel')" class="bg-pink-400 text-white hover:bg-pink-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Link Person</button>
                         </div>
-                        <!-- FAMILY UNIT -->
                         <div v-if="selected.familyReport && selected.familyReport.length > 0" class="fun-card p-4 mb-6 border-l-[10px] border-l-purple-400 bg-purple-50">
                              <h4 class="text-lg font-black text-purple-700 mb-3 flex items-center gap-2 font-heading"><i class="fa-solid fa-people-roof"></i> Family</h4>
                              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
