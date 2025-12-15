@@ -826,9 +826,22 @@ export function serveAdminHtml() {
         const cmdQuery = ref('');
         const cmdInput = ref(null);
 
+        // Helper to get local date string for inputs
+        const getLocalISOString = () => {
+            const d = new Date();
+            const offset = d.getTimezoneOffset() * 60000;
+            const local = new Date(d.getTime() - offset);
+            return local.toISOString().slice(0, 16);
+        };
+
         const forms = reactive({
-            subject: {}, interaction: {}, location: {}, intel: {}, rel: { type: '', reciprocal: '' }, 
-            share: { minutes: 60, requireLocation: false, allowedTabs: [] }, mediaLink: {}
+            subject: {}, 
+            interaction: {}, 
+            location: {}, 
+            intel: {}, 
+            rel: { type: '', reciprocal: '' }, 
+            share: { minutes: 60, requireLocation: false, allowedTabs: [] }, 
+            mediaLink: {}
         });
 
         // Charts
@@ -1090,7 +1103,7 @@ export function serveAdminHtml() {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
-             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0,16) };
+             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; // Use local time
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              if(t === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; nextTick(() => initMap('locationPickerMap', [], true)); }
@@ -1267,9 +1280,8 @@ export function serveAdminHtml() {
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
-                         if(nodeId === selected.value.id) return;
-                         const rel = selected.value.relationships.find(r => (r.subject_a_id === selected.value.id && r.subject_b_id === nodeId) || (r.subject_b_id === selected.value.id && r.subject_a_id === nodeId));
-                         if(rel) openModal('mini-profile', { id: nodeId, full_name: rel.target_name, occupation: rel.target_role, avatar_path: rel.target_avatar, nationality: rel.target_nationality, threat_level: rel.target_threat });
+                         const nodeData = data.nodes.find(n => n.id === nodeId);
+                         if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image, nationality: nodeData.group === 'Low' ? '' : '', threat_level: nodeData.group });
                      }
                  });
             });
