@@ -656,31 +656,30 @@ export default {
         }
         if (path === '/api/location') {
             const p = await req.json();
-
-            // EDIT (PATCH)
+            
             if (req.method === 'PATCH') {
-                // Check if location belongs to admin's subject
-                const check = await env.DB.prepare(`
+                 if (!p.id) return errorResponse("ID required", 400);
+                 // Verify ownership via join
+                 const owner = await env.DB.prepare(`
                     SELECT s.id 
-                    FROM subject_locations l
-                    JOIN subjects s ON l.subject_id = s.id
+                    FROM subject_locations l 
+                    JOIN subjects s ON l.subject_id = s.id 
                     WHERE l.id = ? AND s.admin_id = ?
-                `).bind(p.id, adminId).first();
+                 `).bind(p.id, adminId).first();
+                 
+                 if(!owner) return errorResponse("Unauthorized", 403);
 
-                if (!check) return errorResponse("Unauthorized or Not Found", 403);
-
-                await env.DB.prepare('UPDATE subject_locations SET name=?, address=?, lat=?, lng=?, type=?, notes=? WHERE id=?')
+                 await env.DB.prepare('UPDATE subject_locations SET name=?, address=?, lat=?, lng=?, type=?, notes=? WHERE id=?')
                     .bind(p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), p.id).run();
+                 return response({success:true});
+            } else {
+                const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
+                if(!owner) return errorResponse("Unauthorized", 403);
+                
+                await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
+                    .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
                 return response({success:true});
             }
-            
-            // CREATE (POST)
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-            if(!owner) return errorResponse("Unauthorized", 403);
-            
-            await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-            return response({success:true});
         }
         if (path === '/api/intel') {
             const p = await req.json();
