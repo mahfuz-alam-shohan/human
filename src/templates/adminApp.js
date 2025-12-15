@@ -307,14 +307,14 @@ export function serveAdminHtml() {
                 
                 <!-- HEADER -->
                 <div class="h-20 border-b-4 border-black flex items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0">
-                    <div class="flex items-center gap-3">
-                        <button @click="changeTab('targets')" class="w-10 h-10 rounded-full flex items-center justify-center text-black border-2 border-black bg-white hover:bg-gray-100 shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="flex items-center gap-3 min-w-0">
+                        <button @click="changeTab('targets')" class="w-10 h-10 rounded-full flex items-center justify-center text-black border-2 border-black bg-white hover:bg-gray-100 shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all shrink-0"><i class="fa-solid fa-arrow-left"></i></button>
                         <div class="min-w-0">
                             <div class="font-black font-heading text-xl text-black truncate">{{ selected.full_name }}</div>
                             <div class="text-xs font-bold text-gray-500 truncate uppercase tracking-widest">{{ selected.alias || 'The Profile' }}</div>
                         </div>
                     </div>
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2">
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
                         <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
                         <button @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
@@ -332,8 +332,10 @@ export function serveAdminHtml() {
                     </button>
                 </div>
 
-                <!-- DETAIL CONTENT -->
-                <div class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0 bg-yellow-50">
+                <!-- DETAIL CONTENT WRAPPER -->
+                <!-- UPDATED: Conditional classes for Map/Network to handle height properly -->
+                <div :class="['flex-1 min-h-0 bg-yellow-50', (subTab === 'map' || subTab === 'network') ? 'relative overflow-hidden flex flex-col' : 'overflow-y-auto p-4 md:p-8']">
+                    
                     <!-- OVERVIEW -->
                     <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -387,7 +389,7 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
-                    <!-- CAPABILITIES (NEW!) -->
+                    <!-- CAPABILITIES -->
                     <div v-show="subTab === 'capabilities'" class="max-w-5xl mx-auto h-full flex flex-col md:flex-row gap-6">
                         <div class="w-full md:w-1/3 fun-card p-4 space-y-4">
                             <h3 class="font-black font-heading text-lg">Skill Set</h3>
@@ -416,7 +418,6 @@ export function serveAdminHtml() {
                         <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
                             <h4 class="text-sm font-black uppercase text-gray-400 border-b-2 border-gray-300 pb-1 ml-2">{{ category }}</h4>
                             
-                            <!-- SOCIAL MEDIA GRID -->
                             <div v-if="category === 'Social Media'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
                                     <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
@@ -425,8 +426,7 @@ export function serveAdminHtml() {
                                 </a>
                             </div>
 
-                            <!-- STANDARD GRID -->
-                            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
                                     <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
                                     <div class="text-black font-bold break-words text-sm">{{item.value}}</div>
@@ -458,16 +458,16 @@ export function serveAdminHtml() {
                     </div>
 
                     <!-- MAP (Detail) with Mobile Drawer -->
-                    <div v-show="subTab === 'map'" class="h-full flex flex-col relative">
+                    <div v-show="subTab === 'map'" class="h-full flex flex-col relative p-4 md:p-8">
                         <div class="flex justify-between items-center mb-4 shrink-0">
                             <h3 class="font-black font-heading text-2xl text-black">Locations</h3>
                             <button @click="openModal('add-location')" class="bg-blue-400 text-white hover:bg-blue-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Add Pin</button>
                         </div>
                         
-                        <!-- Main Layout: Full Height Flex for Mobile / Grid for Desktop -->
+                        <!-- Main Layout -->
                         <div class="flex-1 flex md:grid md:grid-cols-3 gap-6 min-h-0 relative overflow-hidden">
                             
-                            <!-- MAP CONTAINER (Full on Mobile, Col-Span-2 on Desktop) -->
+                            <!-- MAP CONTAINER -->
                             <div class="w-full h-full md:col-span-2 bg-white rounded-2xl overflow-hidden relative border-4 border-black shadow-[4px_4px_0px_#000]">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
                                 
@@ -477,7 +477,7 @@ export function serveAdminHtml() {
                                 </button>
                             </div>
 
-                            <!-- LIST CONTAINER (Drawer on Mobile, Col-1 on Desktop) -->
+                            <!-- LIST CONTAINER -->
                             <div :class="[
                                 'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
                                 showProfileMapList ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
@@ -498,7 +498,7 @@ export function serveAdminHtml() {
                                         <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
                                         
                                         <!-- ACTION BUTTONS -->
-                                        <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200">
+                                        <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200 flex-wrap">
                                             <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1" title="Copy Coordinates">
                                                 <i class="fa-solid fa-copy"></i>
                                             </button>
@@ -517,7 +517,7 @@ export function serveAdminHtml() {
                     </div>
 
                     <!-- NETWORK (Detail) -->
-                    <div v-show="subTab === 'network'" class="h-full flex flex-col">
+                    <div v-show="subTab === 'network'" class="h-full flex flex-col p-4 md:p-8">
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-black font-heading text-2xl text-black">Connections</h3>
                             <button @click="openModal('add-rel')" class="bg-pink-400 text-white hover:bg-pink-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Link Person</button>
@@ -1073,11 +1073,6 @@ export function serveAdminHtml() {
                     map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
                     L.marker(e.latlng).addTo(map);
                  });
-                 // If editing, drop pin initially
-                 if (forms.location.lat && forms.location.lng) {
-                     L.marker([forms.location.lat, forms.location.lng]).addTo(map);
-                     map.setView([forms.location.lat, forms.location.lng], 15);
-                 }
             } else {
                 if(id === 'subjectMap') mapInstance = map; else warRoomMapInstance = map;
                 renderMapData(map, data);
