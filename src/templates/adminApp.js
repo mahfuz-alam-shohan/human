@@ -114,6 +114,10 @@ export function serveAdminHtml() {
     .toggle-checkbox:checked + .toggle-label {
         background-color: #68D391;
     }
+    
+    /* Refresh Spin */
+    .spin-fast { animation: spin 0.5s linear infinite; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body class="h-[100dvh] overflow-hidden text-slate-900">
@@ -160,7 +164,7 @@ export function serveAdminHtml() {
     <!-- MAIN APP -->
     <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
         
-        <!-- SIDEBAR -->
+        <!-- SIDEBAR (Desktop) -->
         <nav class="hidden md:flex flex-col w-24 bg-white border-r-4 border-black items-center py-6 z-20 shrink-0">
             <div class="mb-8 text-yellow-500 text-4xl drop-shadow-[2px_2px_0px_#000]"><i class="fa-solid fa-cube"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
@@ -169,6 +173,12 @@ export function serveAdminHtml() {
                     <span class="text-[10px] font-heading font-bold uppercase tracking-wider">{{t.label}}</span>
                 </button>
             </div>
+            
+            <!-- Desktop Refresh Button -->
+            <button @click="refreshApp" :disabled="processing" class="text-gray-400 hover:text-green-500 p-4 transition-colors text-xl" title="Refresh Data">
+                <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
+            </button>
+
             <button @click="openModal('cmd')" class="text-gray-400 hover:text-blue-500 p-4 transition-colors text-xl"><i class="fa-solid fa-magnifying-glass"></i></button>
             <button @click="openSettings" class="text-gray-400 hover:text-black p-4 transition-colors text-xl"><i class="fa-solid fa-gear"></i></button>
             <button @click="handleLogout" class="text-gray-400 hover:text-red-500 p-4 transition-colors text-xl"><i class="fa-solid fa-power-off"></i></button>
@@ -183,6 +193,10 @@ export function serveAdminHtml() {
                 <span class="font-heading font-black text-xl text-black tracking-tight">People OS</span>
             </div>
             <div class="flex items-center gap-1">
+                 <!-- Mobile Refresh Button -->
+                 <button @click="refreshApp" :disabled="processing" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-green-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all">
+                    <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
+                 </button>
                  <button @click="openModal('cmd')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-yellow-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-magnifying-glass"></i></button>
             </div>
         </header>
@@ -644,7 +658,7 @@ export function serveAdminHtml() {
                     </select>
                     <input v-model="forms.intel.label" placeholder="Label (e.g. Phone)" class="fun-input w-full p-3 text-sm" required>
                     <textarea v-model="forms.intel.value" @input="handleIntelInput" placeholder="Value" rows="3" class="fun-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
                  </form>
 
                  <!-- ADD MEDIA LINK -->
@@ -652,7 +666,7 @@ export function serveAdminHtml() {
                     <input v-model="forms.mediaLink.url" placeholder="Paste URL Here" class="fun-input w-full p-3 text-sm" required>
                     <input v-model="forms.mediaLink.description" placeholder="What is it?" class="fun-input w-full p-3 text-sm">
                     <select v-model="forms.mediaLink.type" class="fun-input w-full p-3 text-sm"><option value="image/jpeg">Image</option><option value="application/pdf">Document</option><option value="video/mp4">Video</option><option value="text/plain">Other</option></select>
-                    <button type="submit" class="w-full bg-pink-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-pink-500">Save Link</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-pink-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-pink-500">Save Link</button>
                  </form>
 
                  <!-- SHARE -->
@@ -682,7 +696,7 @@ export function serveAdminHtml() {
 
                     <div class="flex gap-2">
                         <select v-model="forms.share.minutes" class="fun-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
-                        <button @click="createShareLink" class="flex-1 bg-yellow-400 text-black font-black rounded-xl text-sm fun-btn hover:bg-yellow-500">Create Magic Link</button>
+                        <button @click="createShareLink" :disabled="processing" class="flex-1 bg-yellow-400 text-black font-black rounded-xl text-sm fun-btn hover:bg-yellow-500">Create Magic Link</button>
                     </div>
                     
                     <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -711,7 +725,7 @@ export function serveAdminHtml() {
                     <div class="h-48 w-full bg-gray-100 rounded-xl border-2 border-black relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
                     <input v-model="forms.location.name" placeholder="Name (e.g. Secret Base)" class="fun-input w-full p-3 text-sm">
                     <select v-model="forms.location.type" class="fun-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
-                    <button type="submit" class="w-full bg-blue-500 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-600">Drop Pin</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-600">Drop Pin</button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
@@ -720,7 +734,7 @@ export function serveAdminHtml() {
                         <select v-model="forms.interaction.type" class="fun-input p-3 text-sm"><option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option></select>
                     </div>
                     <textarea v-model="forms.interaction.transcript" placeholder="What happened?" rows="5" class="fun-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" class="w-full bg-orange-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-orange-500">Log It</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-orange-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-orange-500">Log It</button>
                 </form>
             </div>
         </div>
@@ -966,12 +980,18 @@ export function serveAdminHtml() {
 
         // Quick Note
         const quickAppend = async (field) => {
+            if (processing.value) return;
             const note = prompt("Add note:");
             if(!note) return;
-            const newVal = (selected.value[field] ? selected.value[field] + "\\n\\n" : "") + \`[\${new Date().toLocaleDateString()}] \${note}\`;
-            await api('/subjects/'+selected.value.id, { method: 'PATCH', body: JSON.stringify({ [field]: newVal }) });
-            selected.value[field] = newVal;
-            notify('Success', 'Note appended', 'success');
+            processing.value = true;
+            try {
+                const newVal = (selected.value[field] ? selected.value[field] + "\\n\\n" : "") + \`[\${new Date().toLocaleDateString()}] \${note}\`;
+                await api('/subjects/'+selected.value.id, { method: 'PATCH', body: JSON.stringify({ [field]: newVal }) });
+                selected.value[field] = newVal;
+                notify('Success', 'Note appended', 'success');
+            } finally {
+                processing.value = false;
+            }
         };
 
         // Export
@@ -1089,15 +1109,88 @@ export function serveAdminHtml() {
         watch(() => forms.subject.dob, (val) => { if(val) forms.subject.age = new Date().getFullYear() - new Date(val).getFullYear(); });
         watch(() => forms.subject.age, (val) => { if(val && !forms.subject.dob) forms.subject.dob = \`\${new Date().getFullYear()-val}-01-01\`; });
 
+        // Refresh Logic
+        const refreshApp = async () => {
+            if(processing.value) return;
+            processing.value = true;
+            try {
+                if(currentTab.value === 'detail' && selected.value) {
+                    await viewSubject(selected.value.id);
+                } else {
+                    await fetchData();
+                    if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                }
+                notify('Synced', 'Data refreshed', 'success');
+            } catch(e) {
+                // error handled in api wrapper
+            } finally {
+                processing.value = false;
+            }
+        };
+
         // Submissions
-        const submitSubject = async () => { processing.value = true; try { const isEdit = modal.active === 'edit-profile'; await api(isEdit ? '/subjects/' + selected.value.id : '/subjects', { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); closeModal(); notify('Success', 'Profile saved', 'success'); } finally { processing.value = false; } };
-        const submitInteraction = async () => { processing.value = true; try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const submitLocation = async () => { processing.value = true; try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const submitIntel = async () => { processing.value = true; try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const submitRel = async () => { processing.value = true; try { const method = forms.rel.id ? 'PATCH' : 'POST'; const payload = method === 'POST' ? { subjectA: selected.value.id, targetId: forms.rel.targetId, type: forms.rel.type, reciprocal: forms.rel.reciprocal } : { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal }; await api('/relationship', { method: method, body: JSON.stringify(payload) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const submitMediaLink = async () => { processing.value = true; try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const deleteItem = async (table, id) => { if(confirm('Delete item?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } };
-        const deleteProfile = async () => { if(confirm('WARNING: DELETE THIS PROFILE?')) { await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) }); fetchData(); changeTab('targets'); } };
+        const submitSubject = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { 
+                const isEdit = modal.active === 'edit-profile'; 
+                await api(isEdit ? '/subjects/' + selected.value.id : '/subjects', { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); 
+                if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); 
+                closeModal(); 
+                notify('Success', 'Profile saved', 'success'); 
+            } finally { processing.value = false; } 
+        };
+        
+        const submitInteraction = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
+        };
+        
+        const submitLocation = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
+        };
+        
+        const submitIntel = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
+        };
+        
+        const submitRel = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { 
+                const method = forms.rel.id ? 'PATCH' : 'POST'; 
+                const payload = method === 'POST' ? { subjectA: selected.value.id, targetId: forms.rel.targetId, type: forms.rel.type, reciprocal: forms.rel.reciprocal } : { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal }; 
+                await api('/relationship', { method: method, body: JSON.stringify(payload) }); 
+                viewSubject(selected.value.id); closeModal(); 
+            } finally { processing.value = false; } 
+        };
+        
+        const submitMediaLink = async () => { 
+            if(processing.value) return;
+            processing.value = true; 
+            try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
+        };
+        
+        const deleteItem = async (table, id) => { 
+            if(processing.value) return;
+            if(confirm('Delete item?')) { 
+                processing.value = true;
+                try { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } finally { processing.value = false; }
+            } 
+        };
+        
+        const deleteProfile = async () => { 
+            if(processing.value) return;
+            if(confirm('WARNING: DELETE THIS PROFILE?')) { 
+                processing.value = true;
+                try { await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) }); fetchData(); changeTab('targets'); } finally { processing.value = false; }
+            } 
+        };
 
         // Files
         const fileInput = ref(null);
@@ -1105,17 +1198,35 @@ export function serveAdminHtml() {
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
         const handleFile = async (e) => {
              const f = e.target.files[0]; if(!f) return;
+             if(processing.value) return;
+             processing.value = true;
+             
              const reader = new FileReader(); reader.readAsDataURL(f);
              reader.onload = async (ev) => {
-                 await api(uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: ev.target.result.split(',')[1], filename: f.name, contentType: f.type }) });
-                 viewSubject(selected.value.id);
-                 e.target.value = ''; // Reset input to allow re-uploading same file
+                 try {
+                    await api(uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: ev.target.result.split(',')[1], filename: f.name, contentType: f.type }) });
+                    viewSubject(selected.value.id);
+                 } finally {
+                    processing.value = false;
+                    e.target.value = ''; // Reset input to allow re-uploading same file
+                 }
              };
         };
 
         const fetchShareLinks = async () => { activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id); };
-        const createShareLink = async () => { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation, allowedTabs: forms.share.allowedTabs }) }); fetchShareLinks(); };
-        const revokeLink = async (t) => { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); };
+        
+        const createShareLink = async () => { 
+            if(processing.value) return;
+            processing.value = true;
+            try { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation, allowedTabs: forms.share.allowedTabs }) }); fetchShareLinks(); } finally { processing.value = false; }
+        };
+        
+        const revokeLink = async (t) => { 
+            if(processing.value) return;
+            processing.value = true;
+            try { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); } finally { processing.value = false; }
+        };
+        
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
@@ -1278,7 +1389,8 @@ export function serveAdminHtml() {
             showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
             fileInput,
             getSkillScore, updateSkill, // New Capability Functions
-            getSocialInfo, handleIntelInput // Social Media Logic
+            getSocialInfo, handleIntelInput, // Social Media Logic
+            refreshApp // NEW: Global Refresh
         };
       }
     }).mount('#app');
