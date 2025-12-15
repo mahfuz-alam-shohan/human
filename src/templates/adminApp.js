@@ -426,7 +426,7 @@ export function serveAdminHtml() {
                             </div>
 
                             <!-- STANDARD GRID -->
-                            <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
                                     <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
                                     <div class="text-black font-bold break-words text-sm">{{item.value}}</div>
@@ -490,13 +490,25 @@ export function serveAdminHtml() {
                                 </div>
 
                                 <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1">
-                                    <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 cursor-pointer hover:bg-blue-50 border-2" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
-                                        <div class="flex justify-between items-center mb-1">
-                                            <div class="font-black text-black text-sm font-heading">{{loc.name}}</div>
+                                    <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
+                                        <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
+                                            <div class="font-black text-black text-sm font-heading cursor-pointer">{{loc.name}}</div>
                                             <span class="text-[10px] uppercase bg-white text-black px-2 py-0.5 rounded border-2 border-black font-bold shadow-[2px_2px_0px_#000]">{{loc.type}}</span>
                                         </div>
-                                        <div class="text-xs font-bold text-gray-500 mb-2">{{loc.address}}</div>
-                                        <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200">Delete</button>
+                                        <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
+                                        
+                                        <!-- ACTION BUTTONS -->
+                                        <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200">
+                                            <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1" title="Copy Coordinates">
+                                                <i class="fa-solid fa-copy"></i>
+                                            </button>
+                                            <button @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200">
+                                                <i class="fa-solid fa-pen"></i> Edit
+                                            </button>
+                                            <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200">
+                                                <i class="fa-solid fa-trash"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                     <div v-if="selected.locations.length === 0" class="text-center text-gray-400 font-bold py-8">No locations saved yet.</div>
                                 </div>
@@ -713,8 +725,8 @@ export function serveAdminHtml() {
                     </div>
                  </div>
                  
-                 <!-- LOCATION PICKER -->
-                 <form v-if="modal.active === 'add-location'" @submit.prevent="submitLocation" class="space-y-4">
+                 <!-- LOCATION PICKER (ADD/EDIT) -->
+                 <form v-if="['add-location', 'edit-location'].includes(modal.active)" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Find place..." class="fun-input w-full p-3 pl-10 text-sm">
                          <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400"></i>
@@ -723,9 +735,22 @@ export function serveAdminHtml() {
                          </div>
                     </div>
                     <div class="h-48 w-full bg-gray-100 rounded-xl border-2 border-black relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
+                    
+                    <!-- NEW: Manual Coordinates -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-[10px] font-bold text-gray-500 uppercase">Latitude</label>
+                            <input v-model.number="forms.location.lat" type="number" step="any" placeholder="0.0000" class="fun-input w-full p-2 text-xs" @input="updatePickerMarker">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold text-gray-500 uppercase">Longitude</label>
+                            <input v-model.number="forms.location.lng" type="number" step="any" placeholder="0.0000" class="fun-input w-full p-2 text-xs" @input="updatePickerMarker">
+                        </div>
+                    </div>
+
                     <input v-model="forms.location.name" placeholder="Name (e.g. Secret Base)" class="fun-input w-full p-3 text-sm">
                     <select v-model="forms.location.type" class="fun-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-600">Drop Pin</button>
+                    <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-600">{{ modal.active === 'edit-location' ? 'Update Pin' : 'Drop Pin' }}</button>
                 </form>
 
                 <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
@@ -887,7 +912,18 @@ export function serveAdminHtml() {
             return '/api/media/' + p;
         };
 
-        const modalTitle = computed(() => ({ 'add-subject':'New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'add-intel':'Add Attribute', 'add-rel':'Connect Profile', 'edit-rel': 'Edit Connection', 'share-secure':'Share Profile', 'add-media-link': 'Add External Media' }[modal.active] || 'Menu'));
+        const modalTitle = computed(() => ({ 
+            'add-subject':'New Profile', 
+            'edit-profile':'Edit Profile', 
+            'add-interaction':'Log Event', 
+            'add-location':'Add Location', 
+            'edit-location':'Edit Location', // Title for edit mode
+            'add-intel':'Add Attribute', 
+            'add-rel':'Connect Profile', 
+            'edit-rel': 'Edit Connection', 
+            'share-secure':'Share Profile', 
+            'add-media-link': 'Add External Media' 
+        }[modal.active] || 'Menu'));
 
         // Notification System
         const notify = (title, msg, type='info') => {
@@ -1037,9 +1073,26 @@ export function serveAdminHtml() {
                     map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
                     L.marker(e.latlng).addTo(map);
                  });
+                 // If editing, drop pin initially
+                 if (forms.location.lat && forms.location.lng) {
+                     L.marker([forms.location.lat, forms.location.lng]).addTo(map);
+                     map.setView([forms.location.lat, forms.location.lng], 15);
+                 }
             } else {
                 if(id === 'subjectMap') mapInstance = map; else warRoomMapInstance = map;
                 renderMapData(map, data);
+            }
+        };
+
+        // Syncs manual input with map marker
+        const updatePickerMarker = () => {
+            if (!pickerMapInstance) return;
+            const lat = parseFloat(forms.location.lat);
+            const lng = parseFloat(forms.location.lng);
+            if (!isNaN(lat) && !isNaN(lng)) {
+                pickerMapInstance.eachLayer(l => { if(l instanceof L.Marker) pickerMapInstance.removeLayer(l); });
+                L.marker([lat, lng]).addTo(pickerMapInstance);
+                pickerMapInstance.setView([lat, lng], 15);
             }
         };
 
@@ -1097,6 +1150,13 @@ export function serveAdminHtml() {
             if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
         };
 
+        // NEW: Copy Coords
+        const copyCoords = (lat, lng) => {
+            const str = \`\${lat}, \${lng}\`;
+            navigator.clipboard.writeText(str);
+            notify('Copied', str, 'success');
+        };
+
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
         const openModal = (t, item = null) => {
@@ -1106,7 +1166,19 @@ export function serveAdminHtml() {
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; // Use local time
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
-             if(t === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; nextTick(() => initMap('locationPickerMap', [], true)); }
+             
+             // Location Handling
+             if(t === 'add-location') { 
+                 forms.location = { subject_id: selected.value.id }; 
+                 locationSearchQuery.value = ''; 
+                 nextTick(() => initMap('locationPickerMap', [], true)); 
+             }
+             if(t === 'edit-location' && item) {
+                 forms.location = { ...item }; // Copy existing data
+                 locationSearchQuery.value = '';
+                 nextTick(() => initMap('locationPickerMap', [], true));
+             }
+
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; 
              if(t === 'edit-rel' && item) {
                 forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type };
@@ -1163,7 +1235,13 @@ export function serveAdminHtml() {
         const submitLocation = async () => { 
             if(processing.value) return;
             processing.value = true; 
-            try { await api('/location', { method: 'POST', body: JSON.stringify(forms.location) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
+            try { 
+                // Determine method based on presence of ID (edit vs add)
+                const method = forms.location.id ? 'PATCH' : 'POST';
+                await api('/location', { method: method, body: JSON.stringify(forms.location) }); 
+                viewSubject(selected.value.id); 
+                closeModal(); 
+            } finally { processing.value = false; } 
         };
         
         const submitIntel = async () => { 
@@ -1402,7 +1480,8 @@ export function serveAdminHtml() {
             fileInput,
             getSkillScore, updateSkill, // New Capability Functions
             getSocialInfo, handleIntelInput, // Social Media Logic
-            refreshApp // NEW: Global Refresh
+            refreshApp,
+            copyCoords, updatePickerMarker // Location Edit
         };
       }
     }).mount('#app');
