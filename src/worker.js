@@ -68,7 +68,15 @@ async function hashPassword(secret) {
 
 // --- Helper Functions ---
 
-function isoTimestamp() { return new Date().toISOString(); }
+function isoTimestamp() {
+    // Forces UTC+6 (Bangladesh Standard Time)
+    const now = new Date();
+    const utcTime = now.getTime();
+    const offsetHours = 6;
+    const bstTime = new Date(utcTime + (offsetHours * 60 * 60 * 1000));
+    // Replace the 'Z' (UTC) with '+06:00' to explicitly indicate the offset
+    return bstTime.toISOString().replace('Z', '+06:00');
+}
 
 function sanitizeFileName(name) {
   return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
@@ -702,7 +710,6 @@ export default {
             const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
             if(!owner) return errorResponse("Unauthorized", 403);
 
-            // Upsert logic basically: Delete existing skill by name for this subject then insert new
             await env.DB.prepare('DELETE FROM subject_skills WHERE subject_id = ? AND skill_name = ?').bind(p.subject_id, p.skill_name).run();
             await env.DB.prepare('INSERT INTO subject_skills (subject_id, skill_name, score, created_at) VALUES (?,?,?,?)')
                 .bind(p.subject_id, p.skill_name, p.score, isoTimestamp()).run();
