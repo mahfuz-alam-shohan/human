@@ -74,7 +74,6 @@ function isoTimestamp() {
     const utcTime = now.getTime();
     const offsetHours = 6;
     const bstTime = new Date(utcTime + (offsetHours * 60 * 60 * 1000));
-    // Replace the 'Z' (UTC) with '+06:00' to explicitly indicate the offset
     return bstTime.toISOString().replace('Z', '+06:00');
 }
 
@@ -117,6 +116,7 @@ async function ensureSchema(db) {
             id INTEGER PRIMARY KEY, 
             email TEXT UNIQUE, 
             password_hash TEXT, 
+            permissions TEXT,
             created_at TEXT
         )`),
         
@@ -244,6 +244,7 @@ async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN permissions TEXT").run(); } catch (e) {}
 
       schemaInitialized = true;
   } catch (err) { 
@@ -615,17 +616,19 @@ export default {
             const { email, password } = await req.json();
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
             if (!admin) {
-                // Auto register for demo
+                // Auto register for demo - First user is Super Admin
                 const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
+                const allPerms = JSON.stringify(['dashboard', 'targets', 'map', 'network', 'manage_users']);
+                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, permissions, created_at) VALUES (?, ?, ?, ?)').bind(email, hash, allPerms, isoTimestamp()).run();
                 const token = await createToken({ id: res.meta.last_row_id, email }, JWT_SECRET);
-                return response({ token });
+                return response({ token, permissions: JSON.parse(allPerms) });
             }
             const hashed = await hashPassword(password);
             if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
             
             const token = await createToken({ id: admin.id, email }, JWT_SECRET);
-            return response({ token });
+            const permissions = admin.permissions ? JSON.parse(admin.permissions) : ['dashboard', 'targets', 'map', 'network', 'manage_users'];
+            return response({ token, permissions });
         }
 
         // --- PROTECTED ROUTES ---
@@ -635,6 +638,45 @@ export default {
         
         if (!user) return errorResponse("Unauthorized", 401);
         const adminId = user.id;
+
+        // Fetch permissions for current user to enforce server-side security on admin routes
+        const currentAdminData = await env.DB.prepare('SELECT permissions FROM admins WHERE id = ?').bind(adminId).first();
+        const currentPerms = currentAdminData && currentAdminData.permissions ? JSON.parse(currentAdminData.permissions) : ['dashboard', 'targets', 'map', 'network', 'manage_users'];
+
+        // --- USER MANAGEMENT ROUTES ---
+        if (path === '/api/admin/users') {
+            if (!currentPerms.includes('manage_users')) return errorResponse("Forbidden: Admins only", 403);
+
+            if (req.method === 'GET') {
+                const users = await env.DB.prepare('SELECT id, email, permissions, created_at FROM admins').all();
+                // Clean permissions for frontend
+                const cleanUsers = users.results.map(u => ({
+                    ...u,
+                    permissions: u.permissions ? JSON.parse(u.permissions) : []
+                }));
+                return response(cleanUsers);
+            }
+            
+            if (req.method === 'POST') {
+                const { email, password, permissions } = await req.json();
+                
+                // Check duplicate
+                const exists = await env.DB.prepare('SELECT id FROM admins WHERE email = ?').bind(email).first();
+                if (exists) return errorResponse("User email already exists", 400);
+
+                const hash = await hashPassword(password);
+                const permsStr = JSON.stringify(permissions || []);
+                await env.DB.prepare('INSERT INTO admins (email, password_hash, permissions, created_at) VALUES (?, ?, ?, ?)').bind(email, hash, permsStr, isoTimestamp()).run();
+                return response({ success: true });
+            }
+
+            if (req.method === 'DELETE') {
+                const { id } = await req.json();
+                if (parseInt(id) === adminId) return errorResponse("Cannot delete your own account", 400);
+                await env.DB.prepare('DELETE FROM admins WHERE id = ?').bind(id).run();
+                return response({ success: true });
+            }
+        }
 
         // Dashboard & Stats
         if (path === '/api/dashboard') return handleGetDashboard(env.DB, adminId);
@@ -783,6 +825,8 @@ export default {
         }
 
         if (path === '/api/nuke') {
+            // Nuke only if super admin? Let's just allow it for now or check perms
+            if (!currentPerms.includes('manage_users')) return errorResponse("Unauthorized", 403);
             await nukeDatabase(env.DB);
             return response({success:true});
         }
