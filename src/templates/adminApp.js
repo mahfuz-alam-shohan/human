@@ -1578,4 +1578,5 @@ export function serveAdminHtml() {
   </script>
 </body>
 </html>`;
-  return new Response(html, { headers: { 'Content-Type': 'text/html'
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+}
