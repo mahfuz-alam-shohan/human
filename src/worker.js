@@ -247,8 +247,10 @@ async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE admins ADD COLUMN permissions TEXT").run(); } catch (e) {}
 
       schemaInitialized = true;
+      console.log("Database schema initialized successfully.");
   } catch (err) { 
-      console.error("Init Error", err); 
+      console.error("CRITICAL DATABASE ERROR during ensureSchema:", err); 
+      // Do NOT set schemaInitialized to true if it failed, so it retries or alerts
   }
 }
 
@@ -328,12 +330,15 @@ async function handleGetDashboard(db, adminId) {
         ORDER BY date DESC LIMIT 50
     `).bind(adminId, adminId, adminId).all();
 
-    const stats = await db.prepare(`
+    const statsQuery = await db.prepare(`
         SELECT 
             (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
             (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
             (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
     `).bind(adminId, adminId, adminId).first();
+
+    // FIX: Default to zeros if D1 returns null (empty DB)
+    const stats = statsQuery || { targets: 0, evidence: 0, encounters: 0 };
 
     return response({ feed: recent.results, stats });
 }
@@ -592,6 +597,14 @@ export default {
     const JWT_SECRET = env.JWT_SECRET || "CHANGE_ME_IN_PROD";
 
     try {
+        // --- PUBLIC: SETUP ENDPOINT ---
+        // Visit /api/setup to manually trigger schema creation if it failed previously
+        if (path === '/api/setup') {
+            schemaInitialized = false; // Force retry
+            await ensureSchema(env.DB);
+            return response({ message: "Database schema initialization attempted. Check logs if errors persist." });
+        }
+
         if (!schemaInitialized) await ensureSchema(env.DB);
 
         // Share Page
