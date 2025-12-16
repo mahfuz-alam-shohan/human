@@ -168,7 +168,7 @@ export function serveAdminHtml() {
         <nav class="hidden md:flex flex-col w-24 bg-white border-r-4 border-black items-center py-6 z-20 shrink-0">
             <div class="mb-8 text-yellow-500 text-4xl drop-shadow-[2px_2px_0px_#000]"><i class="fa-solid fa-cube"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-pink-300 text-black shadow-[3px_3px_0px_#000]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" class="w-full aspect-square rounded-2xl border-4 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none" :title="t.label">
+                <button v-for="t in visibleTabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-pink-300 text-black shadow-[3px_3px_0px_#000]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" class="w-full aspect-square rounded-2xl border-4 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none" :title="t.label">
                     <i :class="t.icon" class="text-2xl group-hover:scale-110 transition-transform"></i>
                     <span class="text-[10px] font-heading font-bold uppercase tracking-wider">{{t.label}}</span>
                 </button>
@@ -177,6 +177,11 @@ export function serveAdminHtml() {
             <!-- Desktop Refresh Button -->
             <button @click="refreshApp" :disabled="processing" class="text-gray-400 hover:text-green-500 p-4 transition-colors text-xl" title="Refresh Data">
                 <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
+            </button>
+
+            <!-- Admin Manage Button -->
+            <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="text-gray-400 hover:text-purple-500 p-4 transition-colors text-xl" title="Manage Team">
+                <i class="fa-solid fa-users-gear"></i>
             </button>
 
             <button @click="openModal('cmd')" class="text-gray-400 hover:text-blue-500 p-4 transition-colors text-xl"><i class="fa-solid fa-magnifying-glass"></i></button>
@@ -196,6 +201,10 @@ export function serveAdminHtml() {
                  <!-- Mobile Refresh Button -->
                  <button @click="refreshApp" :disabled="processing" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-green-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all">
                     <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
+                 </button>
+                 <!-- Mobile Users Button -->
+                 <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-purple-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none">
+                    <i class="fa-solid fa-users-gear"></i>
                  </button>
                  <button @click="openModal('cmd')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-yellow-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-magnifying-glass"></i></button>
             </div>
@@ -578,7 +587,7 @@ export function serveAdminHtml() {
         
         <!-- MOBILE NAV -->
         <nav class="md:hidden fixed bottom-0 left-0 right-0 h-auto min-h-[4rem] bg-white border-t-4 border-black flex justify-around items-center z-50 safe-area-pb py-1 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
+            <button v-for="t in visibleTabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
                 <i :class="t.icon" class="text-2xl mb-1 drop-shadow-md"></i>
                 <span class="text-[10px] font-black uppercase tracking-wide">{{t.label}}</span>
             </button>
@@ -602,6 +611,46 @@ export function serveAdminHtml() {
                         <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-xl hover:bg-blue-100 cursor-pointer flex justify-between items-center border-2 border-gray-100 hover:border-black transition-all group">
                              <div><div class="font-black text-lg text-black font-heading">{{res.title}}</div><div class="text-xs font-bold text-gray-500">{{res.desc}}</div></div>
                              <i class="fa-solid fa-arrow-right text-gray-300 group-hover:text-black font-bold"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MANAGE USERS -->
+                <div v-if="modal.active === 'manage-users'" class="space-y-6">
+                    <form @submit.prevent="submitNewUser" class="p-4 bg-gray-50 border-2 border-black rounded-xl space-y-4 shadow-[4px_4px_0px_#000]">
+                        <h4 class="font-black font-heading text-lg">Create Team Member</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <input v-model="forms.user.email" type="email" placeholder="Email" class="fun-input w-full p-3 text-sm" required>
+                            <input v-model="forms.user.password" type="password" placeholder="Password" class="fun-input w-full p-3 text-sm" required>
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-xs font-black uppercase text-gray-400">Permissions (Tabs)</label>
+                            <div class="flex flex-wrap gap-2">
+                                <label v-for="perm in ['dashboard', 'targets', 'map', 'network']" :key="perm" class="flex items-center gap-2 bg-white px-3 py-2 rounded-lg cursor-pointer hover:bg-blue-50 border-2 border-gray-200 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all">
+                                    <input type="checkbox" :value="perm" v-model="forms.user.permissions" class="accent-blue-500 w-4 h-4">
+                                    <span class="text-xs font-bold uppercase">{{ perm }}</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-red-50 px-3 py-2 rounded-lg cursor-pointer hover:bg-red-100 border-2 border-red-200 has-[:checked]:border-red-500 transition-all">
+                                    <input type="checkbox" value="manage_users" v-model="forms.user.permissions" class="accent-red-500 w-4 h-4">
+                                    <span class="text-xs font-bold uppercase text-red-600">Admin Access</span>
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-3 rounded-xl fun-btn hover:bg-blue-600">Create Agent</button>
+                    </form>
+
+                    <div class="space-y-2">
+                        <h4 class="font-black font-heading text-lg px-1">Current Team</h4>
+                        <div v-for="u in teamList" :key="u.id" class="flex justify-between items-center p-3 bg-white border-2 border-gray-200 rounded-xl hover:border-black transition-colors">
+                            <div>
+                                <div class="font-bold text-sm">{{u.email}}</div>
+                                <div class="flex gap-1 mt-1">
+                                    <span v-for="p in u.permissions" class="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-300">{{p}}</span>
+                                </div>
+                            </div>
+                            <button @click="deleteUser(u.id)" class="w-8 h-8 rounded-lg bg-red-100 text-red-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors border-2 border-transparent hover:border-black" title="Remove User">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -836,6 +885,10 @@ export function serveAdminHtml() {
         const showMapSidebar = ref(window.innerWidth >= 768);
         const showProfileMapList = ref(false); // Mobile Drawer State
         
+        // Users & Permissions
+        const currentPerms = ref([]);
+        const teamList = ref([]);
+        
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
         let pickerMapInstance = null;
@@ -861,7 +914,8 @@ export function serveAdminHtml() {
             intel: {}, 
             rel: { type: '', reciprocal: '' }, 
             share: { minutes: 60, requireLocation: false, allowedTabs: [] }, 
-            mediaLink: {}
+            mediaLink: {},
+            user: { email: '', password: '', permissions: [] } // New User Form
         });
 
         // Charts
@@ -899,7 +953,8 @@ export function serveAdminHtml() {
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
-        
+        const visibleTabs = computed(() => tabs.filter(t => currentPerms.value.includes(t.id)));
+
         // FIXED RESOLVE IMG
         const resolveImg = (p) => {
             if (!p) return null;
@@ -912,12 +967,13 @@ export function serveAdminHtml() {
             'edit-profile':'Edit Profile', 
             'add-interaction':'Log Event', 
             'add-location':'Add Location', 
-            'edit-location':'Edit Location', // Title for edit mode
+            'edit-location':'Edit Location', 
             'add-intel':'Add Attribute', 
             'add-rel':'Connect Profile', 
             'edit-rel': 'Edit Connection', 
             'share-secure':'Share Profile', 
-            'add-media-link': 'Add External Media' 
+            'add-media-link': 'Add External Media',
+            'manage-users': 'Team Management'
         }[modal.active] || 'Menu'));
 
         // Notification System
@@ -936,25 +992,35 @@ export function serveAdminHtml() {
             try {
                 const res = await fetch('/api' + ep, { ...opts, headers });
                 if(res.status === 401) { view.value = 'auth'; throw new Error("Session Expired"); }
+                if(res.status === 403) throw new Error("Access Denied");
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 return data;
             } catch(e) { notify('System Error', e.message, 'error'); throw e; }
         };
 
+        const hasPermission = (p) => currentPerms.value.includes(p);
+
         const handleAuth = async () => {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('token', res.token);
+                localStorage.setItem('perms', JSON.stringify(res.permissions));
+                currentPerms.value = res.permissions;
                 view.value = 'app';
+                // Reset tab if current not allowed
+                if(!hasPermission('dashboard') && visibleTabs.value.length > 0) currentTab.value = visibleTabs.value[0].id;
                 fetchData();
             } catch(e) {} finally { loading.value = false; }
         };
 
         const fetchData = async () => {
-            const [d, s, sugg] = await Promise.all([api('/dashboard'), api('/subjects'), api('/suggestions')]);
-            stats.value = d.stats; feed.value = d.feed; subjects.value = s; Object.assign(suggestions, sugg);
+            const reqs = [];
+            if(hasPermission('dashboard')) reqs.push(api('/dashboard').then(d => { stats.value = d.stats; feed.value = d.feed; }));
+            if(hasPermission('targets')) reqs.push(api('/subjects').then(s => subjects.value = s));
+            reqs.push(api('/suggestions').then(s => Object.assign(suggestions, s)));
+            await Promise.allSettled(reqs);
         };
 
         const viewSubject = async (id) => {
@@ -1149,7 +1215,7 @@ export function serveAdminHtml() {
 
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
-        const openModal = (t, item = null) => {
+        const openModal = async (t, item = null) => {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
@@ -1177,6 +1243,12 @@ export function serveAdminHtml() {
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
              // MINI PROFILE LOGIC
              if(t === 'mini-profile' && item) modal.data = item;
+
+             // USER MGMT
+             if(t === 'manage-users') {
+                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets'] };
+                 teamList.value = await api('/admin/users');
+             }
         };
         const closeModal = () => { modal.active = null; };
 
@@ -1193,7 +1265,7 @@ export function serveAdminHtml() {
                     await viewSubject(selected.value.id);
                 } else {
                     await fetchData();
-                    if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                    if(currentTab.value === 'map' && hasPermission('map')) { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
                 }
                 notify('Synced', 'Data refreshed', 'success');
             } catch(e) {
@@ -1256,6 +1328,25 @@ export function serveAdminHtml() {
             processing.value = true; 
             try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
         };
+
+        const submitNewUser = async () => {
+             if(processing.value) return;
+             processing.value = true;
+             try {
+                 await api('/admin/users', { method: 'POST', body: JSON.stringify(forms.user) });
+                 teamList.value = await api('/admin/users');
+                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets'] };
+                 notify('Success', 'User Created', 'success');
+             } finally { processing.value = false; }
+        };
+
+        const deleteUser = async (id) => {
+            if(!confirm("Remove this user?")) return;
+            try {
+                await api('/admin/users', { method: 'DELETE', body: JSON.stringify({ id }) });
+                teamList.value = await api('/admin/users');
+            } catch(e) {}
+        };
         
         const deleteItem = async (table, id) => { 
             if(processing.value) return;
@@ -1312,7 +1403,7 @@ export function serveAdminHtml() {
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
         const openSettings = () => { if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
-        const handleLogout = () => { localStorage.removeItem('token'); location.reload(); };
+        const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('perms'); location.reload(); };
 
         watch(subTab, (val) => {
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
@@ -1356,8 +1447,8 @@ export function serveAdminHtml() {
         });
 
         watch(currentTab, (val) => {
-             if(val === 'map') nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
-             if(val === 'network') nextTick(async () => {
+             if(val === 'map' && hasPermission('map')) nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
+             if(val === 'network' && hasPermission('network')) nextTick(async () => {
                 const data = await api('/global-network');
                 const container = document.getElementById('globalNetworkGraph');
                 
@@ -1456,7 +1547,15 @@ export function serveAdminHtml() {
             });
         });
 
-        onMounted(() => { if(localStorage.getItem('token')) { view.value = 'app'; fetchData(); } });
+        onMounted(() => { 
+            if(localStorage.getItem('token')) { 
+                try {
+                    currentPerms.value = JSON.parse(localStorage.getItem('perms') || '[]');
+                } catch(e) {}
+                view.value = 'app'; 
+                fetchData(); 
+            } 
+        });
 
         return {
             view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
@@ -1468,15 +1567,15 @@ export function serveAdminHtml() {
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
             showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
             fileInput,
-            getSkillScore, updateSkill, // New Capability Functions
-            getSocialInfo, handleIntelInput, // Social Media Logic
+            getSkillScore, updateSkill,
+            getSocialInfo, handleIntelInput,
             refreshApp,
-            copyCoords, updatePickerMarker // Location Edit
+            copyCoords, updatePickerMarker,
+            visibleTabs, hasPermission, submitNewUser, teamList, deleteUser // New User Mgmt
         };
       }
     }).mount('#app');
   </script>
 </body>
 </html>`;
-  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
-}
+  return new Response(html, { headers: { 'Content-Type': 'text/html'
