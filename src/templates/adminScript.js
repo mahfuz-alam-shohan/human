@@ -99,19 +99,18 @@ export const adminScript = `
 
         const can = (perm) => {
             if (!currentUser.value) return false;
-            if (currentUser.value.id === 'root' || currentUser.value.role === 'super_admin') return true;
+            if (currentUser.value.role === 'super_admin') return true;
             if (currentUser.value.permissions && currentUser.value.permissions.all) return true;
             return currentUser.value.permissions && currentUser.value.permissions[perm] === true;
         };
 
         const tabs = computed(() => allTabs.filter(t => can(t.perm)));
 
-        // --- AUTH (IMPROVED FALLBACK) ---
+        // --- AUTH ---
         const handleAuth = async () => {
             loading.value = true;
-            locationStatus.value = "Acquiring Satellite Lock...";
+            locationStatus.value = "Checking GPS...";
             
-            // Helper to send login request
             const performLogin = async (lat, lng) => {
                 try {
                     const res = await api('/login', { method: 'POST', body: JSON.stringify({ email: auth.email, password: auth.password, lat, lng }) }, true);
@@ -130,21 +129,15 @@ export const adminScript = `
                 }
             };
 
-            // Attempt Geolocation
+            // Try location (will fall back if not required by server)
             if (!navigator.geolocation) {
-                locationStatus.value = "GPS N/A. Trying fallback...";
-                await performLogin(null, null); // Try logging in anyway (Server handles logic)
+                await performLogin(null, null);
                 return;
             }
 
             navigator.geolocation.getCurrentPosition(
                 (pos) => performLogin(pos.coords.latitude, pos.coords.longitude),
-                (err) => {
-                    // Fail Open - Send request without coords, Server decides if 403 or 200
-                    console.warn("GPS failed/denied", err);
-                    locationStatus.value = "Signal Lost. Bypassing...";
-                    performLogin(null, null); 
-                }, 
+                (err) => { performLogin(null, null); }, // Send without location if failed/denied, server decides if ok
                 { enableHighAccuracy: true, timeout: 4000 }
             );
         };
@@ -190,13 +183,21 @@ export const adminScript = `
             if(processing.value) return;
             processing.value = true;
             try {
+                // Special case for Super Admin editing self
+                if (adminForm.role === 'super_admin') {
+                    await api('/super-admin/update', { method: 'POST', body: JSON.stringify({ email: adminForm.email, password: adminForm.password }) });
+                    notify('Success', 'Credentials Updated', 'success');
+                    closeModal();
+                    return;
+                }
+
                 const isEdit = !!adminForm.id;
                 const endpoint = isEdit ? '/admins/' + adminForm.id : '/admins';
                 const method = isEdit ? 'PATCH' : 'POST';
                 const payload = { ...adminForm };
                 if (isEdit && !payload.password) delete payload.password;
                 await api(endpoint, { method, body: JSON.stringify(payload) });
-                notify('Success', 'Admin User Saved', 'success');
+                notify('Success', 'Sub-Admin Saved', 'success');
                 closeModal();
                 fetchAdmins();
             } finally { processing.value = false; }
@@ -226,6 +227,7 @@ export const adminScript = `
              adminLogMapInstance = map;
         };
 
+        // Standard logic helpers
         const getSocialInfo = (url) => { return socialMap.find(s => s.regex.test(url)) || { name: 'Website', icon: 'fa-solid fa-globe', color: '#6B7280' }; };
         const handleIntelInput = () => { const val = forms.intel.value; const social = socialMap.find(s => s.regex.test(val)); if (social) { forms.intel.category = 'Social Media'; forms.intel.label = social.name; } };
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
@@ -363,13 +365,23 @@ export const adminScript = `
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
              if(t === 'mini-profile' && item) modal.data = item;
              
-             // Admin Modal Logic
+             // Admin Modal Logic (Improved for self-edit)
              if(t === 'admin-editor') {
                  if(item) {
-                     Object.assign(adminForm, { id: item.id, email: item.email, password: '', role: item.role, permissions: JSON.parse(item.permissions || '{}'), requireLocation: item.require_location === 1 || item.require_location === undefined });
+                     // If it's me (Super Admin)
+                     if(item.role === 'super_admin') {
+                         Object.assign(adminForm, { id: 'root', email: item.email, password: '', role: 'super_admin', permissions: {all:true}, requireLocation: false });
+                     } else {
+                         Object.assign(adminForm, { id: item.id, email: item.email, password: '', role: item.role, permissions: JSON.parse(item.permissions || '{}'), requireLocation: item.require_location === 1 || item.require_location === undefined });
+                     }
                  } else {
                      Object.assign(adminForm, { id: null, email: '', password: '', role: 'agent', permissions: {}, requireLocation: true });
                  }
+             }
+             // SPECIAL CASE: Open Profile Settings from Sidebar Gear Icon
+             if(t === 'settings' && currentUser.value.role === 'super_admin') {
+                 modal.active = 'admin-editor';
+                 Object.assign(adminForm, { id: 'root', email: currentUser.value.email, password: '', role: 'super_admin', permissions: {all:true}, requireLocation: false });
              }
         };
         const closeModal = () => { modal.active = null; };
@@ -401,7 +413,16 @@ export const adminScript = `
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
-        const openSettings = () => { if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
+        
+        // Settings -> Now opens Profile Editor for Super Admin
+        const openSettings = () => { 
+            if(currentUser.value.role === 'super_admin') {
+                openModal('settings');
+            } else {
+               // Sub-admins just logout or see info (simplified)
+               alert("Settings are restricted.");
+            }
+        };
         const handleLogout = () => { localStorage.clear(); location.reload(); };
 
         watch(subTab, (val) => { if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || [])); if(val === 'capabilities') nextTick(renderSkillsChart); if(val === 'network') nextTick(() => { }); });
