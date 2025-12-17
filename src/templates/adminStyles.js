@@ -48,7 +48,7 @@ export const adminStyles = `
 
     /* Buttons - Clicky */
     .fun-btn {
-        border: 3px solid black;
+        border: 3px solid black; 
         box-shadow: 3px 3px 0px 0px black;
         transition: all 0.1s;
         font-family: 'Fredoka', sans-serif;
