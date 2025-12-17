@@ -1182,7 +1182,6 @@ export function serveAdminHtml() {
              if(t === 'mini-profile' && item) modal.data = item;
 
              if(t === 'manage-users') {
-                 // **FIX: DEFAULT PERMISSIONS TO FULL ACCESS**
                  forms.user = { email: '', password: '', permissions: ['dashboard', 'targets', 'map', 'network'] };
                  teamList.value = await api('/admin/users');
              }
@@ -1481,26 +1480,23 @@ export function serveAdminHtml() {
             } 
         });
 
+        // Fixed Return Statement
         return {
-view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, se
-analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedI
-handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal,
-submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
-fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
-activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, qui
-showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
-fileInput,
-getSkillScore, updateSkill,
-getSocialInfo, handleIntelInput,
-refreshApp,
-copyCoords, updatePickerMarker,
-visibleTabs, hasPermission, submitNewUser, teamList, deleteUser
-};
-}
-}).mount('#app');
-</script>
+            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, 
+            search, analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, 
+            groupedIntel, handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal,
+            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
+            fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
+            activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
+            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, 
+            quickAppend, showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
+            fileInput, getSkillScore, updateSkill, getSocialInfo, handleIntelInput, refreshApp, copyCoords, updatePickerMarker,
+            visibleTabs, hasPermission, submitNewUser, teamList, deleteUser, forms, modal
+        };
+      }
+    }).mount('#app');
+  </script>
 </body>
 </html>`;
-return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
