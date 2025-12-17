@@ -460,15 +460,20 @@ export function serveAdminHtml() {
                         <label class="block text-xs font-black uppercase text-gray-400">Credentials</label>
                         <input v-model="adminForm.email" type="email" placeholder="Email Address" class="fun-input w-full p-3 text-sm" required>
                         <input v-model="adminForm.password" type="password" :placeholder="adminForm.id ? 'Leave blank to keep current password' : 'Password'" class="fun-input w-full p-3 text-sm" :required="!adminForm.id">
-                        <select v-model="adminForm.role" class="fun-input w-full p-3 text-sm">
+                        
+                        <!-- Role Selector (Only editable for adding/editing Sub-Admins) -->
+                        <select v-if="adminForm.role !== 'super_admin'" v-model="adminForm.role" class="fun-input w-full p-3 text-sm">
                             <option value="agent">Agent</option>
                             <option value="admin">Admin</option>
-                            <option value="super_admin">Super Admin</option>
                         </select>
+                        <!-- For Super Admin, just show label -->
+                        <div v-else class="text-xs font-bold text-gray-500 uppercase tracking-wider p-2 bg-gray-100 rounded border border-gray-300">
+                            Role: Super Admin (Fixed)
+                        </div>
                     </div>
 
-                    <!-- NEW: Require Location Checkbox -->
-                    <div class="flex items-center gap-3 p-4 bg-yellow-100 border-2 border-yellow-400 rounded-xl">
+                    <!-- NEW: Require Location Checkbox (Hidden for Super Admin) -->
+                    <div v-if="adminForm.role !== 'super_admin'" class="flex items-center gap-3 p-4 bg-yellow-100 border-2 border-yellow-400 rounded-xl">
                         <input type="checkbox" id="reqLoc" v-model="adminForm.requireLocation" class="w-6 h-6 accent-yellow-600 rounded cursor-pointer">
                         <div>
                             <label for="reqLoc" class="block font-bold text-sm text-yellow-900 cursor-pointer">Require Location for Login</label>
@@ -476,7 +481,7 @@ export function serveAdminHtml() {
                         </div>
                     </div>
 
-                    <div class="pt-4 border-t-2 border-gray-200">
+                    <div v-if="adminForm.role !== 'super_admin'" class="pt-4 border-t-2 border-gray-200">
                         <label class="block text-xs font-black uppercase text-gray-400 mb-2">Access Control</label>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                             <label v-for="perm in PERMISSION_KEYS" :key="perm.key" class="flex items-center gap-3 p-3 rounded-lg border-2 border-transparent bg-gray-50 hover:bg-gray-100 cursor-pointer has-[:checked]:bg-blue-50 has-[:checked]:border-blue-300 transition-all">
