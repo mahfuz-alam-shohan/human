@@ -3,8 +3,9 @@ main = "src/worker.js"
 compatibility_date = "2024-07-20"
 
 [vars]
-# Only the system key lives here now.
-JWT_SECRET = "change-this-to-something-random-and-secret"
+# SECURITY WARNING: For production, do NOT store secrets here. 
+# Use 'wrangler secret put JWT_SECRET' instead.
+JWT_SECRET = "CHANGE_ME_TO_A_LONG_RANDOM_STRING_IN_PRODUCTION"
 
 [placement]
 mode = "smart"
@@ -15,5 +16,5 @@ database_name = "human"
 database_id = "eff3b8bd-67e5-4c58-93f6-547a7e4af516"
 
 [[r2_buckets]]
-binding = "R2"
+binding = "BUCKET"
 bucket_name = "human"
