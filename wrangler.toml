@@ -6,7 +6,7 @@ compatibility_date = "2024-07-20"
 # --- ADMIN CREDENTIALS (REQUIRED FOR LOGIN) ---
 # Change these before deploying to production!
 ADMIN_EMAIL = "mahfuz.alam.shohan@gmail.com"
-ADMIN_PASSWORD = "77f6fc9599d5b54f4eed49837b2d4bb2c17d0c384a6213eb651eaed2c27d7075"
+ADMIN_PASSWORD = "159020302"
 JWT_SECRET = "CHANGE_ME_TO_A_LONG_RANDOM_STRING_IN_PRODUCTION"
 
 [placement]
