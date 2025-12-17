@@ -9,6 +9,7 @@ export function serveAdminHtml() {
   <title>PEOPLE OS // PLAYGROUND</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <!-- Fun Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -30,6 +31,7 @@ export function serveAdminHtml() {
         font-family: 'Comic Neue', cursive; 
         background-color: var(--bg-color); 
         color: #1f2937;
+        /* Dot pattern background */
         background-image: radial-gradient(#F59E0B 2px, transparent 2px);
         background-size: 30px 30px;
         font-weight: 700;
@@ -37,6 +39,7 @@ export function serveAdminHtml() {
 
     h1, h2, h3, h4, .font-heading { font-family: 'Fredoka', sans-serif; }
     
+    /* "Sticker" Card Style replacing Glass */
     .fun-card { 
         background: white; 
         border: 3px solid black; 
@@ -45,6 +48,7 @@ export function serveAdminHtml() {
         transition: all 0.1s ease-in-out;
     }
     
+    /* Input Fields - Chunky */
     .fun-input { 
         background: #fff; 
         border: 3px solid black; 
@@ -61,6 +65,7 @@ export function serveAdminHtml() {
     }
     .fun-input::placeholder { color: #9CA3AF; font-weight: 400; }
 
+    /* Buttons - Clicky */
     .fun-btn {
         border: 3px solid black;
         box-shadow: 3px 3px 0px 0px black;
@@ -73,6 +78,7 @@ export function serveAdminHtml() {
     }
     .fun-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* Scrollbar */
     ::-webkit-scrollbar { width: 12px; }
     ::-webkit-scrollbar-thumb { background: #FCD34D; border: 3px solid black; border-radius: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -81,13 +87,14 @@ export function serveAdminHtml() {
     .animate-bounce-in { animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
     @keyframes bounceIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
     
+    /* Marker - FIXED */
     .avatar-marker-fun { 
         width: 100%; height: 100%; 
         border-radius: 50%; 
         background: white;
         border: 3px solid white; 
-        box-shadow: 0 0 0 3px black; 
-        overflow: hidden; 
+        box-shadow: 0 0 0 3px black; /* Faux border that follows radius */
+        overflow: hidden; /* Clips image */
         display: flex;
         align-items: center;
         justify-content: center;
@@ -99,9 +106,16 @@ export function serveAdminHtml() {
         display: block;
     }
     
-    .toggle-checkbox:checked { right: 0; border-color: #68D391; }
-    .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+    /* Toggle Switch */
+    .toggle-checkbox:checked {
+        right: 0;
+        border-color: #68D391;
+    }
+    .toggle-checkbox:checked + .toggle-label {
+        background-color: #68D391;
+    }
     
+    /* Refresh Spin */
     .spin-fast { animation: spin 0.5s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
   </style>
@@ -122,6 +136,7 @@ export function serveAdminHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative bg-yellow-100">
+        <!-- Decoration blobbies -->
         <div class="absolute inset-0 overflow-hidden pointer-events-none">
             <div class="absolute top-10 left-10 text-9xl text-pink-300 opacity-50 rotate-12"><i class="fa-solid fa-cloud"></i></div>
             <div class="absolute bottom-10 right-10 text-9xl text-blue-300 opacity-50 -rotate-12"><i class="fa-solid fa-star"></i></div>
@@ -153,18 +168,15 @@ export function serveAdminHtml() {
         <nav class="hidden md:flex flex-col w-24 bg-white border-r-4 border-black items-center py-6 z-20 shrink-0">
             <div class="mb-8 text-yellow-500 text-4xl drop-shadow-[2px_2px_0px_#000]"><i class="fa-solid fa-cube"></i></div>
             <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in visibleTabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-pink-300 text-black shadow-[3px_3px_0px_#000]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" class="w-full aspect-square rounded-2xl border-4 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none" :title="t.label">
+                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-pink-300 text-black shadow-[3px_3px_0px_#000]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" class="w-full aspect-square rounded-2xl border-4 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none" :title="t.label">
                     <i :class="t.icon" class="text-2xl group-hover:scale-110 transition-transform"></i>
                     <span class="text-[10px] font-heading font-bold uppercase tracking-wider">{{t.label}}</span>
                 </button>
             </div>
             
+            <!-- Desktop Refresh Button -->
             <button @click="refreshApp" :disabled="processing" class="text-gray-400 hover:text-green-500 p-4 transition-colors text-xl" title="Refresh Data">
                 <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
-            </button>
-
-            <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="text-gray-400 hover:text-purple-500 p-4 transition-colors text-xl" title="Manage Team">
-                <i class="fa-solid fa-users-gear"></i>
             </button>
 
             <button @click="openModal('cmd')" class="text-gray-400 hover:text-blue-500 p-4 transition-colors text-xl"><i class="fa-solid fa-magnifying-glass"></i></button>
@@ -181,11 +193,9 @@ export function serveAdminHtml() {
                 <span class="font-heading font-black text-xl text-black tracking-tight">People OS</span>
             </div>
             <div class="flex items-center gap-1">
+                 <!-- Mobile Refresh Button -->
                  <button @click="refreshApp" :disabled="processing" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-green-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all">
                     <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
-                 </button>
-                 <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-purple-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none">
-                    <i class="fa-solid fa-users-gear"></i>
                  </button>
                  <button @click="openModal('cmd')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-yellow-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-magnifying-glass"></i></button>
             </div>
@@ -304,6 +314,7 @@ export function serveAdminHtml() {
                             <div class="text-xs font-bold text-gray-500 truncate uppercase tracking-widest">{{ selected.alias || 'The Profile' }}</div>
                         </div>
                     </div>
+                    <!-- WRAP ADDED HERE -->
                     <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
                         <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
@@ -322,7 +333,8 @@ export function serveAdminHtml() {
                     </button>
                 </div>
 
-                <!-- DETAIL CONTENT -->
+                <!-- DETAIL CONTENT WRAPPER -->
+                <!-- UPDATED: Fixed constraints for map view scrolling -->
                 <div :class="['flex-1 min-h-0 bg-yellow-50', (subTab === 'map' || subTab === 'network') ? 'relative overflow-hidden flex flex-col' : 'overflow-y-auto p-4 md:p-8']">
                     
                     <!-- OVERVIEW -->
@@ -448,19 +460,31 @@ export function serveAdminHtml() {
                         
                         <!-- Main Layout -->
                         <div class="flex-1 flex md:grid md:grid-cols-3 gap-6 min-h-0 relative overflow-hidden">
+                            
+                            <!-- MAP CONTAINER -->
                             <div class="w-full h-full md:col-span-2 bg-white rounded-2xl overflow-hidden relative border-4 border-black shadow-[4px_4px_0px_#000]">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
+                                
+                                <!-- Mobile: Toggle Button -->
                                 <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur-sm p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
                                     <i class="fa-solid" :class="showProfileMapList ? 'fa-map' : 'fa-list'"></i> {{ showProfileMapList ? 'Hide List' : 'Locations' }}
                                 </button>
                             </div>
 
-                            <div :class="['absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform', showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0']" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
+                            <!-- LIST CONTAINER -->
+                            <!-- FIX: overflow-hidden on parent to contain the inner scrollable div -->
+                            <div :class="[
+                                'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
+                                showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0'
+                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
+                                
+                                <!-- Mobile Header -->
                                 <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200 shrink-0">
                                     <h3 class="font-black font-heading text-xl">Saved Locations</h3>
                                     <button @click="showProfileMapList = false" class="text-red-500 font-bold bg-red-100 p-2 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
                                 </div>
 
+                                <!-- SCROLLING AREA -->
                                 <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4" style="touch-action: pan-y;">
                                     <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
                                         <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
@@ -469,6 +493,7 @@ export function serveAdminHtml() {
                                         </div>
                                         <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
                                         
+                                        <!-- ACTION BUTTONS: Wrapped for mobile -->
                                         <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200 flex-wrap">
                                             <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1 shrink-0" title="Copy Coordinates">
                                                 <i class="fa-solid fa-copy"></i>
@@ -553,7 +578,7 @@ export function serveAdminHtml() {
         
         <!-- MOBILE NAV -->
         <nav class="md:hidden fixed bottom-0 left-0 right-0 h-auto min-h-[4rem] bg-white border-t-4 border-black flex justify-around items-center z-50 safe-area-pb py-1 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
-            <button v-for="t in visibleTabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
+            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
                 <i :class="t.icon" class="text-2xl mb-1 drop-shadow-md"></i>
                 <span class="text-[10px] font-black uppercase tracking-wide">{{t.label}}</span>
             </button>
@@ -570,6 +595,7 @@ export function serveAdminHtml() {
             </div>
             
             <div class="overflow-y-auto p-4 md:p-6 space-y-6 bg-white">
+                <!-- COMMAND PALETTE -->
                 <div v-if="modal.active === 'cmd'">
                     <input ref="cmdInput" v-model="cmdQuery" placeholder="Start typing..." class="fun-input w-full p-4 text-xl mb-4">
                     <div class="space-y-2">
@@ -580,45 +606,7 @@ export function serveAdminHtml() {
                     </div>
                 </div>
 
-                <div v-if="modal.active === 'manage-users'" class="space-y-6">
-                    <form @submit.prevent="submitNewUser" class="p-4 bg-gray-50 border-2 border-black rounded-xl space-y-4 shadow-[4px_4px_0px_#000]">
-                        <h4 class="font-black font-heading text-lg">Create Team Member</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <input v-model="forms.user.email" type="email" placeholder="Email" class="fun-input w-full p-3 text-sm" required>
-                            <input v-model="forms.user.password" type="password" placeholder="Password" class="fun-input w-full p-3 text-sm" required>
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-xs font-black uppercase text-gray-400">Permissions (Tabs)</label>
-                            <div class="flex flex-wrap gap-2">
-                                <label v-for="perm in ['dashboard', 'targets', 'map', 'network']" :key="perm" class="flex items-center gap-2 bg-white px-3 py-2 rounded-lg cursor-pointer hover:bg-blue-50 border-2 border-gray-200 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all">
-                                    <input type="checkbox" :value="perm" v-model="forms.user.permissions" class="accent-blue-500 w-4 h-4">
-                                    <span class="text-xs font-bold uppercase">{{ perm }}</span>
-                                </label>
-                                <label class="flex items-center gap-2 bg-red-50 px-3 py-2 rounded-lg cursor-pointer hover:bg-red-100 border-2 border-red-200 has-[:checked]:border-red-500 transition-all">
-                                    <input type="checkbox" value="manage_users" v-model="forms.user.permissions" class="accent-red-500 w-4 h-4">
-                                    <span class="text-xs font-bold uppercase text-red-600">Admin Access</span>
-                                </label>
-                            </div>
-                        </div>
-                        <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-3 rounded-xl fun-btn hover:bg-blue-600">Create Agent</button>
-                    </form>
-
-                    <div class="space-y-2">
-                        <h4 class="font-black font-heading text-lg px-1">Current Team</h4>
-                        <div v-for="u in teamList" :key="u.id" class="flex justify-between items-center p-3 bg-white border-2 border-gray-200 rounded-xl hover:border-black transition-colors">
-                            <div>
-                                <div class="font-bold text-sm">{{u.email}}</div>
-                                <div class="flex gap-1 mt-1">
-                                    <span v-for="p in u.permissions" class="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-300">{{p}}</span>
-                                </div>
-                            </div>
-                            <button @click="deleteUser(u.id)" class="w-8 h-8 rounded-lg bg-red-100 text-red-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors border-2 border-transparent hover:border-black" title="Remove User">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
+                <!-- ADD/EDIT REL -->
                  <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
                     <div class="p-4 bg-blue-100 border-2 border-blue-400 rounded-xl text-sm font-bold text-blue-900 mb-4">{{ modal.active === 'edit-rel' ? 'Editing link for' : 'Linking' }} <strong>{{selected.full_name}}</strong></div>
                     <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="fun-input w-full p-3 text-sm" required>
@@ -636,6 +624,7 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-green-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn hover:bg-green-500">{{ processing ? 'Sticking...' : 'Stick It!' }}</button>
                  </form>
 
+                <!-- ADD/EDIT SUBJECT -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
                     <div v-if="modal.active === 'edit-profile'" class="bg-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-between">
                          <div class="text-sm font-bold text-gray-600">Profile Picture</div>
@@ -669,6 +658,7 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-violet-500 hover:bg-violet-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn">{{ processing ? 'Saving...' : 'Save This Person' }}</button>
                 </form>
 
+                <!-- ADD INTEL -->
                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="fun-input w-full p-3 text-sm">
                         <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
@@ -678,6 +668,7 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
                  </form>
 
+                 <!-- ADD MEDIA LINK -->
                  <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
                     <input v-model="forms.mediaLink.url" placeholder="Paste URL Here" class="fun-input w-full p-3 text-sm" required>
                     <input v-model="forms.mediaLink.description" placeholder="What is it?" class="fun-input w-full p-3 text-sm">
@@ -685,6 +676,7 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-pink-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-pink-500">Save Link</button>
                  </form>
 
+                 <!-- SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <p class="text-sm font-bold text-gray-500">Make a secret link for others.</p>
                     
@@ -728,6 +720,7 @@ export function serveAdminHtml() {
                     </div>
                  </div>
                  
+                 <!-- LOCATION PICKER (ADD/EDIT) -->
                  <form v-if="['add-location', 'edit-location'].includes(modal.active)" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Find place..." class="fun-input w-full p-3 pl-10 text-sm">
@@ -738,6 +731,7 @@ export function serveAdminHtml() {
                     </div>
                     <div class="h-48 w-full bg-gray-100 rounded-xl border-2 border-black relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
                     
+                    <!-- NEW: Manual Coordinates -->
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="text-[10px] font-bold text-gray-500 uppercase">Latitude</label>
@@ -840,10 +834,7 @@ export function serveAdminHtml() {
         const presets = ref(PRESETS);
         const toasts = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768);
-        const showProfileMapList = ref(false); 
-        
-        const currentPerms = ref([]);
-        const teamList = ref([]);
+        const showProfileMapList = ref(false); // Mobile Drawer State
         
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
@@ -855,6 +846,7 @@ export function serveAdminHtml() {
         const cmdQuery = ref('');
         const cmdInput = ref(null);
 
+        // Helper to get local date string for inputs
         const getLocalISOString = () => {
             const d = new Date();
             const offset = d.getTimezoneOffset() * 60000;
@@ -869,12 +861,13 @@ export function serveAdminHtml() {
             intel: {}, 
             rel: { type: '', reciprocal: '' }, 
             share: { minutes: 60, requireLocation: false, allowedTabs: [] }, 
-            mediaLink: {},
-            user: { email: '', password: '', permissions: [] } 
+            mediaLink: {}
         });
 
+        // Charts
         let skillsChartInstance = null;
 
+        // Social Media Detection
         const socialMap = [
             { regex: /facebook\.com/, name: 'Facebook', icon: 'fa-brands fa-facebook', color: '#1877F2' },
             { regex: /twitter\.com|x\.com/, name: 'X / Twitter', icon: 'fa-brands fa-x-twitter', color: '#000000' },
@@ -901,12 +894,13 @@ export function serveAdminHtml() {
             }
         };
 
+        // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
-        const visibleTabs = computed(() => tabs.filter(t => currentPerms.value.includes(t.id)));
-
+        
+        // FIXED RESOLVE IMG
         const resolveImg = (p) => {
             if (!p) return null;
             if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/api/media/')) return p;
@@ -918,15 +912,15 @@ export function serveAdminHtml() {
             'edit-profile':'Edit Profile', 
             'add-interaction':'Log Event', 
             'add-location':'Add Location', 
-            'edit-location':'Edit Location', 
+            'edit-location':'Edit Location', // Title for edit mode
             'add-intel':'Add Attribute', 
             'add-rel':'Connect Profile', 
             'edit-rel': 'Edit Connection', 
             'share-secure':'Share Profile', 
-            'add-media-link': 'Add External Media',
-            'manage-users': 'Team Management'
+            'add-media-link': 'Add External Media' 
         }[modal.active] || 'Menu'));
 
+        // Notification System
         const notify = (title, msg, type='info') => {
             const id = Date.now();
             const icon = type==='error'?'fa-solid fa-circle-exclamation':(type==='success'?'fa-solid fa-check-circle':'fa-solid fa-info-circle');
@@ -935,47 +929,39 @@ export function serveAdminHtml() {
             setTimeout(() => toasts.value = toasts.value.filter(t => t.id !== id), 3000);
         };
 
+        // API
         const api = async (ep, opts = {}) => {
             const token = localStorage.getItem('token');
             const headers = { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) };
             try {
                 const res = await fetch('/api' + ep, { ...opts, headers });
                 if(res.status === 401) { view.value = 'auth'; throw new Error("Session Expired"); }
-                if(res.status === 403) throw new Error("Access Denied");
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 return data;
             } catch(e) { notify('System Error', e.message, 'error'); throw e; }
         };
 
-        const hasPermission = (p) => currentPerms.value.includes(p);
-
         const handleAuth = async () => {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('token', res.token);
-                localStorage.setItem('perms', JSON.stringify(res.permissions));
-                currentPerms.value = res.permissions;
                 view.value = 'app';
-                if(!hasPermission('dashboard') && visibleTabs.value.length > 0) currentTab.value = visibleTabs.value[0].id;
                 fetchData();
             } catch(e) {} finally { loading.value = false; }
         };
 
         const fetchData = async () => {
-            const reqs = [];
-            if(hasPermission('dashboard')) reqs.push(api('/dashboard').then(d => { stats.value = d.stats; feed.value = d.feed; }));
-            if(hasPermission('targets')) reqs.push(api('/subjects').then(s => subjects.value = s));
-            reqs.push(api('/suggestions').then(s => Object.assign(suggestions, s)));
-            await Promise.allSettled(reqs);
+            const [d, s, sugg] = await Promise.all([api('/dashboard'), api('/subjects'), api('/suggestions')]);
+            stats.value = d.stats; feed.value = d.feed; subjects.value = s; Object.assign(suggestions, sugg);
         };
 
         const viewSubject = async (id) => {
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
-            showProfileMapList.value = false; 
+            showProfileMapList.value = false; // Reset drawer state
             analysisResult.value = analyzeLocal(selected.value);
             if(modal.active === 'cmd' || modal.active === 'mini-profile') closeModal(); 
         };
@@ -989,9 +975,11 @@ export function serveAdminHtml() {
              return { summary: \`Profile is \${completeness}% complete based on data density.\`, tags };
         };
 
+        // Skills Logic
         const getSkillScore = (name) => selected.value.skills?.find(s => s.skill_name === name)?.score || 50;
         const updateSkill = async (name, val) => {
             await api('/skills', { method: 'POST', body: JSON.stringify({ subject_id: selected.value.id, skill_name: name, score: val }) });
+            // Update local
             const idx = selected.value.skills.findIndex(s => s.skill_name === name);
             if(idx > -1) selected.value.skills[idx].score = parseInt(val);
             else selected.value.skills.push({ skill_name: name, score: parseInt(val) });
@@ -1014,7 +1002,7 @@ export function serveAdminHtml() {
                         label: 'Capabilities',
                         data: data,
                         fill: true,
-                        backgroundColor: 'rgba(139, 92, 246, 0.2)', 
+                        backgroundColor: 'rgba(139, 92, 246, 0.2)', // Violet-500
                         borderColor: 'rgb(139, 92, 246)',
                         pointBackgroundColor: 'rgb(139, 92, 246)',
                         pointBorderColor: '#fff',
@@ -1030,9 +1018,11 @@ export function serveAdminHtml() {
             });
         };
 
+        // Relation Presets
         const applyPreset = (p) => { forms.rel.type = p.a; forms.rel.reciprocal = p.b; };
         const autoFillReciprocal = () => { const p = PRESETS.find(pr => pr.a.toLowerCase() === forms.rel.type.toLowerCase()); if (p) forms.rel.reciprocal = p.b; };
 
+        // Quick Note
         const quickAppend = async (field) => {
             if (processing.value) return;
             const note = prompt("Add note:");
@@ -1048,6 +1038,7 @@ export function serveAdminHtml() {
             }
         };
 
+        // Export
         const exportData = () => {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selected.value, null, 2));
             const el = document.createElement('a');
@@ -1056,6 +1047,7 @@ export function serveAdminHtml() {
             document.body.appendChild(el); el.click(); el.remove();
         };
 
+        // Map Logic
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
@@ -1082,6 +1074,7 @@ export function serveAdminHtml() {
             }
         };
 
+        // Syncs manual input with map marker
         const updatePickerMarker = () => {
             if (!pickerMapInstance) return;
             const lat = parseFloat(forms.location.lat);
@@ -1097,7 +1090,7 @@ export function serveAdminHtml() {
             if(!map) return;
             map.eachLayer(layer => { if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); });
             
-            const bounds = []; 
+            const bounds = []; // Initialize bounds array
 
             const grouped = data.reduce((acc, loc) => {
                 if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name };
@@ -1113,7 +1106,7 @@ export function serveAdminHtml() {
                 group.locations.forEach(loc => {
                     if(!loc.lat) return;
                     
-                    bounds.push([loc.lat, loc.lng]);
+                    bounds.push([loc.lat, loc.lng]); // Add to bounds
 
                     const avatar = loc.avatar_path || (selected.value?.avatar_path);
                     const name = loc.full_name || (selected.value?.full_name);
@@ -1123,6 +1116,7 @@ export function serveAdminHtml() {
                 });
             });
 
+            // Fit bounds if we have points
             if(bounds.length > 0) {
                 map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
             }
@@ -1146,6 +1140,7 @@ export function serveAdminHtml() {
             if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
         };
 
+        // NEW: Copy Coords
         const copyCoords = (lat, lng) => {
             const str = \`\${lat}, \${lng}\`;
             navigator.clipboard.writeText(str);
@@ -1154,21 +1149,22 @@ export function serveAdminHtml() {
 
         const changeTab = (t) => { currentTab.value = t; };
         const changeSubTab = (t) => { subTab.value = t; };
-        const openModal = async (t, item = null) => {
+        const openModal = (t, item = null) => {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
-             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; 
+             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; // Use local time
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              
+             // Location Handling
              if(t === 'add-location') { 
                  forms.location = { subject_id: selected.value.id }; 
                  locationSearchQuery.value = ''; 
                  nextTick(() => initMap('locationPickerMap', [], true)); 
              }
              if(t === 'edit-location' && item) {
-                 forms.location = { ...item }; 
+                 forms.location = { ...item }; // Copy existing data
                  locationSearchQuery.value = '';
                  nextTick(() => initMap('locationPickerMap', [], true));
              }
@@ -1179,18 +1175,16 @@ export function serveAdminHtml() {
              }
              if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
+             // MINI PROFILE LOGIC
              if(t === 'mini-profile' && item) modal.data = item;
-
-             if(t === 'manage-users') {
-                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets', 'map', 'network'] };
-                 teamList.value = await api('/admin/users');
-             }
         };
         const closeModal = () => { modal.active = null; };
 
+        // Watchers
         watch(() => forms.subject.dob, (val) => { if(val) forms.subject.age = new Date().getFullYear() - new Date(val).getFullYear(); });
         watch(() => forms.subject.age, (val) => { if(val && !forms.subject.dob) forms.subject.dob = \`\${new Date().getFullYear()-val}-01-01\`; });
 
+        // Refresh Logic
         const refreshApp = async () => {
             if(processing.value) return;
             processing.value = true;
@@ -1199,15 +1193,17 @@ export function serveAdminHtml() {
                     await viewSubject(selected.value.id);
                 } else {
                     await fetchData();
-                    if(currentTab.value === 'map' && hasPermission('map')) { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                    if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
                 }
                 notify('Synced', 'Data refreshed', 'success');
             } catch(e) {
+                // error handled in api wrapper
             } finally {
                 processing.value = false;
             }
         };
 
+        // Submissions
         const submitSubject = async () => { 
             if(processing.value) return;
             processing.value = true; 
@@ -1230,6 +1226,7 @@ export function serveAdminHtml() {
             if(processing.value) return;
             processing.value = true; 
             try { 
+                // Determine method based on presence of ID (edit vs add)
                 const method = forms.location.id ? 'PATCH' : 'POST';
                 await api('/location', { method: method, body: JSON.stringify(forms.location) }); 
                 viewSubject(selected.value.id); 
@@ -1259,25 +1256,6 @@ export function serveAdminHtml() {
             processing.value = true; 
             try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
         };
-
-        const submitNewUser = async () => {
-             if(processing.value) return;
-             processing.value = true;
-             try {
-                 await api('/admin/users', { method: 'POST', body: JSON.stringify(forms.user) });
-                 teamList.value = await api('/admin/users');
-                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets'] };
-                 notify('Success', 'User Created', 'success');
-             } finally { processing.value = false; }
-        };
-
-        const deleteUser = async (id) => {
-            if(!confirm("Remove this user?")) return;
-            try {
-                await api('/admin/users', { method: 'DELETE', body: JSON.stringify({ id }) });
-                teamList.value = await api('/admin/users');
-            } catch(e) {}
-        };
         
         const deleteItem = async (table, id) => { 
             if(processing.value) return;
@@ -1295,6 +1273,7 @@ export function serveAdminHtml() {
             } 
         };
 
+        // Files
         const fileInput = ref(null);
         const uploadType = ref(null);
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
@@ -1310,7 +1289,7 @@ export function serveAdminHtml() {
                     viewSubject(selected.value.id);
                  } finally {
                     processing.value = false;
-                    e.target.value = ''; 
+                    e.target.value = ''; // Reset input to allow re-uploading same file
                  }
              };
         };
@@ -1333,11 +1312,11 @@ export function serveAdminHtml() {
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
         const openSettings = () => { if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
-        const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('perms'); location.reload(); };
+        const handleLogout = () => { localStorage.removeItem('token'); location.reload(); };
 
         watch(subTab, (val) => {
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
-            if(val === 'capabilities') nextTick(renderSkillsChart);
+            if(val === 'capabilities') nextTick(renderSkillsChart); // RENDER CHART ON TAB CHANGE
             if(val === 'network') nextTick(() => {
                  const container = document.getElementById('relNetwork');
                  if(!container || !selected.value) return;
@@ -1352,6 +1331,7 @@ export function serveAdminHtml() {
                         from: selected.value.id, 
                         to: targetId || 'ext-'+r.id, 
                         label: r.subject_a_id === selected.value.id ? r.relationship_type : (r.role_b || r.relationship_type), 
+                        // Updated Edge Style
                         font: { align: 'middle', face: 'Comic Neue', size: 14, strokeWidth: 0, background: 'white', color: '#000000' }, 
                         color: {color:'#000000', width: 2, highlight: '#8B5CF6'},
                         smooth: { type: 'continuous', roundness: 0.5 },
@@ -1361,9 +1341,10 @@ export function serveAdminHtml() {
                  const network = new vis.Network(container, { nodes, edges }, { 
                      nodes: { borderWidth: 3, font: { face: 'Fredoka', size: 14, color: '#000000' } }, 
                      edges: { color: '#000000', width: 2, smooth: { type: 'continuous', forceDirection: 'none' } },
-                     physics: { enabled: false }, 
+                     physics: { enabled: false }, // Static 
                      interaction: { dragNodes: true, zoomView: true, dragView: true, hover: true }
                  });
+                 // CLICK HANDLER FOR MINI PROFILE
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
@@ -1375,11 +1356,12 @@ export function serveAdminHtml() {
         });
 
         watch(currentTab, (val) => {
-             if(val === 'map' && hasPermission('map')) nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
-             if(val === 'network' && hasPermission('network')) nextTick(async () => {
+             if(val === 'map') nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
+             if(val === 'network') nextTick(async () => {
                 const data = await api('/global-network');
                 const container = document.getElementById('globalNetworkGraph');
                 
+                // --- CLUSTER CENTROID LOGIC ---
                 let totalX = 0, totalY = 0, count = 0;
                 data.nodes.forEach(n => {
                     if (n.x !== null && n.y !== null && n.x !== undefined && n.y !== undefined) {
@@ -1398,19 +1380,21 @@ export function serveAdminHtml() {
                     n.color = { border: '#000000', background: '#ffffff' };
                     n.font = { face: 'Fredoka', size: 14, color: '#000000', background: '#ffffff' };
                     
+                    // IF NO POSITION SAVED, PLACE NEAR CLUSTER OR RANDOM
                     if (n.x === null || n.x === undefined) {
                         const angle = Math.random() * Math.PI * 2;
-                        const radius = 100 + Math.random() * 200; 
+                        const radius = 100 + Math.random() * 200; // Place in a ring around center
                         n.x = avgX + Math.cos(angle) * radius;
                         n.y = avgY + Math.sin(angle) * radius;
                     }
                 });
 
+                // GLOBAL NETWORK OPTIONS
                 const options = { 
                     nodes: { 
                         shape: 'circularImage', 
                         borderWidth: 3,
-                        physics: false
+                        physics: false // KEY CHANGE: Nodes don't push each other
                     }, 
                     edges: { 
                         color: { color: '#000000', highlight: '#8B5CF6' },
@@ -1420,7 +1404,7 @@ export function serveAdminHtml() {
                         arrows: { to: { enabled: true, scaleFactor: 1, type: 'arrow' } },
                         smooth: {
                             enabled: true,
-                            type: 'continuous', 
+                            type: 'continuous', // Fixes the "0,0 reference" curve issue
                             roundness: 0.5,
                             forceDirection: 'none'
                         },
@@ -1434,22 +1418,24 @@ export function serveAdminHtml() {
                         }
                     },
                     physics: { 
-                        enabled: false,
+                        enabled: false, // GLOBAL DISABLE: No physics simulation at all
                         stabilization: false
                     },
                     interaction: { 
                         dragNodes: true, 
                         dragView: true, 
                         zoomView: true, 
-                        hover: true,
+                        hover: true, // Highlights edges on hover
                         selectConnectedEdges: true
                     } 
                 };
 
                 const network = new vis.Network(container, data, options);
                 
+                // Focus on the cluster
                 network.moveTo({ position: { x: avgX, y: avgY } });
 
+                // --- SAVE POSITION ON DRAG END ---
                 network.on("dragEnd", function (params) {
                     if (params.nodes.length > 0) {
                         const positions = network.getPositions(params.nodes);
@@ -1470,28 +1456,22 @@ export function serveAdminHtml() {
             });
         });
 
-        onMounted(() => { 
-            if(localStorage.getItem('token')) { 
-                try {
-                    currentPerms.value = JSON.parse(localStorage.getItem('perms') || '[]');
-                } catch(e) {}
-                view.value = 'app'; 
-                fetchData(); 
-            } 
-        });
+        onMounted(() => { if(localStorage.getItem('token')) { view.value = 'app'; fetchData(); } });
 
-        // Fixed Return Statement
         return {
-            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, 
-            search, analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, 
-            groupedIntel, handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal,
-            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
+            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
+            analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel,
+            handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
+            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile,
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, 
-            quickAppend, showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
-            fileInput, getSkillScore, updateSkill, getSocialInfo, handleIntelInput, refreshApp, copyCoords, updatePickerMarker,
-            visibleTabs, hasPermission, submitNewUser, teamList, deleteUser, forms, modal
+            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
+            showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
+            fileInput,
+            getSkillScore, updateSkill, // New Capability Functions
+            getSocialInfo, handleIntelInput, // Social Media Logic
+            refreshApp,
+            copyCoords, updatePickerMarker // Location Edit
         };
       }
     }).mount('#app');
