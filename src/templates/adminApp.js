@@ -9,7 +9,6 @@ export function serveAdminHtml() {
   <title>PEOPLE OS // PLAYGROUND</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <!-- Fun Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -31,7 +30,6 @@ export function serveAdminHtml() {
         font-family: 'Comic Neue', cursive; 
         background-color: var(--bg-color); 
         color: #1f2937;
-        /* Dot pattern background */
         background-image: radial-gradient(#F59E0B 2px, transparent 2px);
         background-size: 30px 30px;
         font-weight: 700;
@@ -39,7 +37,6 @@ export function serveAdminHtml() {
 
     h1, h2, h3, h4, .font-heading { font-family: 'Fredoka', sans-serif; }
     
-    /* "Sticker" Card Style replacing Glass */
     .fun-card { 
         background: white; 
         border: 3px solid black; 
@@ -48,7 +45,6 @@ export function serveAdminHtml() {
         transition: all 0.1s ease-in-out;
     }
     
-    /* Input Fields - Chunky */
     .fun-input { 
         background: #fff; 
         border: 3px solid black; 
@@ -65,7 +61,6 @@ export function serveAdminHtml() {
     }
     .fun-input::placeholder { color: #9CA3AF; font-weight: 400; }
 
-    /* Buttons - Clicky */
     .fun-btn {
         border: 3px solid black;
         box-shadow: 3px 3px 0px 0px black;
@@ -78,7 +73,6 @@ export function serveAdminHtml() {
     }
     .fun-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Scrollbar */
     ::-webkit-scrollbar { width: 12px; }
     ::-webkit-scrollbar-thumb { background: #FCD34D; border: 3px solid black; border-radius: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -87,14 +81,13 @@ export function serveAdminHtml() {
     .animate-bounce-in { animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
     @keyframes bounceIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
     
-    /* Marker - FIXED */
     .avatar-marker-fun { 
         width: 100%; height: 100%; 
         border-radius: 50%; 
         background: white;
         border: 3px solid white; 
-        box-shadow: 0 0 0 3px black; /* Faux border that follows radius */
-        overflow: hidden; /* Clips image */
+        box-shadow: 0 0 0 3px black; 
+        overflow: hidden; 
         display: flex;
         align-items: center;
         justify-content: center;
@@ -106,16 +99,9 @@ export function serveAdminHtml() {
         display: block;
     }
     
-    /* Toggle Switch */
-    .toggle-checkbox:checked {
-        right: 0;
-        border-color: #68D391;
-    }
-    .toggle-checkbox:checked + .toggle-label {
-        background-color: #68D391;
-    }
+    .toggle-checkbox:checked { right: 0; border-color: #68D391; }
+    .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
     
-    /* Refresh Spin */
     .spin-fast { animation: spin 0.5s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
   </style>
@@ -136,7 +122,6 @@ export function serveAdminHtml() {
 
     <!-- AUTH SCREEN -->
     <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative bg-yellow-100">
-        <!-- Decoration blobbies -->
         <div class="absolute inset-0 overflow-hidden pointer-events-none">
             <div class="absolute top-10 left-10 text-9xl text-pink-300 opacity-50 rotate-12"><i class="fa-solid fa-cloud"></i></div>
             <div class="absolute bottom-10 right-10 text-9xl text-blue-300 opacity-50 -rotate-12"><i class="fa-solid fa-star"></i></div>
@@ -174,12 +159,10 @@ export function serveAdminHtml() {
                 </button>
             </div>
             
-            <!-- Desktop Refresh Button -->
             <button @click="refreshApp" :disabled="processing" class="text-gray-400 hover:text-green-500 p-4 transition-colors text-xl" title="Refresh Data">
                 <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
             </button>
 
-            <!-- Admin Manage Button -->
             <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="text-gray-400 hover:text-purple-500 p-4 transition-colors text-xl" title="Manage Team">
                 <i class="fa-solid fa-users-gear"></i>
             </button>
@@ -198,11 +181,9 @@ export function serveAdminHtml() {
                 <span class="font-heading font-black text-xl text-black tracking-tight">People OS</span>
             </div>
             <div class="flex items-center gap-1">
-                 <!-- Mobile Refresh Button -->
                  <button @click="refreshApp" :disabled="processing" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-green-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all">
                     <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
                  </button>
-                 <!-- Mobile Users Button -->
                  <button v-if="hasPermission('manage_users')" @click="openModal('manage-users')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-purple-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none">
                     <i class="fa-solid fa-users-gear"></i>
                  </button>
@@ -323,7 +304,6 @@ export function serveAdminHtml() {
                             <div class="text-xs font-bold text-gray-500 truncate uppercase tracking-widest">{{ selected.alias || 'The Profile' }}</div>
                         </div>
                     </div>
-                    <!-- WRAP ADDED HERE -->
                     <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
                         <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
@@ -342,8 +322,7 @@ export function serveAdminHtml() {
                     </button>
                 </div>
 
-                <!-- DETAIL CONTENT WRAPPER -->
-                <!-- UPDATED: Fixed constraints for map view scrolling -->
+                <!-- DETAIL CONTENT -->
                 <div :class="['flex-1 min-h-0 bg-yellow-50', (subTab === 'map' || subTab === 'network') ? 'relative overflow-hidden flex flex-col' : 'overflow-y-auto p-4 md:p-8']">
                     
                     <!-- OVERVIEW -->
@@ -469,31 +448,19 @@ export function serveAdminHtml() {
                         
                         <!-- Main Layout -->
                         <div class="flex-1 flex md:grid md:grid-cols-3 gap-6 min-h-0 relative overflow-hidden">
-                            
-                            <!-- MAP CONTAINER -->
                             <div class="w-full h-full md:col-span-2 bg-white rounded-2xl overflow-hidden relative border-4 border-black shadow-[4px_4px_0px_#000]">
                                 <div id="subjectMap" class="w-full h-full z-0"></div>
-                                
-                                <!-- Mobile: Toggle Button -->
                                 <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur-sm p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
                                     <i class="fa-solid" :class="showProfileMapList ? 'fa-map' : 'fa-list'"></i> {{ showProfileMapList ? 'Hide List' : 'Locations' }}
                                 </button>
                             </div>
 
-                            <!-- LIST CONTAINER -->
-                            <!-- FIX: overflow-hidden on parent to contain the inner scrollable div -->
-                            <div :class="[
-                                'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
-                                showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0'
-                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
-                                
-                                <!-- Mobile Header -->
+                            <div :class="['absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform', showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0']" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
                                 <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200 shrink-0">
                                     <h3 class="font-black font-heading text-xl">Saved Locations</h3>
                                     <button @click="showProfileMapList = false" class="text-red-500 font-bold bg-red-100 p-2 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
                                 </div>
 
-                                <!-- SCROLLING AREA -->
                                 <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4" style="touch-action: pan-y;">
                                     <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
                                         <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
@@ -502,7 +469,6 @@ export function serveAdminHtml() {
                                         </div>
                                         <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
                                         
-                                        <!-- ACTION BUTTONS: Wrapped for mobile -->
                                         <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200 flex-wrap">
                                             <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1 shrink-0" title="Copy Coordinates">
                                                 <i class="fa-solid fa-copy"></i>
@@ -604,7 +570,6 @@ export function serveAdminHtml() {
             </div>
             
             <div class="overflow-y-auto p-4 md:p-6 space-y-6 bg-white">
-                <!-- COMMAND PALETTE -->
                 <div v-if="modal.active === 'cmd'">
                     <input ref="cmdInput" v-model="cmdQuery" placeholder="Start typing..." class="fun-input w-full p-4 text-xl mb-4">
                     <div class="space-y-2">
@@ -615,7 +580,6 @@ export function serveAdminHtml() {
                     </div>
                 </div>
 
-                <!-- MANAGE USERS -->
                 <div v-if="modal.active === 'manage-users'" class="space-y-6">
                     <form @submit.prevent="submitNewUser" class="p-4 bg-gray-50 border-2 border-black rounded-xl space-y-4 shadow-[4px_4px_0px_#000]">
                         <h4 class="font-black font-heading text-lg">Create Team Member</h4>
@@ -655,7 +619,6 @@ export function serveAdminHtml() {
                     </div>
                 </div>
 
-                <!-- ADD/EDIT REL -->
                  <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
                     <div class="p-4 bg-blue-100 border-2 border-blue-400 rounded-xl text-sm font-bold text-blue-900 mb-4">{{ modal.active === 'edit-rel' ? 'Editing link for' : 'Linking' }} <strong>{{selected.full_name}}</strong></div>
                     <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="fun-input w-full p-3 text-sm" required>
@@ -673,7 +636,6 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-green-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn hover:bg-green-500">{{ processing ? 'Sticking...' : 'Stick It!' }}</button>
                  </form>
 
-                <!-- ADD/EDIT SUBJECT -->
                 <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
                     <div v-if="modal.active === 'edit-profile'" class="bg-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-between">
                          <div class="text-sm font-bold text-gray-600">Profile Picture</div>
@@ -707,7 +669,6 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-violet-500 hover:bg-violet-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn">{{ processing ? 'Saving...' : 'Save This Person' }}</button>
                 </form>
 
-                <!-- ADD INTEL -->
                 <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
                     <select v-model="forms.intel.category" class="fun-input w-full p-3 text-sm">
                         <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
@@ -717,7 +678,6 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
                  </form>
 
-                 <!-- ADD MEDIA LINK -->
                  <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
                     <input v-model="forms.mediaLink.url" placeholder="Paste URL Here" class="fun-input w-full p-3 text-sm" required>
                     <input v-model="forms.mediaLink.description" placeholder="What is it?" class="fun-input w-full p-3 text-sm">
@@ -725,7 +685,6 @@ export function serveAdminHtml() {
                     <button type="submit" :disabled="processing" class="w-full bg-pink-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-pink-500">Save Link</button>
                  </form>
 
-                 <!-- SHARE -->
                  <div v-if="modal.active === 'share-secure'" class="space-y-6">
                     <p class="text-sm font-bold text-gray-500">Make a secret link for others.</p>
                     
@@ -769,7 +728,6 @@ export function serveAdminHtml() {
                     </div>
                  </div>
                  
-                 <!-- LOCATION PICKER (ADD/EDIT) -->
                  <form v-if="['add-location', 'edit-location'].includes(modal.active)" @submit.prevent="submitLocation" class="space-y-4">
                     <div class="relative">
                          <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Find place..." class="fun-input w-full p-3 pl-10 text-sm">
@@ -780,7 +738,6 @@ export function serveAdminHtml() {
                     </div>
                     <div class="h-48 w-full bg-gray-100 rounded-xl border-2 border-black relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
                     
-                    <!-- NEW: Manual Coordinates -->
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="text-[10px] font-bold text-gray-500 uppercase">Latitude</label>
@@ -883,9 +840,8 @@ export function serveAdminHtml() {
         const presets = ref(PRESETS);
         const toasts = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768);
-        const showProfileMapList = ref(false); // Mobile Drawer State
+        const showProfileMapList = ref(false); 
         
-        // Users & Permissions
         const currentPerms = ref([]);
         const teamList = ref([]);
         
@@ -899,7 +855,6 @@ export function serveAdminHtml() {
         const cmdQuery = ref('');
         const cmdInput = ref(null);
 
-        // Helper to get local date string for inputs
         const getLocalISOString = () => {
             const d = new Date();
             const offset = d.getTimezoneOffset() * 60000;
@@ -915,13 +870,11 @@ export function serveAdminHtml() {
             rel: { type: '', reciprocal: '' }, 
             share: { minutes: 60, requireLocation: false, allowedTabs: [] }, 
             mediaLink: {},
-            user: { email: '', password: '', permissions: [] } // New User Form
+            user: { email: '', password: '', permissions: [] } 
         });
 
-        // Charts
         let skillsChartInstance = null;
 
-        // Social Media Detection
         const socialMap = [
             { regex: /facebook\.com/, name: 'Facebook', icon: 'fa-brands fa-facebook', color: '#1877F2' },
             { regex: /twitter\.com|x\.com/, name: 'X / Twitter', icon: 'fa-brands fa-x-twitter', color: '#000000' },
@@ -948,14 +901,12 @@ export function serveAdminHtml() {
             }
         };
 
-        // Computed
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
         const visibleTabs = computed(() => tabs.filter(t => currentPerms.value.includes(t.id)));
 
-        // FIXED RESOLVE IMG
         const resolveImg = (p) => {
             if (!p) return null;
             if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/api/media/')) return p;
@@ -976,7 +927,6 @@ export function serveAdminHtml() {
             'manage-users': 'Team Management'
         }[modal.active] || 'Menu'));
 
-        // Notification System
         const notify = (title, msg, type='info') => {
             const id = Date.now();
             const icon = type==='error'?'fa-solid fa-circle-exclamation':(type==='success'?'fa-solid fa-check-circle':'fa-solid fa-info-circle');
@@ -985,7 +935,6 @@ export function serveAdminHtml() {
             setTimeout(() => toasts.value = toasts.value.filter(t => t.id !== id), 3000);
         };
 
-        // API
         const api = async (ep, opts = {}) => {
             const token = localStorage.getItem('token');
             const headers = { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) };
@@ -1009,7 +958,6 @@ export function serveAdminHtml() {
                 localStorage.setItem('perms', JSON.stringify(res.permissions));
                 currentPerms.value = res.permissions;
                 view.value = 'app';
-                // Reset tab if current not allowed
                 if(!hasPermission('dashboard') && visibleTabs.value.length > 0) currentTab.value = visibleTabs.value[0].id;
                 fetchData();
             } catch(e) {} finally { loading.value = false; }
@@ -1027,7 +975,7 @@ export function serveAdminHtml() {
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
             subTab.value = 'overview';
-            showProfileMapList.value = false; // Reset drawer state
+            showProfileMapList.value = false; 
             analysisResult.value = analyzeLocal(selected.value);
             if(modal.active === 'cmd' || modal.active === 'mini-profile') closeModal(); 
         };
@@ -1041,11 +989,9 @@ export function serveAdminHtml() {
              return { summary: \`Profile is \${completeness}% complete based on data density.\`, tags };
         };
 
-        // Skills Logic
         const getSkillScore = (name) => selected.value.skills?.find(s => s.skill_name === name)?.score || 50;
         const updateSkill = async (name, val) => {
             await api('/skills', { method: 'POST', body: JSON.stringify({ subject_id: selected.value.id, skill_name: name, score: val }) });
-            // Update local
             const idx = selected.value.skills.findIndex(s => s.skill_name === name);
             if(idx > -1) selected.value.skills[idx].score = parseInt(val);
             else selected.value.skills.push({ skill_name: name, score: parseInt(val) });
@@ -1068,7 +1014,7 @@ export function serveAdminHtml() {
                         label: 'Capabilities',
                         data: data,
                         fill: true,
-                        backgroundColor: 'rgba(139, 92, 246, 0.2)', // Violet-500
+                        backgroundColor: 'rgba(139, 92, 246, 0.2)', 
                         borderColor: 'rgb(139, 92, 246)',
                         pointBackgroundColor: 'rgb(139, 92, 246)',
                         pointBorderColor: '#fff',
@@ -1084,11 +1030,9 @@ export function serveAdminHtml() {
             });
         };
 
-        // Relation Presets
         const applyPreset = (p) => { forms.rel.type = p.a; forms.rel.reciprocal = p.b; };
         const autoFillReciprocal = () => { const p = PRESETS.find(pr => pr.a.toLowerCase() === forms.rel.type.toLowerCase()); if (p) forms.rel.reciprocal = p.b; };
 
-        // Quick Note
         const quickAppend = async (field) => {
             if (processing.value) return;
             const note = prompt("Add note:");
@@ -1104,7 +1048,6 @@ export function serveAdminHtml() {
             }
         };
 
-        // Export
         const exportData = () => {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selected.value, null, 2));
             const el = document.createElement('a');
@@ -1113,7 +1056,6 @@ export function serveAdminHtml() {
             document.body.appendChild(el); el.click(); el.remove();
         };
 
-        // Map Logic
         const initMap = (id, data, isPicker = false) => {
             const el = document.getElementById(id);
             if(!el) return;
@@ -1140,7 +1082,6 @@ export function serveAdminHtml() {
             }
         };
 
-        // Syncs manual input with map marker
         const updatePickerMarker = () => {
             if (!pickerMapInstance) return;
             const lat = parseFloat(forms.location.lat);
@@ -1156,7 +1097,7 @@ export function serveAdminHtml() {
             if(!map) return;
             map.eachLayer(layer => { if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); });
             
-            const bounds = []; // Initialize bounds array
+            const bounds = []; 
 
             const grouped = data.reduce((acc, loc) => {
                 if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name };
@@ -1172,7 +1113,7 @@ export function serveAdminHtml() {
                 group.locations.forEach(loc => {
                     if(!loc.lat) return;
                     
-                    bounds.push([loc.lat, loc.lng]); // Add to bounds
+                    bounds.push([loc.lat, loc.lng]);
 
                     const avatar = loc.avatar_path || (selected.value?.avatar_path);
                     const name = loc.full_name || (selected.value?.full_name);
@@ -1182,7 +1123,6 @@ export function serveAdminHtml() {
                 });
             });
 
-            // Fit bounds if we have points
             if(bounds.length > 0) {
                 map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
             }
@@ -1206,7 +1146,6 @@ export function serveAdminHtml() {
             if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
         };
 
-        // NEW: Copy Coords
         const copyCoords = (lat, lng) => {
             const str = \`\${lat}, \${lng}\`;
             navigator.clipboard.writeText(str);
@@ -1219,18 +1158,17 @@ export function serveAdminHtml() {
              modal.active = t;
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
-             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; // Use local time
+             if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: getLocalISOString() }; 
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
              
-             // Location Handling
              if(t === 'add-location') { 
                  forms.location = { subject_id: selected.value.id }; 
                  locationSearchQuery.value = ''; 
                  nextTick(() => initMap('locationPickerMap', [], true)); 
              }
              if(t === 'edit-location' && item) {
-                 forms.location = { ...item }; // Copy existing data
+                 forms.location = { ...item }; 
                  locationSearchQuery.value = '';
                  nextTick(() => initMap('locationPickerMap', [], true));
              }
@@ -1241,22 +1179,19 @@ export function serveAdminHtml() {
              }
              if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
-             // MINI PROFILE LOGIC
              if(t === 'mini-profile' && item) modal.data = item;
 
-             // USER MGMT
              if(t === 'manage-users') {
-                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets'] };
+                 // **FIX: DEFAULT PERMISSIONS TO FULL ACCESS**
+                 forms.user = { email: '', password: '', permissions: ['dashboard', 'targets', 'map', 'network'] };
                  teamList.value = await api('/admin/users');
              }
         };
         const closeModal = () => { modal.active = null; };
 
-        // Watchers
         watch(() => forms.subject.dob, (val) => { if(val) forms.subject.age = new Date().getFullYear() - new Date(val).getFullYear(); });
         watch(() => forms.subject.age, (val) => { if(val && !forms.subject.dob) forms.subject.dob = \`\${new Date().getFullYear()-val}-01-01\`; });
 
-        // Refresh Logic
         const refreshApp = async () => {
             if(processing.value) return;
             processing.value = true;
@@ -1269,13 +1204,11 @@ export function serveAdminHtml() {
                 }
                 notify('Synced', 'Data refreshed', 'success');
             } catch(e) {
-                // error handled in api wrapper
             } finally {
                 processing.value = false;
             }
         };
 
-        // Submissions
         const submitSubject = async () => { 
             if(processing.value) return;
             processing.value = true; 
@@ -1298,7 +1231,6 @@ export function serveAdminHtml() {
             if(processing.value) return;
             processing.value = true; 
             try { 
-                // Determine method based on presence of ID (edit vs add)
                 const method = forms.location.id ? 'PATCH' : 'POST';
                 await api('/location', { method: method, body: JSON.stringify(forms.location) }); 
                 viewSubject(selected.value.id); 
@@ -1364,7 +1296,6 @@ export function serveAdminHtml() {
             } 
         };
 
-        // Files
         const fileInput = ref(null);
         const uploadType = ref(null);
         const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
@@ -1380,7 +1311,7 @@ export function serveAdminHtml() {
                     viewSubject(selected.value.id);
                  } finally {
                     processing.value = false;
-                    e.target.value = ''; // Reset input to allow re-uploading same file
+                    e.target.value = ''; 
                  }
              };
         };
@@ -1407,7 +1338,7 @@ export function serveAdminHtml() {
 
         watch(subTab, (val) => {
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
-            if(val === 'capabilities') nextTick(renderSkillsChart); // RENDER CHART ON TAB CHANGE
+            if(val === 'capabilities') nextTick(renderSkillsChart);
             if(val === 'network') nextTick(() => {
                  const container = document.getElementById('relNetwork');
                  if(!container || !selected.value) return;
@@ -1422,7 +1353,6 @@ export function serveAdminHtml() {
                         from: selected.value.id, 
                         to: targetId || 'ext-'+r.id, 
                         label: r.subject_a_id === selected.value.id ? r.relationship_type : (r.role_b || r.relationship_type), 
-                        // Updated Edge Style
                         font: { align: 'middle', face: 'Comic Neue', size: 14, strokeWidth: 0, background: 'white', color: '#000000' }, 
                         color: {color:'#000000', width: 2, highlight: '#8B5CF6'},
                         smooth: { type: 'continuous', roundness: 0.5 },
@@ -1432,10 +1362,9 @@ export function serveAdminHtml() {
                  const network = new vis.Network(container, { nodes, edges }, { 
                      nodes: { borderWidth: 3, font: { face: 'Fredoka', size: 14, color: '#000000' } }, 
                      edges: { color: '#000000', width: 2, smooth: { type: 'continuous', forceDirection: 'none' } },
-                     physics: { enabled: false }, // Static 
+                     physics: { enabled: false }, 
                      interaction: { dragNodes: true, zoomView: true, dragView: true, hover: true }
                  });
-                 // CLICK HANDLER FOR MINI PROFILE
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
@@ -1452,7 +1381,6 @@ export function serveAdminHtml() {
                 const data = await api('/global-network');
                 const container = document.getElementById('globalNetworkGraph');
                 
-                // --- CLUSTER CENTROID LOGIC ---
                 let totalX = 0, totalY = 0, count = 0;
                 data.nodes.forEach(n => {
                     if (n.x !== null && n.y !== null && n.x !== undefined && n.y !== undefined) {
@@ -1471,21 +1399,19 @@ export function serveAdminHtml() {
                     n.color = { border: '#000000', background: '#ffffff' };
                     n.font = { face: 'Fredoka', size: 14, color: '#000000', background: '#ffffff' };
                     
-                    // IF NO POSITION SAVED, PLACE NEAR CLUSTER OR RANDOM
                     if (n.x === null || n.x === undefined) {
                         const angle = Math.random() * Math.PI * 2;
-                        const radius = 100 + Math.random() * 200; // Place in a ring around center
+                        const radius = 100 + Math.random() * 200; 
                         n.x = avgX + Math.cos(angle) * radius;
                         n.y = avgY + Math.sin(angle) * radius;
                     }
                 });
 
-                // GLOBAL NETWORK OPTIONS
                 const options = { 
                     nodes: { 
                         shape: 'circularImage', 
                         borderWidth: 3,
-                        physics: false // KEY CHANGE: Nodes don't push each other
+                        physics: false
                     }, 
                     edges: { 
                         color: { color: '#000000', highlight: '#8B5CF6' },
@@ -1495,7 +1421,7 @@ export function serveAdminHtml() {
                         arrows: { to: { enabled: true, scaleFactor: 1, type: 'arrow' } },
                         smooth: {
                             enabled: true,
-                            type: 'continuous', // Fixes the "0,0 reference" curve issue
+                            type: 'continuous', 
                             roundness: 0.5,
                             forceDirection: 'none'
                         },
@@ -1509,24 +1435,22 @@ export function serveAdminHtml() {
                         }
                     },
                     physics: { 
-                        enabled: false, // GLOBAL DISABLE: No physics simulation at all
+                        enabled: false,
                         stabilization: false
                     },
                     interaction: { 
                         dragNodes: true, 
                         dragView: true, 
                         zoomView: true, 
-                        hover: true, // Highlights edges on hover
+                        hover: true,
                         selectConnectedEdges: true
                     } 
                 };
 
                 const network = new vis.Network(container, data, options);
                 
-                // Focus on the cluster
                 network.moveTo({ position: { x: avgX, y: avgY } });
 
-                // --- SAVE POSITION ON DRAG END ---
                 network.on("dragEnd", function (params) {
                     if (params.nodes.length > 0) {
                         const positions = network.getPositions(params.nodes);
@@ -1558,25 +1482,25 @@ export function serveAdminHtml() {
         });
 
         return {
-            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
-            analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel,
-            handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
-            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile,
-            fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
-            activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
-            mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
-            showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
-            fileInput,
-            getSkillScore, updateSkill,
-            getSocialInfo, handleIntelInput,
-            refreshApp,
-            copyCoords, updatePickerMarker,
-            visibleTabs, hasPermission, submitNewUser, teamList, deleteUser // New User Mgmt
-        };
-      }
-    }).mount('#app');
-  </script>
+view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, se
+analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedI
+handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal,
+submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem,
+fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
+activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
+mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, qui
+showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
+fileInput,
+getSkillScore, updateSkill,
+getSocialInfo, handleIntelInput,
+refreshApp,
+copyCoords, updatePickerMarker,
+visibleTabs, hasPermission, submitNewUser, teamList, deleteUser
+};
+}
+}).mount('#app');
+</script>
 </body>
 </html>`;
-  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+return new Response(html, { headers: { 'Content-Type': 'text/html' } });
 }
