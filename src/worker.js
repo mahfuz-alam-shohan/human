@@ -107,6 +107,41 @@ function safeVal(v) {
 
 let schemaInitialized = false;
 
+async function dropUnusedTables(db) {
+    // List of tables that are part of the current system
+    const ALLOWED_TABLES = [
+        'admins', 
+        'subjects', 
+        'subject_skills', 
+        'subject_intel', 
+        'subject_media', 
+        'subject_relationships', 
+        'subject_interactions', 
+        'subject_locations', 
+        'subject_shares',
+        'sqlite_sequence', // Internal SQLite table for autoincrement
+        'd1_migrations'    // Internal D1 migrations table (if used)
+    ];
+
+    try {
+        // Query to get all existing tables
+        const { results } = await db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all();
+        
+        for (const row of results) {
+            const tableName = row.name;
+            
+            // Check if the table is in our allowlist
+            // We also preserve tables starting with _cf_ (Cloudflare internal) and sqlite_ (SQLite internal)
+            if (!ALLOWED_TABLES.includes(tableName) && !tableName.startsWith('_cf_') && !tableName.startsWith('sqlite_stat')) {
+                console.log(`[Schema Cleanup] Dropping unused table: ${tableName}`);
+                await db.prepare(`DROP TABLE IF EXISTS "${tableName}"`).run();
+            }
+        }
+    } catch (e) {
+        console.error("Error checking/dropping unused tables:", e);
+    }
+}
+
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
@@ -244,6 +279,10 @@ async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
+
+      // --- CLEANUP ---
+      // Drop tables that are no longer part of the defined schema
+      await dropUnusedTables(db);
 
       schemaInitialized = true;
   } catch (err) { 
