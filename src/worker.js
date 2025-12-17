@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { sign, verify } from 'hono/jwt';
-import { serveStatic } from 'hono/cloudflare-workers';
+// Removed unused import: import { serveStatic } from 'hono/cloudflare-workers';
 import { serveAdminHtml } from './templates/adminApp.js';
 import { serveSharedHtml } from './templates/sharedView.js';
 
