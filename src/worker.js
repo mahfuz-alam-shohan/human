@@ -24,13 +24,13 @@ app.use('/api/*', async (c, next) => {
     const decoded = await verify(token, c.env.JWT_SECRET);
     c.set('user', decoded);
     
-    // Fetch latest permissions from DB to ensure real-time access control
+    // Fetch permissions from DB (unless Root)
     if (decoded.id !== 'root') {
         const admin = await c.env.DB.prepare('SELECT permissions, role FROM admins WHERE id = ?').bind(decoded.id).first();
         if (!admin) return c.json({ error: 'Account revoked' }, 401);
         c.set('permissions', JSON.parse(admin.permissions || '{}'));
     } else {
-        // Root always has full access
+        // Root has all permissions
         c.set('permissions', { all: true }); 
     }
     
@@ -40,7 +40,7 @@ app.use('/api/*', async (c, next) => {
   }
 });
 
-// --- Initialize DB (Run once or via /api/nuke) ---
+// --- Initialize DB ---
 async function initDB(db) {
   // Original Tables
   await db.prepare(`CREATE TABLE IF NOT EXISTS subjects (id TEXT PRIMARY KEY, full_name TEXT, alias TEXT, occupation TEXT, nationality TEXT, dob TEXT, age INTEGER, height TEXT, weight TEXT, blood_type TEXT, eye_color TEXT, hair_color TEXT, scars TEXT, threat_level TEXT, status TEXT, ideology TEXT, modus_operandi TEXT, weakness TEXT, avatar_path TEXT, network_x INTEGER, network_y INTEGER, created_at INTEGER)`).run();
@@ -52,7 +52,7 @@ async function initDB(db) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS media (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT, object_key TEXT, filename TEXT, content_type TEXT, size INTEGER, uploaded_at INTEGER, description TEXT, media_type TEXT, external_url TEXT)`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS skills (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT, skill_name TEXT, score INTEGER, created_at INTEGER)`).run();
 
-  // --- NEW: Admin & Logs Tables ---
+  // Admin Tables (Updated with require_location)
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS admins (
       id TEXT PRIMARY KEY, 
@@ -60,6 +60,7 @@ async function initDB(db) {
       password TEXT, 
       role TEXT, 
       permissions TEXT, 
+      require_location INTEGER DEFAULT 1, 
       created_at INTEGER
     )
   `).run();
@@ -78,28 +79,23 @@ async function initDB(db) {
   `).run();
 }
 
-// --- API Routes ---
+// =================================================================================
+// --- AUTHENTICATION & ADMIN ROUTES ---
+// =================================================================================
 
-// 1. AUTHENTICATION (Updated for Multi-Admin & Location)
 app.post('/api/login', async (c) => {
   const { email, password, lat, lng } = await c.req.json();
-
-  // MANDATORY LOCATION CHECK
-  if (!lat || !lng) {
-      return c.json({ error: 'Location coordinates are MANDATORY for secure login. Please enable GPS.' }, 403);
-  }
 
   let admin = null;
   let isRoot = false;
 
-  // Check Root (Env)
+  // 1. Check if Root
   if (email === c.env.ADMIN_EMAIL && password === c.env.ADMIN_PASSWORD) {
     admin = { id: 'root', email, role: 'super_admin', permissions: JSON.stringify({ all: true }) };
     isRoot = true;
   } else {
-    // Check DB
+    // 2. Check Database for Sub-Admins
     const res = await c.env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
-    // Note: In production, use bcrypt. Here we compare plaintext for simplicity/compatibility.
     if (res && res.password === password) {
         admin = res;
     }
@@ -107,7 +103,15 @@ app.post('/api/login', async (c) => {
 
   if (!admin) return c.json({ error: 'Invalid credentials' }, 401);
 
-  // LOG LOGIN LOCATION
+  // 3. Location Check Logic
+  // Root is ALWAYS exempt. Sub-admins are checked if 'require_location' is true (1).
+  const isLocationRequired = !isRoot && (admin.require_location === 1 || admin.require_location === undefined);
+
+  if (isLocationRequired && (!lat || !lng)) {
+      return c.json({ error: 'Security Policy: Location access is MANDATORY for this account. Please enable GPS.' }, 403);
+  }
+
+  // 4. Log the Login
   try {
       await c.env.DB.prepare(`INSERT INTO admin_logs (admin_id, admin_email, action, ip, lat, lng, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .bind(admin.id, admin.email, 'LOGIN', c.req.header('CF-Connecting-IP') || 'unknown', lat, lng, Date.now()).run();
@@ -126,22 +130,18 @@ app.post('/api/login', async (c) => {
   });
 });
 
-// --- ADMIN MANAGEMENT ROUTES ---
-
-// Create New Admin
+// Create Admin
 app.post('/api/admins', async (c) => {
     const user = c.get('user');
     const perms = c.get('permissions');
-
-    // Only Root or Super Admins can create users
     if (user.id !== 'root' && !perms.can_manage_admins) return c.json({ error: 'Permission denied' }, 403);
 
-    const { email, password, role, permissions } = await c.req.json();
+    const { email, password, role, permissions, requireLocation } = await c.req.json();
     const id = crypto.randomUUID();
 
     try {
-        await c.env.DB.prepare('INSERT INTO admins (id, email, password, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-            .bind(id, email, password, role || 'agent', JSON.stringify(permissions || {}), Date.now())
+        await c.env.DB.prepare('INSERT INTO admins (id, email, password, role, permissions, require_location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(id, email, password, role || 'agent', JSON.stringify(permissions || {}), requireLocation ? 1 : 0, Date.now())
             .run();
         return c.json({ success: true, id });
     } catch(e) {
@@ -155,7 +155,7 @@ app.get('/api/admins', async (c) => {
     const perms = c.get('permissions');
     if (user.id !== 'root' && !perms.can_manage_admins) return c.json({ error: 'Permission denied' }, 403);
 
-    const list = await c.env.DB.prepare('SELECT id, email, role, permissions, created_at FROM admins').all();
+    const list = await c.env.DB.prepare('SELECT id, email, role, permissions, require_location, created_at FROM admins').all();
     return c.json(list.results);
 });
 
@@ -172,14 +172,14 @@ app.post('/api/admins/delete', async (c) => {
     return c.json({ success: true });
 });
 
-// Update Admin Permissions
+// Update Admin
 app.patch('/api/admins/:id', async (c) => {
     const user = c.get('user');
     const perms = c.get('permissions');
     if (user.id !== 'root' && !perms.can_manage_admins) return c.json({ error: 'Permission denied' }, 403);
 
     const id = c.req.param('id');
-    const { permissions, role, password } = await c.req.json();
+    const { permissions, role, password, requireLocation } = await c.req.json();
 
     let query = 'UPDATE admins SET ';
     const params = [];
@@ -188,8 +188,9 @@ app.patch('/api/admins/:id', async (c) => {
     if (permissions) { updates.push('permissions = ?'); params.push(JSON.stringify(permissions)); }
     if (role) { updates.push('role = ?'); params.push(role); }
     if (password) { updates.push('password = ?'); params.push(password); }
+    if (requireLocation !== undefined) { updates.push('require_location = ?'); params.push(requireLocation ? 1 : 0); }
 
-    if (updates.length === 0) return c.json({ success: true }); // Nothing to update
+    if (updates.length === 0) return c.json({ success: true });
 
     query += updates.join(', ') + ' WHERE id = ?';
     params.push(id);
@@ -198,19 +199,18 @@ app.patch('/api/admins/:id', async (c) => {
     return c.json({ success: true });
 });
 
-// View Access Logs
+// View Audit Logs
 app.get('/api/admin-logs', async (c) => {
     const user = c.get('user');
     const perms = c.get('permissions');
-    // Only Viewable by authorized admins
     if (user.id !== 'root' && !perms.can_view_logs) return c.json({ error: 'Permission denied' }, 403);
-
     const logs = await c.env.DB.prepare('SELECT * FROM admin_logs ORDER BY timestamp DESC LIMIT 100').all();
     return c.json(logs.results);
 });
 
-
-// --- SUBJECTS & DATA API (Existing functionality preserved) ---
+// =================================================================================
+// --- SUBJECTS & DATA API ---
+// =================================================================================
 
 app.get('/api/dashboard', async (c) => {
   const stats = await c.env.DB.prepare(`
@@ -231,11 +231,11 @@ app.get('/api/dashboard', async (c) => {
 });
 
 app.get('/api/subjects', async (c) => {
-  // TODO: Add filtering based on permissions if needed later
   const res = await c.env.DB.prepare('SELECT * FROM subjects ORDER BY created_at DESC').all();
   return c.json(res.results);
 });
 
+// GET SINGLE SUBJECT (Includes Family Logic)
 app.get('/api/subjects/:id', async (c) => {
   const id = c.req.param('id');
   const subject = await c.env.DB.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
@@ -255,8 +255,7 @@ app.get('/api/subjects/:id', async (c) => {
     c.env.DB.prepare('SELECT * FROM skills WHERE subject_id = ?').bind(id).all()
   ]);
 
-  // Family Report Logic (Grandparents, Parents, Siblings, Children)
-  // Re-using relationships to build a mini-tree
+  // --- FAMILY LOGIC IS HERE ---
   const familyIds = rels.results.filter(r => 
       ['Father', 'Mother', 'Parent', 'Son', 'Daughter', 'Child', 'Brother', 'Sister', 'Sibling'].includes(r.relationship_type) ||
       ['Father', 'Mother', 'Parent', 'Son', 'Daughter', 'Child', 'Brother', 'Sister', 'Sibling'].includes(r.role_b)
@@ -277,7 +276,7 @@ app.get('/api/subjects/:id', async (c) => {
     relationships: rels.results,
     media: media.results,
     skills: skills.results,
-    familyReport
+    familyReport 
   });
 });
 
@@ -299,7 +298,7 @@ app.patch('/api/subjects/:id', async (c) => {
   return c.json({ success: true });
 });
 
-// --- INTERACTIONS, INTEL, LOCATIONS, ETC. ---
+// --- INTERACTIONS, INTEL, ETC ---
 
 app.post('/api/interaction', async (c) => {
   const body = await c.req.json();
@@ -345,7 +344,6 @@ app.patch('/api/relationship', async (c) => {
 
 app.post('/api/skills', async (c) => {
     const { subject_id, skill_name, score } = await c.req.json();
-    // Check if exists
     const exists = await c.env.DB.prepare('SELECT id FROM skills WHERE subject_id = ? AND skill_name = ?').bind(subject_id, skill_name).first();
     if(exists) {
         await c.env.DB.prepare('UPDATE skills SET score = ? WHERE id = ?').bind(score, exists.id).run();
@@ -355,12 +353,9 @@ app.post('/api/skills', async (c) => {
     return c.json({ success: true });
 });
 
-// --- MAP & NETWORK DATA ---
+// --- MAP & NETWORK ---
 
 app.get('/api/map-data', async (c) => {
-    // Get all subjects and their primary locations
-    // We join locations to subjects.
-    // Filter logic can be added here for permissions (e.g., restricted subjects)
     const res = await c.env.DB.prepare(`
         SELECT s.id as subject_id, s.full_name, s.avatar_path, l.lat, l.lng, l.name, l.type 
         FROM locations l 
@@ -393,20 +388,18 @@ app.get('/api/global-network', async (c) => {
     return c.json({ nodes, edges });
 });
 
+// --- DELETE & MEDIA ---
+
 app.post('/api/delete', async (c) => {
     const { table, id } = await c.req.json();
     const allow = ['subjects', 'interactions', 'intel', 'locations', 'relationships', 'media'];
     if(!allow.includes(table)) return c.json({error: 'Invalid table'}, 400);
     
-    // Check Permissions before delete
     const perms = c.get('permissions');
-    // Basic check: if you can't delete, reject. 
-    // You can make this more granular (e.g. can_delete_subjects vs can_delete_intel)
     if(c.get('user').id !== 'root' && !perms.can_delete_data) return c.json({error: 'Delete permission denied'}, 403);
 
     await c.env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
     
-    // Cleanup cascade
     if(table === 'subjects') {
         await c.env.DB.prepare('DELETE FROM interactions WHERE subject_id = ?').bind(id).run();
         await c.env.DB.prepare('DELETE FROM intel WHERE subject_id = ?').bind(id).run();
@@ -416,7 +409,6 @@ app.post('/api/delete', async (c) => {
     return c.json({ success: true });
 });
 
-// --- MEDIA HANDLING ---
 app.post('/api/upload-avatar', async (c) => {
     const { subjectId, data, filename, contentType } = await c.req.json();
     const key = `avatars/${subjectId}-${Date.now()}-${filename}`;
@@ -431,23 +423,19 @@ app.post('/api/upload-media', async (c) => {
     const key = `media/${subjectId}-${Date.now()}-${filename}`;
     const buffer = Uint8Array.from(atob(data), c => c.charCodeAt(0));
     await c.env.R2.put(key, buffer, { httpMetadata: { contentType } });
-    
-    await c.env.DB.prepare('INSERT INTO media (subject_id, object_key, filename, content_type, size, uploaded_at, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .bind(subjectId, key, filename, contentType, buffer.length, Date.now(), 'file').run();
-    
+    await c.env.DB.prepare('INSERT INTO media (subject_id, object_key, filename, content_type, size, uploaded_at, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(subjectId, key, filename, contentType, buffer.length, Date.now(), 'file').run();
     return c.json({ success: true, path: key });
 });
 
 app.post('/api/media-link', async (c) => {
     const { subjectId, url, description, type } = await c.req.json();
-    await c.env.DB.prepare('INSERT INTO media (subject_id, external_url, description, content_type, uploaded_at, media_type) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(subjectId, url, description, type, Date.now(), 'link').run();
+    await c.env.DB.prepare('INSERT INTO media (subject_id, external_url, description, content_type, uploaded_at, media_type) VALUES (?, ?, ?, ?, ?, ?)').bind(subjectId, url, description, type, Date.now(), 'link').run();
     return c.json({ success: true });
 });
 
 app.get('/api/media/:key', async (c) => {
     const key = c.req.param('key');
-    const object = await c.env.R2.get(key); // R2 bucket binding
+    const object = await c.env.R2.get(key);
     if (!object) return c.json({ error: 'Not found' }, 404);
     const headers = new Headers();
     object.writeHttpMetadata(headers);
@@ -455,28 +443,20 @@ app.get('/api/media/:key', async (c) => {
     return new Response(object.body, { headers });
 });
 
-// --- SHARE LINKS & PUBLIC ACCESS ---
+// --- SHARING ---
 
 app.post('/api/share-links', async (c) => {
     const { subjectId, durationMinutes, requireLocation, allowedTabs } = await c.req.json();
     const token = crypto.randomUUID().replace(/-/g, '');
     const expiresAt = Date.now() + (durationMinutes * 60 * 1000);
-    
-    await c.env.DB.prepare('INSERT INTO share_links (token, subject_id, created_at, expires_at, is_active, views, require_location, allowed_tabs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(token, subjectId, Date.now(), expiresAt, 1, 0, requireLocation ? 1 : 0, JSON.stringify(allowedTabs || [])).run();
-        
+    await c.env.DB.prepare('INSERT INTO share_links (token, subject_id, created_at, expires_at, is_active, views, require_location, allowed_tabs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(token, subjectId, Date.now(), expiresAt, 1, 0, requireLocation ? 1 : 0, JSON.stringify(allowedTabs || [])).run();
     return c.json({ success: true, token });
 });
 
 app.get('/api/share-links', async (c) => {
     const subjectId = c.req.query('subjectId');
-    // Clean up expired
     await c.env.DB.prepare('UPDATE share_links SET is_active = 0 WHERE expires_at < ?').bind(Date.now()).run();
-    
-    if (subjectId) {
-        const res = await c.env.DB.prepare('SELECT * FROM share_links WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-        return c.json(res.results);
-    }
+    if (subjectId) return c.json((await c.env.DB.prepare('SELECT * FROM share_links WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all()).results);
     return c.json([]);
 });
 
@@ -489,23 +469,18 @@ app.delete('/api/share-links', async (c) => {
 app.get('/share/:token', async (c) => {
     const token = c.req.param('token');
     const link = await c.env.DB.prepare('SELECT * FROM share_links WHERE token = ? AND is_active = 1').bind(token).first();
-    
-    if (!link || link.expires_at < Date.now()) {
-        return c.text('Link Expired or Invalid', 404);
-    }
-    
-    // Update View Count
+    if (!link || link.expires_at < Date.now()) return c.text('Link Expired or Invalid', 404);
     await c.env.DB.prepare('UPDATE share_links SET views = views + 1 WHERE token = ?').bind(token).run();
-
     return serveSharedHtml(link);
 });
 
-// --- SYSTEM ---
+// --- SUGGESTIONS & NUKE ---
+
 app.get('/api/suggestions', async (c) => {
     const [occ, nat, ideo] = await Promise.all([
         c.env.DB.prepare('SELECT DISTINCT occupation FROM subjects WHERE occupation IS NOT NULL').all(),
         c.env.DB.prepare('SELECT DISTINCT nationality FROM subjects WHERE nationality IS NOT NULL').all(),
-        c.env.DB.prepare('SELECT DISTINCT ideology FROM subjects WHERE ideology IS NOT NULL').all(),
+        c.env.DB.prepare('SELECT DISTINCT ideology FROM subjects WHERE ideology IS NOT NULL').all()
     ]);
     return c.json({
         occupations: occ.results.map(r => r.occupation),
@@ -515,27 +490,15 @@ app.get('/api/suggestions', async (c) => {
 });
 
 app.post('/api/nuke', async (c) => {
-    // Factory Reset - requires Super Admin
     if (c.get('user').id !== 'root') return c.json({ error: 'Permission denied' }, 403);
-
-    await c.env.DB.prepare('DROP TABLE IF EXISTS subjects').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS interactions').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS intel').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS locations').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS relationships').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS share_links').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS media').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS skills').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS admins').run();
-    await c.env.DB.prepare('DROP TABLE IF EXISTS admin_logs').run();
+    const tables = ['subjects', 'interactions', 'intel', 'locations', 'relationships', 'share_links', 'media', 'skills', 'admins', 'admin_logs'];
+    for(const t of tables) await c.env.DB.prepare(`DROP TABLE IF EXISTS ${t}`).run();
     await initDB(c.env.DB);
     return c.json({ success: true });
 });
 
-// Frontend Routes
+// Frontend
 app.get('/', serveAdminHtml);
 app.get('/admin', serveAdminHtml);
 
-export default {
-    fetch: app.fetch
-};
+export default { fetch: app.fetch };
