@@ -214,10 +214,6 @@ export function serveAdminHtml() {
                                     <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border-2 border-black font-bold text-gray-400" :title="admin.role"><i class="fa-solid fa-user-shield"></i></div>
                                 </div>
                                 <div class="text-[10px] text-gray-400 font-mono mt-auto">ID: {{admin.id.slice(0,8)}}...</div>
-                                <div class="mt-2 text-xs font-bold" :class="admin.require_location ? 'text-green-600' : 'text-gray-400'">
-                                    <i class="fa-solid" :class="admin.require_location ? 'fa-lock' : 'fa-lock-open'"></i> 
-                                    {{ admin.require_location ? 'Location Locked' : 'No Location Req' }}
-                                </div>
                                 <div class="flex gap-2 mt-2 pt-2 border-t-2 border-gray-100">
                                     <button @click="openModal('admin-editor', admin)" class="text-xs font-bold text-blue-500 hover:text-blue-700">Edit Permissions</button>
                                     <button v-if="admin.id !== 'root'" @click="deleteAdmin(admin.id)" class="text-xs font-bold text-red-500 hover:text-red-700 ml-auto">Revoke</button>
@@ -460,28 +456,14 @@ export function serveAdminHtml() {
                         <label class="block text-xs font-black uppercase text-gray-400">Credentials</label>
                         <input v-model="adminForm.email" type="email" placeholder="Email Address" class="fun-input w-full p-3 text-sm" required>
                         <input v-model="adminForm.password" type="password" :placeholder="adminForm.id ? 'Leave blank to keep current password' : 'Password'" class="fun-input w-full p-3 text-sm" :required="!adminForm.id">
-                        
-                        <!-- Role Selector (Only editable for adding/editing Sub-Admins) -->
-                        <select v-if="adminForm.role !== 'super_admin'" v-model="adminForm.role" class="fun-input w-full p-3 text-sm">
+                        <select v-model="adminForm.role" class="fun-input w-full p-3 text-sm">
                             <option value="agent">Agent</option>
                             <option value="admin">Admin</option>
+                            <option value="super_admin">Super Admin</option>
                         </select>
-                        <!-- For Super Admin, just show label -->
-                        <div v-else class="text-xs font-bold text-gray-500 uppercase tracking-wider p-2 bg-gray-100 rounded border border-gray-300">
-                            Role: Super Admin (Fixed)
-                        </div>
                     </div>
 
-                    <!-- NEW: Require Location Checkbox (Hidden for Super Admin) -->
-                    <div v-if="adminForm.role !== 'super_admin'" class="flex items-center gap-3 p-4 bg-yellow-100 border-2 border-yellow-400 rounded-xl">
-                        <input type="checkbox" id="reqLoc" v-model="adminForm.requireLocation" class="w-6 h-6 accent-yellow-600 rounded cursor-pointer">
-                        <div>
-                            <label for="reqLoc" class="block font-bold text-sm text-yellow-900 cursor-pointer">Require Location for Login</label>
-                            <div class="text-xs text-yellow-700">If checked, this admin MUST enable GPS to access the system.</div>
-                        </div>
-                    </div>
-
-                    <div v-if="adminForm.role !== 'super_admin'" class="pt-4 border-t-2 border-gray-200">
+                    <div class="pt-4 border-t-2 border-gray-200">
                         <label class="block text-xs font-black uppercase text-gray-400 mb-2">Access Control</label>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                             <label v-for="perm in PERMISSION_KEYS" :key="perm.key" class="flex items-center gap-3 p-3 rounded-lg border-2 border-transparent bg-gray-50 hover:bg-gray-100 cursor-pointer has-[:checked]:bg-blue-50 has-[:checked]:border-blue-300 transition-all">
