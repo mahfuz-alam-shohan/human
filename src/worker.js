@@ -8,6 +8,12 @@ const app = new Hono();
 
 app.use('/*', cors());
 
+// --- GLOBAL ERROR HANDLER (Prevents "Unexpected token I" errors) ---
+app.onError((err, c) => {
+  console.error('Server Error:', err);
+  return c.json({ error: err.message || "Internal Server Error" }, 500);
+});
+
 // --- 1. AUTH MIDDLEWARE ---
 app.use('/api/*', async (c, next) => {
   if (c.req.path === '/api/login' || c.req.path.startsWith('/api/share-links') || c.req.path.startsWith('/api/media/')) {
@@ -21,14 +27,18 @@ app.use('/api/*', async (c, next) => {
     const user = await verify(token, c.env.JWT_SECRET);
     c.set('user', user);
     
-    // DECIDE PERMISSIONS BASED ON ROLE
     if (user.role === 'super_admin') {
-        c.set('permissions', { all: true }); // God Mode
+        c.set('permissions', { all: true }); 
     } else {
-        // Fetch latest permissions for sub-admin
-        const admin = await c.env.DB.prepare('SELECT permissions FROM sub_admins WHERE id = ?').bind(user.id).first();
-        if (!admin) return c.json({ error: 'Account Deleted' }, 401);
-        c.set('permissions', JSON.parse(admin.permissions || '{}'));
+        // Fetch permissions for sub-admin
+        // We use a try/catch here in case table is missing during dev
+        try {
+            const admin = await c.env.DB.prepare('SELECT permissions FROM sub_admins WHERE id = ?').bind(user.id).first();
+            if (!admin) return c.json({ error: 'Account Deleted' }, 401);
+            c.set('permissions', JSON.parse(admin.permissions || '{}'));
+        } catch(e) {
+            return c.json({ error: 'System Error: DB not ready' }, 500);
+        }
     }
     
     await next();
@@ -37,9 +47,9 @@ app.use('/api/*', async (c, next) => {
   }
 });
 
-// --- 2. DATABASE SETUP (The "Two Tables" Logic) ---
+// --- 2. DATABASE SETUP ---
 async function initDB(db) {
-  // Standard App Tables
+  // Main Data Tables
   await db.prepare(`CREATE TABLE IF NOT EXISTS subjects (id TEXT PRIMARY KEY, full_name TEXT, alias TEXT, occupation TEXT, nationality TEXT, dob TEXT, age INTEGER, height TEXT, weight TEXT, blood_type TEXT, eye_color TEXT, hair_color TEXT, scars TEXT, threat_level TEXT, status TEXT, ideology TEXT, modus_operandi TEXT, weakness TEXT, avatar_path TEXT, network_x INTEGER, network_y INTEGER, created_at INTEGER)`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS interactions (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT, date TEXT, type TEXT, location TEXT, participants TEXT, transcript TEXT, conclusion TEXT, created_at INTEGER)`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS intel (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT, category TEXT, label TEXT, value TEXT, reliability TEXT, source TEXT, created_at INTEGER)`).run();
@@ -50,7 +60,7 @@ async function initDB(db) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS skills (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT, skill_name TEXT, score INTEGER, created_at INTEGER)`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id TEXT, admin_email TEXT, action TEXT, ip TEXT, lat REAL, lng REAL, timestamp INTEGER)`).run();
 
-  // --- TABLE 1: SUPER ADMIN (Just One) ---
+  // --- SUPER ADMIN TABLE ---
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS super_admin (
       email TEXT PRIMARY KEY, 
@@ -58,11 +68,14 @@ async function initDB(db) {
     )
   `).run();
 
-  // Ensure default super admin exists if table is empty
-  // Default: admin@human.com / password
-  await db.prepare(`INSERT OR IGNORE INTO super_admin (email, password) VALUES ('admin@human.com', 'password')`).run();
+  // Insert Default Super Admin if missing
+  try {
+      await db.prepare(`INSERT INTO super_admin (email, password) VALUES ('admin@human.com', 'password')`).run();
+  } catch (e) {
+      // Ignore unique constraint error if admin exists
+  }
 
-  // --- TABLE 2: SUB ADMINS (The Rest) ---
+  // --- SUB ADMINS TABLE ---
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS sub_admins (
       id TEXT PRIMARY KEY, 
@@ -76,39 +89,51 @@ async function initDB(db) {
   `).run();
 }
 
-// --- 3. LOGIN ROUTE (Checks Both Tables) ---
+// --- 3. LOGIN ROUTE ---
 app.post('/api/login', async (c) => {
   const { email, password, lat, lng } = await c.req.json();
 
   let user = null;
   let isSuperAdmin = false;
 
-  // STEP 1: Check Super Admin Table
-  const superRes = await c.env.DB.prepare('SELECT * FROM super_admin WHERE email = ? AND password = ?').bind(email, password).first();
-  
-  if (superRes) {
-      user = { id: 'root', email: superRes.email, role: 'super_admin' };
-      isSuperAdmin = true;
-  } else {
-      // STEP 2: Check Sub-Admins Table
-      const subRes = await c.env.DB.prepare('SELECT * FROM sub_admins WHERE email = ? AND password = ?').bind(email, password).first();
-      if (subRes) {
-          user = subRes;
+  // --- AUTO-INIT DB ON FIRST LOGIN ATTEMPT ---
+  // We try to select. If it fails (table missing), we run initDB and retry.
+  try {
+      // Try fetching Super Admin
+      const superRes = await c.env.DB.prepare('SELECT * FROM super_admin WHERE email = ? AND password = ?').bind(email, password).first();
+      
+      if (superRes) {
+          user = { id: 'root', email: superRes.email, role: 'super_admin' };
+          isSuperAdmin = true;
+      } else {
+          // If not super, try sub-admin
+          // (We do this in the same try block to catch missing table error here too)
+          const subRes = await c.env.DB.prepare('SELECT * FROM sub_admins WHERE email = ? AND password = ?').bind(email, password).first();
+          if (subRes) user = subRes;
+      }
+  } catch (e) {
+      // Error likely means "no such table". Let's initialize!
+      console.log("Database tables missing. Initializing...");
+      await initDB(c.env.DB);
+      
+      // Retry the check after initialization
+      const superResRetry = await c.env.DB.prepare('SELECT * FROM super_admin WHERE email = ? AND password = ?').bind(email, password).first();
+      if (superResRetry) {
+          user = { id: 'root', email: superResRetry.email, role: 'super_admin' };
+          isSuperAdmin = true;
       }
   }
 
   if (!user) return c.json({ error: 'Invalid credentials' }, 401);
 
-  // STEP 3: Check Location Requirement
-  // Super Admin -> Never Required
-  // Sub Admin -> Required if require_location is 1 (True)
+  // CHECK LOCATION
   const isLocationRequired = !isSuperAdmin && (user.require_location === 1 || user.require_location === undefined);
 
   if (isLocationRequired && (!lat || !lng)) {
-      return c.json({ error: 'Location Access Mandatory. Enable GPS.' }, 403);
+      return c.json({ error: 'Location Access Mandatory. Please enable GPS.' }, 403);
   }
 
-  // STEP 4: Log It
+  // LOG
   try {
       await c.env.DB.prepare(`INSERT INTO admin_logs (admin_id, admin_email, action, ip, lat, lng, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .bind(user.id, user.email, 'LOGIN', c.req.header('CF-Connecting-IP') || '?', lat, lng, Date.now()).run();
@@ -135,8 +160,6 @@ app.post('/api/super-admin/update', async (c) => {
     if (user.role !== 'super_admin') return c.json({ error: 'Denied' }, 403);
     
     const { email, password } = await c.req.json();
-    
-    // Update the single row in super_admin table
     await c.env.DB.prepare('UPDATE super_admin SET email = ?, password = ?').bind(email, password).run();
     return c.json({ success: true });
 });
@@ -200,12 +223,17 @@ app.get('/api/admin-logs', async (c) => {
     return c.json(logs.results);
 });
 
-// --- 6. STANDARD API (Data, Media, Etc) ---
+// --- 6. STANDARD API ---
 
 app.get('/api/dashboard', async (c) => {
-  const stats = await c.env.DB.prepare(`SELECT (SELECT COUNT(*) FROM subjects) as targets, (SELECT COUNT(*) FROM interactions) as encounters, (SELECT COUNT(*) FROM intel) as evidence`).first();
-  const feed = await c.env.DB.prepare(`SELECT id as ref_id, full_name as title, occupation as desc, created_at as date, 'subject' as type FROM subjects UNION ALL SELECT id as ref_id, type as title, conclusion as desc, date, 'interaction' as type FROM interactions ORDER BY date DESC LIMIT 10`).all();
-  return c.json({ stats, feed: feed.results });
+  // Safe check if tables exist before querying dashboard
+  try {
+      const stats = await c.env.DB.prepare(`SELECT (SELECT COUNT(*) FROM subjects) as targets, (SELECT COUNT(*) FROM interactions) as encounters, (SELECT COUNT(*) FROM intel) as evidence`).first();
+      const feed = await c.env.DB.prepare(`SELECT id as ref_id, full_name as title, occupation as desc, created_at as date, 'subject' as type FROM subjects UNION ALL SELECT id as ref_id, type as title, conclusion as desc, date, 'interaction' as type FROM interactions ORDER BY date DESC LIMIT 10`).all();
+      return c.json({ stats, feed: feed.results });
+  } catch(e) {
+      return c.json({ stats: { targets: 0, encounters: 0, evidence: 0 }, feed: [] });
+  }
 });
 
 app.get('/api/subjects', async (c) => c.json((await c.env.DB.prepare('SELECT * FROM subjects ORDER BY created_at DESC').all()).results));
@@ -244,11 +272,15 @@ app.get('/api/global-network', async (c) => { const s = await c.env.DB.prepare('
 app.post('/api/delete', async (c) => { 
     const { table, id } = await c.req.json(); 
     if(!['subjects','interactions','intel','locations','relationships','media'].includes(table)) return c.json({error: 'Invalid'}, 400);
-    // Only Root or allowed admins
     const perms = c.get('permissions');
     if(!perms.all && !perms.can_delete_data) return c.json({error: 'Denied'}, 403);
     await c.env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
-    if(table === 'subjects') { await c.env.DB.prepare('DELETE FROM interactions WHERE subject_id = ?').bind(id).run(); await c.env.DB.prepare('DELETE FROM intel WHERE subject_id = ?').bind(id).run(); await c.env.DB.prepare('DELETE FROM locations WHERE subject_id = ?').bind(id).run(); await c.env.DB.prepare('DELETE FROM relationships WHERE subject_a_id = ? OR subject_b_id = ?').bind(id, id).run(); }
+    if(table === 'subjects') { 
+        await c.env.DB.prepare('DELETE FROM interactions WHERE subject_id = ?').bind(id).run();
+        await c.env.DB.prepare('DELETE FROM intel WHERE subject_id = ?').bind(id).run();
+        await c.env.DB.prepare('DELETE FROM locations WHERE subject_id = ?').bind(id).run();
+        await c.env.DB.prepare('DELETE FROM relationships WHERE subject_a_id = ? OR subject_b_id = ?').bind(id, id).run();
+    }
     return c.json({ success: true });
 });
 
