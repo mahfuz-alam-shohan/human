@@ -12,6 +12,7 @@ export const adminScript = `
         { a: 'Friend', b: 'Friend' }, { a: 'Associate', b: 'Associate' }
     ];
 
+    // DEFINED PERMISSIONS
     const PERMISSION_KEYS = [
         { key: 'access_dashboard', label: 'View Dashboard' },
         { key: 'access_database', label: 'View Database (Targets)' },
@@ -29,19 +30,21 @@ export const adminScript = `
         const loading = ref(false);
         const processing = ref(false); 
         const auth = reactive({ email: '', password: '' });
-        const currentUser = ref(null);
+        const currentUser = ref(null); // { id, email, role, permissions }
         
+        // Dynamic Tabs based on permissions
         const allTabs = [
             { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Briefing', perm: 'access_dashboard' },
             { id: 'targets', icon: 'fa-solid fa-address-book', label: 'Database', perm: 'access_database' },
             { id: 'map', icon: 'fa-solid fa-map-location-dot', label: 'Global Map', perm: 'access_map' },
             { id: 'network', icon: 'fa-solid fa-circle-nodes', label: 'Network', perm: 'access_network' },
-            { id: 'system', icon: 'fa-solid fa-shield-halved', label: 'System', perm: 'manage_admins' },
+            { id: 'system', icon: 'fa-solid fa-shield-halved', label: 'System', perm: 'manage_admins' }, // New Tab
         ];
         
         const currentTab = ref('dashboard');
         const subTab = ref('overview');
         
+        // Data Refs
         const stats = ref({});
         const feed = ref([]);
         const subjects = ref([]);
@@ -56,9 +59,10 @@ export const adminScript = `
         const presets = ref(PRESETS);
         const toasts = ref([]);
         
+        // Admin Management Refs
         const adminList = ref([]);
         const adminLogs = ref([]);
-        const adminForm = reactive({ email: '', password: '', role: 'agent', permissions: {}, requireLocation: true });
+        const adminForm = reactive({ email: '', password: '', role: 'agent', permissions: {} });
         
         const showMapSidebar = ref(window.innerWidth >= 768);
         const showProfileMapList = ref(false);
@@ -68,13 +72,14 @@ export const adminScript = `
         let pickerMapInstance = null;
         let mapInstance = null;
         let warRoomMapInstance = null;
-        let adminLogMapInstance = null;
+        let adminLogMapInstance = null; // Map for logs
         let searchTimeout = null;
         
         const cmdQuery = ref('');
         const cmdInput = ref(null);
-        const locationStatus = ref('');
+        const locationStatus = ref(''); // "Acquiring Satellite Lock..."
 
+        // Forms
         const forms = reactive({
             subject: {}, interaction: {}, location: {}, intel: {}, 
             rel: { type: '', reciprocal: '' }, 
@@ -82,6 +87,7 @@ export const adminScript = `
             mediaLink: {}
         });
 
+        // Charts
         let skillsChartInstance = null;
 
         const socialMap = [
@@ -97,9 +103,10 @@ export const adminScript = `
             { regex: /reddit\\.com/, name: 'Reddit', icon: 'fa-brands fa-reddit', color: '#FF4500' },
         ];
 
+        // --- CORE PERMISSION LOGIC ---
         const can = (perm) => {
             if (!currentUser.value) return false;
-            if (currentUser.value.role === 'super_admin') return true;
+            if (currentUser.value.id === 'root' || currentUser.value.role === 'super_admin') return true;
             if (currentUser.value.permissions && currentUser.value.permissions.all) return true;
             return currentUser.value.permissions && currentUser.value.permissions[perm] === true;
         };
@@ -109,48 +116,69 @@ export const adminScript = `
         // --- AUTH ---
         const handleAuth = async () => {
             loading.value = true;
-            locationStatus.value = "Checking GPS...";
+            locationStatus.value = "Acquiring Satellite Lock...";
             
-            const performLogin = async (lat, lng) => {
-                try {
-                    const res = await api('/login', { method: 'POST', body: JSON.stringify({ email: auth.email, password: auth.password, lat, lng }) }, true);
-                    localStorage.setItem('token', res.token);
-                    localStorage.setItem('user_cache', JSON.stringify(res.user));
-                    currentUser.value = res.user;
-                    view.value = 'app';
-                    const firstTab = tabs.value[0];
-                    if(firstTab) currentTab.value = firstTab.id;
-                    fetchData();
-                } catch(e) {
-                    console.error("Login fail", e);
-                } finally {
-                    loading.value = false;
-                    locationStatus.value = "";
-                }
-            };
-
-            // Try location (will fall back if not required by server)
             if (!navigator.geolocation) {
-                await performLogin(null, null);
+                notify('Error', 'GPS not supported by this browser.', 'error');
+                loading.value = false;
                 return;
             }
 
-            navigator.geolocation.getCurrentPosition(
-                (pos) => performLogin(pos.coords.latitude, pos.coords.longitude),
-                (err) => { performLogin(null, null); }, // Send without location if failed/denied, server decides if ok
-                { enableHighAccuracy: true, timeout: 4000 }
-            );
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                locationStatus.value = "Coordinates Locked. Authenticating...";
+                try {
+                    const payload = { 
+                        email: auth.email, 
+                        password: auth.password,
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude
+                    };
+                    
+                    const res = await api('/login', { method: 'POST', body: JSON.stringify(payload) }, true); // true = skip auth check
+                    
+                    localStorage.setItem('token', res.token);
+                    localStorage.setItem('user_cache', JSON.stringify(res.user)); // Cache for UI
+                    currentUser.value = res.user;
+                    
+                    view.value = 'app';
+                    
+                    // Set default tab based on permission
+                    const firstTab = tabs.value[0];
+                    if(firstTab) currentTab.value = firstTab.id;
+                    
+                    fetchData();
+                } catch(e) {
+                    // Auth failed handled by api wrapper or catch block
+                } finally { 
+                    loading.value = false; 
+                    locationStatus.value = "";
+                }
+            }, (err) => {
+                let msg = "Location Access Required.";
+                if(err.code === 1) msg = "You denied location access. Policy requires GPS for login.";
+                notify('Security Alert', msg, 'error');
+                loading.value = false;
+                locationStatus.value = "";
+            }, { enableHighAccuracy: true, timeout: 10000 });
         };
 
+        // API Wrapper
         const api = async (ep, opts = {}, skipAuth = false) => {
             const token = localStorage.getItem('token');
             const headers = { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) };
             try {
                 const res = await fetch('/api' + ep, { ...opts, headers });
                 const data = await res.json();
+                
                 if(res.status === 401) { 
-                    if(!skipAuth) { localStorage.removeItem('token'); view.value = 'auth'; throw new Error("Session Expired"); }
+                     // Only redirect if not already on auth page and not a login attempt
+                    if(!skipAuth) {
+                        localStorage.removeItem('token');
+                        view.value = 'auth'; 
+                        throw new Error("Session Expired"); 
+                    }
                 }
+                
                 if(data.error) throw new Error(data.error);
                 return data;
             } catch(e) { 
@@ -161,13 +189,16 @@ export const adminScript = `
 
         const fetchData = async () => {
             try {
+                // Parallel fetch based on permissions
                 const promises = [api('/suggestions')];
                 if(can('access_dashboard')) promises.push(api('/dashboard').then(d => { stats.value = d.stats; feed.value = d.feed; }));
                 if(can('access_database') || can('manage_data')) promises.push(api('/subjects').then(s => subjects.value = s));
+                
                 await Promise.all(promises);
             } catch (e) { console.log("Partial data load fail", e); }
         };
 
+        // --- ADMIN MANAGEMENT ---
         const fetchAdmins = async () => {
             if(!can('manage_admins')) return;
             adminList.value = await api('/admins');
@@ -183,21 +214,16 @@ export const adminScript = `
             if(processing.value) return;
             processing.value = true;
             try {
-                // Special case for Super Admin editing self
-                if (adminForm.role === 'super_admin') {
-                    await api('/super-admin/update', { method: 'POST', body: JSON.stringify({ email: adminForm.email, password: adminForm.password }) });
-                    notify('Success', 'Credentials Updated', 'success');
-                    closeModal();
-                    return;
-                }
-
                 const isEdit = !!adminForm.id;
                 const endpoint = isEdit ? '/admins/' + adminForm.id : '/admins';
                 const method = isEdit ? 'PATCH' : 'POST';
+                
+                // Clean payload
                 const payload = { ...adminForm };
-                if (isEdit && !payload.password) delete payload.password;
+                if (isEdit && !payload.password) delete payload.password; // Don't send empty pass on edit
+
                 await api(endpoint, { method, body: JSON.stringify(payload) });
-                notify('Success', 'Sub-Admin Saved', 'success');
+                notify('Success', 'Admin User Saved', 'success');
                 closeModal();
                 fetchAdmins();
             } finally { processing.value = false; }
@@ -214,31 +240,61 @@ export const adminScript = `
              const el = document.getElementById('adminLogMap');
              if(!el) return;
              if(adminLogMapInstance) adminLogMapInstance.remove();
+             
              const map = L.map('adminLogMap', { attributionControl: false }).setView([20, 0], 1);
              L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+             
              const bounds = [];
              adminLogs.value.forEach(log => {
                  if(log.lat && log.lng) {
-                     L.marker([log.lat, log.lng]).bindPopup(\`<b>\${log.admin_email}</b><br>\${new Date(log.timestamp).toLocaleString()}\`).addTo(map);
+                     L.marker([log.lat, log.lng])
+                        .bindPopup(\`<b>\${log.admin_email}</b><br>\${new Date(log.timestamp).toLocaleString()}\`)
+                        .addTo(map);
                      bounds.push([log.lat, log.lng]);
                  }
              });
+             
              if(bounds.length) map.fitBounds(bounds, { padding: [50, 50] });
              adminLogMapInstance = map;
         };
 
-        // Standard logic helpers
-        const getSocialInfo = (url) => { return socialMap.find(s => s.regex.test(url)) || { name: 'Website', icon: 'fa-solid fa-globe', color: '#6B7280' }; };
-        const handleIntelInput = () => { const val = forms.intel.value; const social = socialMap.find(s => s.regex.test(val)); if (social) { forms.intel.category = 'Social Media'; forms.intel.label = social.name; } };
+        // --- STANDARD LOGIC ---
+        const getSocialInfo = (url) => {
+            return socialMap.find(s => s.regex.test(url)) || { name: 'Website', icon: 'fa-solid fa-globe', color: '#6B7280' };
+        };
+
+        const handleIntelInput = () => {
+            const val = forms.intel.value;
+            const social = socialMap.find(s => s.regex.test(val));
+            if (social) {
+                forms.intel.category = 'Social Media';
+                forms.intel.label = social.name;
+            }
+        };
+
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
-        const resolveImg = (p) => { if (!p) return null; if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/api/media/')) return p; return '/api/media/' + p; };
+        
+        const resolveImg = (p) => {
+            if (!p) return null;
+            if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/api/media/')) return p;
+            return '/api/media/' + p;
+        };
 
         const modalTitle = computed(() => ({ 
-            'add-subject':'New Profile', 'edit-profile':'Edit Profile', 'add-interaction':'Log Event', 'add-location':'Add Location', 'edit-location':'Edit Location', 
-            'add-intel':'Add Attribute', 'add-rel':'Connect Profile', 'edit-rel': 'Edit Connection', 'share-secure':'Share Profile', 'add-media-link': 'Add External Media', 'admin-editor': 'Agent Profile'
+            'add-subject':'New Profile', 
+            'edit-profile':'Edit Profile', 
+            'add-interaction':'Log Event', 
+            'add-location':'Add Location', 
+            'edit-location':'Edit Location', 
+            'add-intel':'Add Attribute', 
+            'add-rel':'Connect Profile', 
+            'edit-rel': 'Edit Connection', 
+            'share-secure':'Share Profile', 
+            'add-media-link': 'Add External Media',
+            'admin-editor': 'Agent Profile'
         }[modal.active] || 'Menu'));
 
         const notify = (title, msg, type='info') => {
@@ -283,7 +339,28 @@ export const adminScript = `
             if(skillsChartInstance) skillsChartInstance.destroy();
             const labels = ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth'];
             const data = labels.map(l => getSkillScore(l));
-            skillsChartInstance = new Chart(ctx, { type: 'radar', data: { labels: labels, datasets: [{ label: 'Capabilities', data: data, fill: true, backgroundColor: 'rgba(139, 92, 246, 0.2)', borderColor: 'rgb(139, 92, 246)', pointBackgroundColor: 'rgb(139, 92, 246)', pointBorderColor: '#fff', pointHoverBackgroundColor: '#fff', pointHoverBorderColor: 'rgb(139, 92, 246)' }] }, options: { elements: { line: { borderWidth: 3 } }, scales: { r: { angleLines: { display: true }, suggestedMin: 0, suggestedMax: 100 } }, plugins: { legend: { display: false } } } });
+            skillsChartInstance = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Capabilities',
+                        data: data,
+                        fill: true,
+                        backgroundColor: 'rgba(139, 92, 246, 0.2)',
+                        borderColor: 'rgb(139, 92, 246)',
+                        pointBackgroundColor: 'rgb(139, 92, 246)',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: 'rgb(139, 92, 246)'
+                    }]
+                },
+                options: {
+                    elements: { line: { borderWidth: 3 } },
+                    scales: { r: { angleLines: { display: true }, suggestedMin: 0, suggestedMax: 100 } },
+                    plugins: { legend: { display: false } }
+                }
+            });
         };
 
         const applyPreset = (p) => { forms.rel.type = p.a; forms.rel.reciprocal = p.b; };
@@ -317,24 +394,63 @@ export const adminScript = `
             if(isPicker && pickerMapInstance) { pickerMapInstance.remove(); pickerMapInstance = null; }
             if(!isPicker && id === 'subjectMap' && mapInstance) { mapInstance.remove(); mapInstance = null; }
             if(!isPicker && id === 'warRoomMap' && warRoomMapInstance) { warRoomMapInstance.remove(); warRoomMapInstance = null; }
+
             const map = L.map(id, { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
+
             setTimeout(() => map.invalidateSize(), 200);
-            if(isPicker) { pickerMapInstance = map; map.on('click', e => { forms.location.lat = e.latlng.lat; forms.location.lng = e.latlng.lng; map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); }); L.marker(e.latlng).addTo(map); }); } else { if(id === 'subjectMap') mapInstance = map; else warRoomMapInstance = map; renderMapData(map, data); }
+
+            if(isPicker) {
+                 pickerMapInstance = map;
+                 map.on('click', e => {
+                    forms.location.lat = e.latlng.lat; forms.location.lng = e.latlng.lng;
+                    map.eachLayer(l => { if(l instanceof L.Marker) map.removeLayer(l); });
+                    L.marker(e.latlng).addTo(map);
+                 });
+            } else {
+                if(id === 'subjectMap') mapInstance = map; else warRoomMapInstance = map;
+                renderMapData(map, data);
+            }
         };
 
-        const updatePickerMarker = () => { if (!pickerMapInstance) return; const lat = parseFloat(forms.location.lat); const lng = parseFloat(forms.location.lng); if (!isNaN(lat) && !isNaN(lng)) { pickerMapInstance.eachLayer(l => { if(l instanceof L.Marker) pickerMapInstance.removeLayer(l); }); L.marker([lat, lng]).addTo(pickerMapInstance); pickerMapInstance.setView([lat, lng], 15); } };
+        const updatePickerMarker = () => {
+            if (!pickerMapInstance) return;
+            const lat = parseFloat(forms.location.lat);
+            const lng = parseFloat(forms.location.lng);
+            if (!isNaN(lat) && !isNaN(lng)) {
+                pickerMapInstance.eachLayer(l => { if(l instanceof L.Marker) pickerMapInstance.removeLayer(l); });
+                L.marker([lat, lng]).addTo(pickerMapInstance);
+                pickerMapInstance.setView([lat, lng], 15);
+            }
+        };
 
         const renderMapData = (map, data) => {
             if(!map) return;
             map.eachLayer(layer => { if (layer instanceof L.Marker || layer instanceof L.Polyline) map.removeLayer(layer); });
             const bounds = []; 
-            const grouped = data.reduce((acc, loc) => { if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name }; if(loc.lat) acc[loc.subject_id].locations.push(loc); return acc; }, {});
+            const grouped = data.reduce((acc, loc) => {
+                if(!acc[loc.subject_id]) acc[loc.subject_id] = { locations: [], avatar: loc.avatar_path, name: loc.full_name };
+                if(loc.lat) acc[loc.subject_id].locations.push(loc);
+                return acc;
+            }, {});
+
             Object.values(grouped).forEach(group => {
-                if(group.locations.length > 1) { const latlngs = group.locations.map(l => [l.lat, l.lng]); L.polyline(latlngs, { color: '#8B5CF6', weight: 4, opacity: 0.8, dashArray: '5, 10' }).addTo(map); }
-                group.locations.forEach(loc => { if(!loc.lat) return; bounds.push([loc.lat, loc.lng]); const avatar = loc.avatar_path || (selected.value?.avatar_path); const name = loc.full_name || (selected.value?.full_name); const iconHtml = \`<div class="avatar-marker-fun"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`; const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] }); L.marker([loc.lat, loc.lng], { icon }).addTo(map).bindPopup(\`<b>\${name}</b><br>\${loc.name}\`); });
+                if(group.locations.length > 1) {
+                    const latlngs = group.locations.map(l => [l.lat, l.lng]);
+                    L.polyline(latlngs, { color: '#8B5CF6', weight: 4, opacity: 0.8, dashArray: '5, 10' }).addTo(map);
+                }
+                group.locations.forEach(loc => {
+                    if(!loc.lat) return;
+                    bounds.push([loc.lat, loc.lng]); 
+                    const avatar = loc.avatar_path || (selected.value?.avatar_path);
+                    const name = loc.full_name || (selected.value?.full_name);
+                    const iconHtml = \`<div class="avatar-marker-fun"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
+                    const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] });
+                    L.marker([loc.lat, loc.lng], { icon }).addTo(map).bindPopup(\`<b>\${name}</b><br>\${loc.name}\`);
+                });
             });
+
             if(bounds.length > 0) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
         };
 
@@ -342,46 +458,59 @@ export const adminScript = `
         const flyTo = (loc) => { if(mapInstance) mapInstance.flyTo([loc.lat, loc.lng], 15); };
         const flyToGlobal = (loc) => { if(warRoomMapInstance) { warRoomMapInstance.flyTo([loc.lat, loc.lng], 15); if(window.innerWidth < 768) showMapSidebar.value = false; } };
 
-        const debounceSearch = () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => { if(!locationSearchQuery.value) return; const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`); locationSearchResults.value = await res.json(); }, 500); };
-        const selectLocation = (res) => { forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name; locationSearchResults.value = []; if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); } };
+        const debounceSearch = () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                if(!locationSearchQuery.value) return;
+                const res = await fetch(\`https://nominatim.openstreetmap.org/search?format=json&q=\${encodeURIComponent(locationSearchQuery.value)}\`);
+                locationSearchResults.value = await res.json();
+            }, 500);
+        };
+        const selectLocation = (res) => {
+            forms.location.lat = parseFloat(res.lat); forms.location.lng = parseFloat(res.lon); forms.location.address = res.display_name;
+            locationSearchResults.value = [];
+            if(pickerMapInstance) { pickerMapInstance.setView([res.lat, res.lon], 15); L.marker([res.lat, res.lon]).addTo(pickerMapInstance); }
+        };
+
         const copyCoords = (lat, lng) => { navigator.clipboard.writeText(\`\${lat}, \${lng}\`); notify('Copied', 'Coordinates copied', 'success'); };
 
-        const changeTab = (t) => { if(!can(allTabs.find(tab=>tab.id===t)?.perm)) return notify('Access Denied', 'Insufficient Permissions', 'error'); currentTab.value = t; };
+        const changeTab = (t) => { 
+            if(!can(allTabs.find(tab=>tab.id===t)?.perm)) return notify('Access Denied', 'Insufficient Permissions', 'error');
+            currentTab.value = t; 
+        };
         const changeSubTab = (t) => { subTab.value = t; };
         
         const openModal = (t, item = null) => {
              modal.active = t;
-             if(['add-subject', 'edit-profile', 'add-interaction', 'add-intel', 'add-rel', 'edit-rel', 'add-location', 'edit-location', 'add-media-link'].includes(t) && !can('manage_data')) { closeModal(); return notify('Access Denied', 'You cannot modify data.', 'error'); }
+             // Permissions Check for Modal Actions
+             if(['add-subject', 'edit-profile', 'add-interaction', 'add-intel', 'add-rel', 'edit-rel', 'add-location', 'edit-location', 'add-media-link'].includes(t) && !can('manage_data')) {
+                 closeModal(); return notify('Access Denied', 'You cannot modify data.', 'error');
+             }
+
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
              if(t === 'add-interaction') forms.interaction = { subject_id: selected.value.id, date: new Date().toISOString().slice(0, 16) }; 
              if(t === 'add-intel') forms.intel = { subject_id: selected.value.id, category: 'General' };
              if(t === 'add-media-link') forms.mediaLink = { subjectId: selected.value.id, type: 'image/jpeg' };
+             
              if(t === 'add-location') { forms.location = { subject_id: selected.value.id }; locationSearchQuery.value = ''; nextTick(() => initMap('locationPickerMap', [], true)); }
              if(t === 'edit-location' && item) { forms.location = { ...item }; locationSearchQuery.value = ''; nextTick(() => initMap('locationPickerMap', [], true)); }
+
              if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; 
              if(t === 'edit-rel' && item) { forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type }; }
              if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
              if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
              if(t === 'mini-profile' && item) modal.data = item;
              
-             // Admin Modal Logic (Improved for self-edit)
+             // Admin Modal
              if(t === 'admin-editor') {
                  if(item) {
-                     // If it's me (Super Admin)
-                     if(item.role === 'super_admin') {
-                         Object.assign(adminForm, { id: 'root', email: item.email, password: '', role: 'super_admin', permissions: {all:true}, requireLocation: false });
-                     } else {
-                         Object.assign(adminForm, { id: item.id, email: item.email, password: '', role: item.role, permissions: JSON.parse(item.permissions || '{}'), requireLocation: item.require_location === 1 || item.require_location === undefined });
-                     }
+                     // Edit Mode
+                     Object.assign(adminForm, { id: item.id, email: item.email, password: '', role: item.role, permissions: JSON.parse(item.permissions || '{}') });
                  } else {
-                     Object.assign(adminForm, { id: null, email: '', password: '', role: 'agent', permissions: {}, requireLocation: true });
+                     // New Mode
+                     Object.assign(adminForm, { id: null, email: '', password: '', role: 'agent', permissions: {} });
                  }
-             }
-             // SPECIAL CASE: Open Profile Settings from Sidebar Gear Icon
-             if(t === 'settings' && currentUser.value.role === 'super_admin') {
-                 modal.active = 'admin-editor';
-                 Object.assign(adminForm, { id: 'root', email: currentUser.value.email, password: '', role: 'super_admin', permissions: {all:true}, requireLocation: false });
              }
         };
         const closeModal = () => { modal.active = null; };
@@ -390,8 +519,17 @@ export const adminScript = `
         watch(() => forms.subject.age, (val) => { if(val && !forms.subject.dob) forms.subject.dob = \`\${new Date().getFullYear()-val}-01-01\`; });
 
         const refreshApp = async () => {
-            if(processing.value) return; processing.value = true;
-            try { if(currentTab.value === 'detail' && selected.value) await viewSubject(selected.value.id); else { await fetchData(); if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); } if(currentTab.value === 'system') { fetchAdmins(); fetchLogs(); } } notify('Synced', 'Data refreshed', 'success'); } catch(e) {} finally { processing.value = false; }
+            if(processing.value) return;
+            processing.value = true;
+            try {
+                if(currentTab.value === 'detail' && selected.value) await viewSubject(selected.value.id);
+                else {
+                    await fetchData();
+                    if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                    if(currentTab.value === 'system') { fetchAdmins(); fetchLogs(); }
+                }
+                notify('Synced', 'Data refreshed', 'success');
+            } catch(e) {} finally { processing.value = false; }
         };
 
         const submitSubject = async () => { if(processing.value) return; processing.value = true; try { const isEdit = modal.active === 'edit-profile'; await api(isEdit ? '/subjects/' + selected.value.id : '/subjects', { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); closeModal(); notify('Success', 'Profile saved', 'success'); } finally { processing.value = false; } };
@@ -400,35 +538,75 @@ export const adminScript = `
         const submitIntel = async () => { if(processing.value) return; processing.value = true; try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const submitRel = async () => { if(processing.value) return; processing.value = true; try { const method = forms.rel.id ? 'PATCH' : 'POST'; const payload = method === 'POST' ? { subjectA: selected.value.id, targetId: forms.rel.targetId, type: forms.rel.type, reciprocal: forms.rel.reciprocal } : { id: forms.rel.id, type: forms.rel.type, reciprocal: forms.rel.reciprocal }; await api('/relationship', { method: method, body: JSON.stringify(payload) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
         const submitMediaLink = async () => { if(processing.value) return; processing.value = true; try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } };
-        const deleteItem = async (table, id) => { if(!can('delete_data')) return notify('Error', 'Permission Denied', 'error'); if(processing.value) return; if(confirm('Delete item?')) { processing.value = true; try { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } finally { processing.value = false; } } };
-        const deleteProfile = async () => { if(!can('delete_data')) return notify('Error', 'Permission Denied', 'error'); if(processing.value) return; if(confirm('WARNING: DELETE THIS PROFILE?')) { processing.value = true; try { await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) }); fetchData(); changeTab('targets'); } finally { processing.value = false; } } };
+        
+        const deleteItem = async (table, id) => { 
+            if(!can('delete_data')) return notify('Error', 'Permission Denied', 'error');
+            if(processing.value) return;
+            if(confirm('Delete item?')) { processing.value = true; try { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } finally { processing.value = false; } } 
+        };
+        const deleteProfile = async () => { 
+            if(!can('delete_data')) return notify('Error', 'Permission Denied', 'error');
+            if(processing.value) return;
+            if(confirm('WARNING: DELETE THIS PROFILE?')) { processing.value = true; try { await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) }); fetchData(); changeTab('targets'); } finally { processing.value = false; } } 
+        };
 
-        const fileInput = ref(null); const uploadType = ref(null);
-        const triggerUpload = (type) => { if(!can('manage_data')) return notify('Error', 'Permission Denied', 'error'); uploadType.value = type; fileInput.value.click(); };
-        const handleFile = async (e) => { const f = e.target.files[0]; if(!f) return; if(processing.value) return; processing.value = true; const reader = new FileReader(); reader.readAsDataURL(f); reader.onload = async (ev) => { try { await api(uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: ev.target.result.split(',')[1], filename: f.name, contentType: f.type }) }); viewSubject(selected.value.id); } finally { processing.value = false; e.target.value = ''; } }; };
+        const fileInput = ref(null);
+        const uploadType = ref(null);
+        const triggerUpload = (type) => { 
+            if(!can('manage_data')) return notify('Error', 'Permission Denied', 'error');
+            uploadType.value = type; fileInput.value.click(); 
+        };
+        const handleFile = async (e) => {
+             const f = e.target.files[0]; if(!f) return;
+             if(processing.value) return; processing.value = true;
+             const reader = new FileReader(); reader.readAsDataURL(f);
+             reader.onload = async (ev) => { try { await api(uploadType.value === 'avatar' ? '/upload-avatar' : '/upload-media', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, data: ev.target.result.split(',')[1], filename: f.name, contentType: f.type }) }); viewSubject(selected.value.id); } finally { processing.value = false; e.target.value = ''; } };
+        };
 
         const fetchShareLinks = async () => { activeShareLinks.value = await api('/share-links?subjectId=' + selected.value.id); };
         const createShareLink = async () => { if(processing.value) return; processing.value = true; try { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation, allowedTabs: forms.share.allowedTabs }) }); fetchShareLinks(); } finally { processing.value = false; } };
         const revokeLink = async (t) => { if(processing.value) return; processing.value = true; try { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); } finally { processing.value = false; } };
+        
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
-        
-        // Settings -> Now opens Profile Editor for Super Admin
-        const openSettings = () => { 
-            if(currentUser.value.role === 'super_admin') {
-                openModal('settings');
-            } else {
-               // Sub-admins just logout or see info (simplified)
-               alert("Settings are restricted.");
-            }
-        };
+        const openSettings = () => { if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
         const handleLogout = () => { localStorage.clear(); location.reload(); };
 
-        watch(subTab, (val) => { if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || [])); if(val === 'capabilities') nextTick(renderSkillsChart); if(val === 'network') nextTick(() => { }); });
-        watch(currentTab, (val) => { if(val === 'map' && can('access_map')) nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }); if(val === 'system' && can('manage_admins')) { fetchAdmins(); fetchLogs(); } if(val === 'network' && can('access_network')) nextTick(async () => { const data = await api('/global-network'); const container = document.getElementById('globalNetworkGraph'); let totalX = 0, totalY = 0, count = 0; data.nodes.forEach(n => { if (n.x) { totalX += n.x; totalY += n.y; count++; }}); const avgX = count > 0 ? totalX / count : 0; const avgY = count > 0 ? totalY / count : 0; data.nodes.forEach(n => { n.image = resolveImg(n.image) || 'https://ui-avatars.com/api/?name='+n.label; n.borderWidth = 3; n.color = { border: '#000000', background: '#ffffff' }; n.font = { face: 'Fredoka', size: 14, color: '#000000', background: '#ffffff' }; if (n.x === null) { const angle = Math.random() * Math.PI * 2; const radius = 100 + Math.random() * 200; n.x = avgX + Math.cos(angle) * radius; n.y = avgY + Math.sin(angle) * radius; } }); const options = { nodes: { shape: 'circularImage', borderWidth: 3, physics: false }, edges: { color: { color: '#000000', highlight: '#8B5CF6' }, width: 2, smooth: { enabled: true, type: 'continuous', roundness: 0.5, forceDirection: 'none' } }, physics: { enabled: false }, interaction: { dragNodes: true, dragView: true, zoomView: true, hover: true } }; const network = new vis.Network(container, data, options); network.moveTo({ position: { x: avgX, y: avgY } }); network.on("dragEnd", function (params) { if (params.nodes.length > 0) { const positions = network.getPositions(params.nodes); Object.keys(positions).forEach(id => { const pos = positions[id]; api('/subjects/'+id, { method: 'PATCH', body: JSON.stringify({ network_x: Math.round(pos.x), network_y: Math.round(pos.y) }) }); }); } }); }); });
+        watch(subTab, (val) => {
+            if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
+            if(val === 'capabilities') nextTick(renderSkillsChart); 
+            if(val === 'network') nextTick(() => { /* Existing network graph code */ });
+        });
 
-        onMounted(() => { const cachedUser = localStorage.getItem('user_cache'); if(cachedUser) currentUser.value = JSON.parse(cachedUser); if(localStorage.getItem('token')) { view.value = 'app'; fetchData(); } });
+        watch(currentTab, (val) => {
+             if(val === 'map' && can('access_map')) nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
+             if(val === 'system' && can('manage_admins')) { fetchAdmins(); fetchLogs(); }
+             if(val === 'network' && can('access_network')) nextTick(async () => {
+                const data = await api('/global-network');
+                const container = document.getElementById('globalNetworkGraph');
+                let totalX = 0, totalY = 0, count = 0;
+                data.nodes.forEach(n => { if (n.x) { totalX += n.x; totalY += n.y; count++; }});
+                const avgX = count > 0 ? totalX / count : 0;
+                const avgY = count > 0 ? totalY / count : 0;
+                data.nodes.forEach(n => { 
+                    n.image = resolveImg(n.image) || 'https://ui-avatars.com/api/?name='+n.label;
+                    n.borderWidth = 3; n.color = { border: '#000000', background: '#ffffff' };
+                    n.font = { face: 'Fredoka', size: 14, color: '#000000', background: '#ffffff' };
+                    if (n.x === null) { const angle = Math.random() * Math.PI * 2; const radius = 100 + Math.random() * 200; n.x = avgX + Math.cos(angle) * radius; n.y = avgY + Math.sin(angle) * radius; }
+                });
+                const options = { nodes: { shape: 'circularImage', borderWidth: 3, physics: false }, edges: { color: { color: '#000000', highlight: '#8B5CF6' }, width: 2, smooth: { enabled: true, type: 'continuous', roundness: 0.5, forceDirection: 'none' } }, physics: { enabled: false }, interaction: { dragNodes: true, dragView: true, zoomView: true, hover: true } };
+                const network = new vis.Network(container, data, options);
+                network.moveTo({ position: { x: avgX, y: avgY } });
+                network.on("dragEnd", function (params) { if (params.nodes.length > 0) { const positions = network.getPositions(params.nodes); Object.keys(positions).forEach(id => { const pos = positions[id]; api('/subjects/'+id, { method: 'PATCH', body: JSON.stringify({ network_x: Math.round(pos.x), network_y: Math.round(pos.y) }) }); }); } });
+            });
+        });
+
+        onMounted(() => { 
+            const cachedUser = localStorage.getItem('user_cache');
+            if(cachedUser) currentUser.value = JSON.parse(cachedUser);
+            if(localStorage.getItem('token')) { view.value = 'app'; fetchData(); } 
+        });
 
         return {
             view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
