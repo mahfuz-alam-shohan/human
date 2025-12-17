@@ -6,17 +6,17 @@ const encoder = new TextEncoder();
 // --- Configuration & Constants ---
 const APP_TITLE = "PEOPLE OS // INTELLIGENCE";
 
+// Family keywords for relationship analysis
 const FAMILY_KEYWORDS = ['father', 'mother', 'parent', 'son', 'daughter', 'child', 'brother', 'sister', 'sibling', 'husband', 'wife', 'spouse', 'uncle', 'aunt', 'niece', 'nephew', 'grand'];
 
-// Whitelist for Subject Columns
+// Whitelist for Subject Columns (Security)
 const SUBJECT_COLUMNS = [
     'full_name', 'alias', 'dob', 'age', 'gender', 'occupation', 'nationality', 
     'ideology', 'location', 'contact', 'hometown', 'previous_locations', 
     'modus_operandi', 'notes', 'weakness', 'avatar_path', 'is_archived', 
     'status', 'threat_level', 'last_sighted', 'height', 'weight', 'eye_color', 
     'hair_color', 'blood_type', 'identifying_marks', 'social_links', 
-    'digital_identifiers',
-    'network_x', 'network_y'
+    'digital_identifiers', 'network_x', 'network_y'
 ];
 
 // --- JWT Security Helpers ---
@@ -54,13 +54,12 @@ async function hashPassword(secret) {
 
 // --- Helper Functions ---
 function isoTimestamp() {
-    const now = new Date();
-    // Adjust for timezones if needed, currently using UTC for consistency
-    return now.toISOString();
+    return new Date().toISOString();
 }
 
 function sanitizeFileName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
+  // Fix: Handle undefined/null name safely
+  return (name || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '') || 'upload';
 }
 
 function generateToken() {
@@ -82,7 +81,7 @@ function response(data, status = 200) {
 }
 
 function errorResponse(msg, status = 500) {
-    return response({ error: msg, code: msg }, status);
+    return response({ error: msg, code: status }, status);
 }
 
 function safeVal(v) {
@@ -90,15 +89,26 @@ function safeVal(v) {
 }
 
 // --- Database Layer ---
-
 let schemaInitialized = false;
+
+// Helper to safely run migrations without crashing on "column exists" errors
+async function safeMigrate(db, query) {
+    try {
+        await db.prepare(query).run();
+    } catch (e) {
+        // Ignore "duplicate column name" errors, log others
+        if (!e.message.includes('duplicate column')) {
+            console.warn("Migration warning:", e.message);
+        }
+    }
+}
 
 async function ensureSchema(db) {
   if (schemaInitialized) return;
   try {
+      // Enable foreign keys
       await db.prepare("PRAGMA foreign_keys = ON;").run();
 
-      // EXECUTE TABLES INDIVIDUALLY TO PREVENT BATCH FAILURES
       const tables = [
         `CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY, 
@@ -222,17 +232,18 @@ async function ensureSchema(db) {
           try { await db.prepare(sql).run(); } catch(e) { console.error("Table creation error:", e.message); }
       }
 
-      // --- AUTO-MIGRATIONS ---
-      try { await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run(); } catch (e) {}
-      try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
-      try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
-      try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
-      try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
-      try { await db.prepare("ALTER TABLE admins ADD COLUMN permissions TEXT").run(); } catch (e) {}
+      // --- AUTO-MIGRATIONS (Safe) ---
+      await safeMigrate(db, "ALTER TABLE subject_relationships ADD COLUMN role_b TEXT");
+      await safeMigrate(db, "ALTER TABLE subjects ADD COLUMN network_x REAL");
+      await safeMigrate(db, "ALTER TABLE subjects ADD COLUMN network_y REAL");
+      await safeMigrate(db, "ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0");
+      await safeMigrate(db, "ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT");
+      await safeMigrate(db, "ALTER TABLE admins ADD COLUMN permissions TEXT");
 
       schemaInitialized = true;
   } catch (err) { 
-      console.error("CRITICAL DATABASE ERROR during ensureSchema:", err); 
+      console.error("CRITICAL DATABASE ERROR:", err); 
+      // Do not set schemaInitialized = true so we try again next time
   }
 }
 
@@ -273,11 +284,7 @@ function generateFamilyReport(relationships, subjectId) {
 
 // --- API Handlers ---
 
-// NOTE: We removed "WHERE admin_id = ?" from most READ queries to allow collaboration between team members.
-// Data is now organization-wide.
-
 async function handleGetDashboard(db) {
-    // Show all subjects for the team
     const recent = await db.prepare(`
         SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects
         UNION ALL
@@ -295,7 +302,7 @@ async function handleGetDashboard(db) {
     `).first();
 
     const stats = statsQuery || { targets: 0, evidence: 0, encounters: 0 };
-    return response({ feed: recent.results, stats });
+    return response({ feed: recent.results || [], stats });
 }
 
 async function handleGetSuggestions(db) {
@@ -304,9 +311,9 @@ async function handleGetSuggestions(db) {
     const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects").all();
     
     return response({
-        occupations: occupations.results.map(r => r.occupation).filter(Boolean),
-        nationalities: nationalities.results.map(r => r.nationality).filter(Boolean),
-        ideologies: ideologies.results.map(r => r.ideology).filter(Boolean)
+        occupations: (occupations.results || []).map(r => r.occupation).filter(Boolean),
+        nationalities: (nationalities.results || []).map(r => r.nationality).filter(Boolean),
+        ideologies: (ideologies.results || []).map(r => r.ideology).filter(Boolean)
     });
 }
 
@@ -328,33 +335,40 @@ async function handleGetSubjectFull(db, id) {
         db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(id).all()
     ]);
 
-    const familyReport = generateFamilyReport(relationships.results, id);
+    const familyReport = generateFamilyReport(relationships.results || [], id);
 
     return response({
         ...subject,
-        media: media.results,
-        intel: intel.results,
-        relationships: relationships.results,
-        interactions: interactions.results,
-        locations: locations.results,
-        skills: skills.results,
+        media: media.results || [],
+        intel: intel.results || [],
+        relationships: relationships.results || [],
+        interactions: interactions.results || [],
+        locations: locations.results || [],
+        skills: skills.results || [],
         familyReport: familyReport
     });
 }
 
 async function handleGetGlobalNetwork(db) {
     const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE is_archived = 0').all();
-    if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
+    const subjectList = subjects.results || [];
+    
+    if (subjectList.length === 0) return response({ nodes: [], edges: [] });
 
-    const subjectIds = subjects.results.map(s => s.id).join(',');
-    const relationships = await db.prepare(`
-        SELECT subject_a_id, subject_b_id, relationship_type, role_b
-        FROM subject_relationships 
-        WHERE subject_a_id IN (${subjectIds}) AND subject_b_id IN (${subjectIds})
-    `).all();
+    // Ensure we don't query with empty list if map/filter logic changes
+    const subjectIds = subjectList.map(s => s.id).join(',');
+    
+    let relationships = { results: [] };
+    if (subjectIds) {
+        relationships = await db.prepare(`
+            SELECT subject_a_id, subject_b_id, relationship_type, role_b
+            FROM subject_relationships 
+            WHERE subject_a_id IN (${subjectIds}) AND subject_b_id IN (${subjectIds})
+        `).all();
+    }
 
     return response({
-        nodes: subjects.results.map(s => ({
+        nodes: subjectList.map(s => ({
             id: s.id,
             label: s.full_name,
             group: s.threat_level,
@@ -364,7 +378,7 @@ async function handleGetGlobalNetwork(db) {
             x: s.network_x,
             y: s.network_y
         })),
-        edges: relationships.results.map(r => ({
+        edges: (relationships.results || []).map(r => ({
             from: r.subject_a_id,
             to: r.subject_b_id,
             label: `${r.relationship_type} / ${r.role_b || '?'}`,
@@ -383,7 +397,7 @@ async function handleGetMapData(db) {
         ORDER BY l.created_at ASC
     `;
     const res = await db.prepare(query).all();
-    return response(res.results);
+    return response(res.results || []);
 }
 
 // --- Share Logic ---
@@ -407,7 +421,7 @@ async function handleCreateShareLink(req, db, origin) {
 
 async function handleListShareLinks(db, subjectId) {
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
-    return response(res.results);
+    return response(res.results || []);
 }
 
 async function handleGetSharedSubject(db, token, req) {
@@ -480,12 +494,12 @@ async function handleGetSharedSubject(db, token, req) {
         weight: isProfileAllowed ? subject.weight : null,
         blood_type: isProfileAllowed ? subject.blood_type : null,
         modus_operandi: isProfileAllowed ? subject.modus_operandi : null,
-        interactions: allowedTabs.includes('History') ? interactions.results : [],
-        locations: allowedTabs.includes('Map') ? locations.results : [],
-        media: allowedTabs.includes('Files') ? media.results : [],
-        intel: allowedTabs.includes('Intel') ? intel.results : [],
-        skills: allowedTabs.includes('Capabilities') ? skills.results : [],
-        relationships: allowedTabs.includes('Network') ? relationships.results : [],
+        interactions: allowedTabs.includes('History') ? (interactions.results || []) : [],
+        locations: allowedTabs.includes('Map') ? (locations.results || []) : [],
+        media: allowedTabs.includes('Files') ? (media.results || []) : [],
+        intel: allowedTabs.includes('Intel') ? (intel.results || []) : [],
+        skills: allowedTabs.includes('Capabilities') ? (skills.results || []) : [],
+        relationships: allowedTabs.includes('Network') ? (relationships.results || []) : [],
         meta: { 
             remaining_seconds: link.duration_seconds ? Math.floor(link.duration_seconds - ((Date.now() - new Date(link.started_at).getTime()) / 1000)) : null,
             allowed_tabs: allowedTabs
@@ -514,6 +528,7 @@ export default {
     const JWT_SECRET = env.JWT_SECRET || "CHANGE_ME_IN_PROD";
 
     try {
+        if (!env.DB) return errorResponse("Database binding not found (DB)", 500);
         if (!schemaInitialized) await ensureSchema(env.DB);
 
         // Share Page
@@ -541,7 +556,9 @@ export default {
                 const hash = await hashPassword(password);
                 const allPerms = JSON.stringify(['dashboard', 'targets', 'map', 'network', 'manage_users']);
                 const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, permissions, created_at) VALUES (?, ?, ?, ?)').bind(email, hash, allPerms, isoTimestamp()).run();
-                const token = await createToken({ id: res.meta.last_row_id, email }, JWT_SECRET);
+                // D1 returns meta.last_row_id or lastRowId, check both safely
+                const newId = res.meta?.last_row_id || res.lastRowId;
+                const token = await createToken({ id: newId, email }, JWT_SECRET);
                 return response({ token, permissions: JSON.parse(allPerms) });
             }
             const hashed = await hashPassword(password);
@@ -558,7 +575,7 @@ export default {
         const user = await verifyToken(token, JWT_SECRET);
         
         if (!user) return errorResponse("Unauthorized", 401);
-        const adminId = user.id; // Still used for audit or user mgmt, but not for data filtering
+        const adminId = user.id;
 
         const currentAdminData = await env.DB.prepare('SELECT permissions FROM admins WHERE id = ?').bind(adminId).first();
         const currentPerms = currentAdminData && currentAdminData.permissions ? JSON.parse(currentAdminData.permissions) : ['dashboard', 'targets', 'map', 'network', 'manage_users'];
@@ -567,7 +584,7 @@ export default {
             if (!currentPerms.includes('manage_users')) return errorResponse("Forbidden: Admins only", 403);
             if (req.method === 'GET') {
                 const users = await env.DB.prepare('SELECT id, email, permissions, created_at FROM admins').all();
-                const cleanUsers = users.results.map(u => ({ ...u, permissions: u.permissions ? JSON.parse(u.permissions) : [] }));
+                const cleanUsers = (users.results || []).map(u => ({ ...u, permissions: u.permissions ? JSON.parse(u.permissions) : [] }));
                 return response(cleanUsers);
             }
             if (req.method === 'POST') {
@@ -600,7 +617,7 @@ export default {
                 return response({success:true});
             }
             const res = await env.DB.prepare('SELECT * FROM subjects WHERE is_archived = 0 ORDER BY created_at DESC').all();
-            return response(res.results);
+            return response(res.results || []);
         }
 
         if (path === '/api/map-data') return handleGetMapData(env.DB);
@@ -706,7 +723,8 @@ export default {
 
         return new Response('Not Found', { status: 404 });
     } catch(e) {
-        return errorResponse(e.message);
+        console.error("Uncaught Worker Error:", e);
+        return errorResponse(e.message || "Internal Server Error");
     }
   }
 };
