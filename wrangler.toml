@@ -3,8 +3,10 @@ main = "src/worker.js"
 compatibility_date = "2024-07-20"
 
 [vars]
-# SECURITY WARNING: For production, do NOT store secrets here. 
-# Use 'wrangler secret put JWT_SECRET' instead.
+# --- ADMIN CREDENTIALS (REQUIRED FOR LOGIN) ---
+# Change these before deploying to production!
+ADMIN_EMAIL = "mahfuz.alam.shohan@gmail.com"
+ADMIN_PASSWORD = "77f6fc9599d5b54f4eed49837b2d4bb2c17d0c384a6213eb651eaed2c27d7075"
 JWT_SECRET = "CHANGE_ME_TO_A_LONG_RANDOM_STRING_IN_PRODUCTION"
 
 [placement]
@@ -16,5 +18,6 @@ database_name = "human"
 database_id = "eff3b8bd-67e5-4c58-93f6-547a7e4af516"
 
 [[r2_buckets]]
-binding = "BUCKET"
+# FIXED: Renamed binding from "BUCKET" to "R2" to match the worker code
+binding = "R2"
 bucket_name = "human"
