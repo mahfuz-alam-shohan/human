@@ -214,6 +214,10 @@ export function serveAdminHtml() {
                                     <div class="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border-2 border-black font-bold text-gray-400" :title="admin.role"><i class="fa-solid fa-user-shield"></i></div>
                                 </div>
                                 <div class="text-[10px] text-gray-400 font-mono mt-auto">ID: {{admin.id.slice(0,8)}}...</div>
+                                <div class="mt-2 text-xs font-bold" :class="admin.require_location ? 'text-green-600' : 'text-gray-400'">
+                                    <i class="fa-solid" :class="admin.require_location ? 'fa-lock' : 'fa-lock-open'"></i> 
+                                    {{ admin.require_location ? 'Location Locked' : 'No Location Req' }}
+                                </div>
                                 <div class="flex gap-2 mt-2 pt-2 border-t-2 border-gray-100">
                                     <button @click="openModal('admin-editor', admin)" class="text-xs font-bold text-blue-500 hover:text-blue-700">Edit Permissions</button>
                                     <button v-if="admin.id !== 'root'" @click="deleteAdmin(admin.id)" class="text-xs font-bold text-red-500 hover:text-red-700 ml-auto">Revoke</button>
@@ -461,6 +465,15 @@ export function serveAdminHtml() {
                             <option value="admin">Admin</option>
                             <option value="super_admin">Super Admin</option>
                         </select>
+                    </div>
+
+                    <!-- NEW: Require Location Checkbox -->
+                    <div class="flex items-center gap-3 p-4 bg-yellow-100 border-2 border-yellow-400 rounded-xl">
+                        <input type="checkbox" id="reqLoc" v-model="adminForm.requireLocation" class="w-6 h-6 accent-yellow-600 rounded cursor-pointer">
+                        <div>
+                            <label for="reqLoc" class="block font-bold text-sm text-yellow-900 cursor-pointer">Require Location for Login</label>
+                            <div class="text-xs text-yellow-700">If checked, this admin MUST enable GPS to access the system.</div>
+                        </div>
                     </div>
 
                     <div class="pt-4 border-t-2 border-gray-200">
