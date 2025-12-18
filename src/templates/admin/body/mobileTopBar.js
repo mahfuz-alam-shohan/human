@@ -1,11 +1,11 @@
 export const MOBILE_TOP_BAR_SECTION = `
         <!-- MOBILE TOP BAR -->
         <header class="md:hidden h-16 bg-white border-b-4 border-black flex items-center justify-between px-4 z-20 shrink-0 sticky top-0 shadow-lg">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0 mobile-brand">
                 <div class="w-10 h-10 bg-violet-500 rounded-lg border-2 border-black flex items-center justify-center text-white text-lg shadow-[2px_2px_0px_#000]">
                     <i class="fa-solid fa-cube"></i>
                 </div>
-                <span class="font-heading font-black text-xl text-black tracking-tight">People OS</span>
+                <span class="font-heading font-black text-xl text-black tracking-tight truncate">People OS</span>
             </div>
             <div class="flex items-center gap-1">
                  <!-- Mobile Refresh Button -->
