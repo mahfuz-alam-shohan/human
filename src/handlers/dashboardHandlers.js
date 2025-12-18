@@ -1,29 +1,29 @@
 import { response } from '../utils.js';
 
-export async function handleGetDashboard(db, adminId) {
+export async function handleGetDashboard(db) {
     const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects WHERE admin_id = ?
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects
         UNION ALL
-        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects)
         UNION ALL
-        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects)
         ORDER BY date DESC LIMIT 50
-    `).bind(adminId, adminId, adminId).all();
+    `).all();
 
     const stats = await db.prepare(`
         SELECT 
-            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
-            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
-            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
-    `).bind(adminId, adminId, adminId).first();
+            (SELECT COUNT(*) FROM subjects WHERE is_archived = 0) as targets,
+            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects)) as evidence,
+            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects)) as encounters
+    `).first();
 
     return response({ feed: recent.results, stats });
 }
 
-export async function handleGetSuggestions(db, adminId) {
-    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE admin_id = ?").bind(adminId).all();
+export async function handleGetSuggestions(db) {
+    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE is_archived = 0").all();
+    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE is_archived = 0").all();
+    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE is_archived = 0").all();
     
     return response({
         occupations: occupations.results.map(r => r.occupation).filter(Boolean),
@@ -32,8 +32,8 @@ export async function handleGetSuggestions(db, adminId) {
     });
 }
 
-export async function handleGetGlobalNetwork(db, adminId) {
-    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
+export async function handleGetGlobalNetwork(db) {
+    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE is_archived = 0').all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
 
@@ -66,14 +66,14 @@ export async function handleGetGlobalNetwork(db, adminId) {
     });
 }
 
-export async function handleGetMapData(db, adminId) {
+export async function handleGetMapData(db) {
     const query = `
         SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level, s.occupation
         FROM subject_locations l
         JOIN subjects s ON l.subject_id = s.id
-        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
+        WHERE s.is_archived = 0 AND l.lat IS NOT NULL
         ORDER BY l.created_at ASC
     `;
-    const res = await db.prepare(query).bind(adminId).all();
+    const res = await db.prepare(query).all();
     return response(res.results);
 }

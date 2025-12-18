@@ -1,12 +1,11 @@
 import { errorResponse, generateToken, isoTimestamp, response } from '../utils.js';
 
-export async function handleCreateShareLink(req, db, origin, adminId) {
+export async function handleCreateShareLink(req, db, origin) {
     const { subjectId, durationMinutes, requireLocation, allowedTabs } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
     
-    // Verify Ownership
-    const owner = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
-    if (!owner) return errorResponse("Unauthorized", 403);
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ?').bind(subjectId).first();
+    if (!subject) return errorResponse("Subject not found", 404);
 
     const minutes = durationMinutes || 60;
     const durationSeconds = Math.max(60, Math.floor(minutes * 60)); 
@@ -21,9 +20,9 @@ export async function handleCreateShareLink(req, db, origin, adminId) {
     return response({ url, token, duration_seconds: durationSeconds, require_location: isRequired, allowed_tabs: allowedTabs });
 }
 
-export async function handleListShareLinks(db, subjectId, adminId) {
-    const owner = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
-    if (!owner) return response([]);
+export async function handleListShareLinks(db, subjectId) {
+    const subject = await db.prepare('SELECT id FROM subjects WHERE id = ?').bind(subjectId).first();
+    if (!subject) return response([]);
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
     
     // EXPIRE OLD LINKS ON LIST

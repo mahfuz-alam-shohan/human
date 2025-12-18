@@ -2,8 +2,8 @@ import { SUBJECT_DETAIL_TABS } from '../constants.js';
 import { errorResponse, response } from '../utils.js';
 import { generateFamilyReport } from '../analysis.js';
 
-export async function handleGetSubjectFull(db, id, adminId, adminCtx) {
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
+export async function handleGetSubjectFull(db, id, adminCtx) {
+    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ?').bind(id).first();
     if (!subject) return errorResponse("Subject not found", 404);
 
     const allowedTabs = adminCtx?.is_master ? SUBJECT_DETAIL_TABS : (adminCtx?.allowed_sections?.subjectTabs || SUBJECT_DETAIL_TABS);
