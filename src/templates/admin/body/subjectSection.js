@@ -14,19 +14,19 @@ export const SUBJECT_DETAIL_SECTION = `
                     <!-- WRAP ADDED HERE -->
                     <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
                         <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
-                        <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
-                        <button @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
-                        <button @click="openModal('share-secure')" class="bg-yellow-400 hover:bg-yellow-300 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-share-nodes"></i></button>
+                        <button v-if="hasPermission('deleteSubjects')" @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
+                        <button v-if="hasPermission('editSubjects')" @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
+                        <button v-if="hasPermission('manageShares')" @click="openModal('share-secure')" class="bg-yellow-400 hover:bg-yellow-300 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-share-nodes"></i></button>
                     </div>
                 </div>
 
                 <!-- SUB TABS -->
                 <div class="flex border-b-4 border-black overflow-x-auto bg-white shrink-0 no-scrollbar p-2 gap-2">
-                    <button v-for="t in ['Overview', 'Capabilities', 'Attributes', 'Timeline', 'Map', 'Network', 'Files']" 
-                        @click="changeSubTab(t.toLowerCase())" 
-                        :class="subTab === t.toLowerCase() ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'"
+                    <button v-for="t in visibleSubjectTabs" 
+                        @click="changeSubTab(t)" 
+                        :class="subTab === t ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'"
                         class="px-4 py-2 text-sm font-black font-heading rounded-lg border-2 border-black transition-all whitespace-nowrap">
-                        {{ t }}
+                        {{ subjectTabLabels[t] || t }}
                     </button>
                 </div>
 
@@ -69,11 +69,11 @@ export const SUBJECT_DETAIL_SECTION = `
                                     </div>
                                     <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div>
-                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Habits</label><button @click="quickAppend('modus_operandi')" class="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded border border-blue-300 hover:bg-blue-200"><i class="fa-solid fa-plus"></i> Add</button></div>
+                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Habits</label><button @click="quickAppend('modus_operandi')" :disabled="!hasPermission('editSubjects')" class="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded border border-blue-300 hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"><i class="fa-solid fa-plus"></i> Add</button></div>
                                             <div class="text-sm font-bold text-gray-600 bg-gray-50 p-4 rounded-xl h-32 overflow-y-auto whitespace-pre-wrap border-2 border-gray-200">{{selected.modus_operandi || 'Empty...'}}</div>
                                         </div>
                                         <div>
-                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Weakness</label><button @click="quickAppend('weakness')" class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded border border-red-300 hover:bg-red-200"><i class="fa-solid fa-plus"></i> Add</button></div>
+                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Weakness</label><button @click="quickAppend('weakness')" :disabled="!hasPermission('editSubjects')" class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded border border-red-300 hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed"><i class="fa-solid fa-plus"></i> Add</button></div>
                                             <div class="text-sm font-bold text-gray-600 bg-gray-50 p-4 rounded-xl h-32 overflow-y-auto whitespace-pre-wrap border-2 border-gray-200">{{selected.weakness || 'Empty...'}}</div>
                                         </div>
                                     </div>
@@ -91,7 +91,7 @@ export const SUBJECT_DETAIL_SECTION = `
                                     <span>{{skill}}</span>
                                     <span>{{ getSkillScore(skill) }}%</span>
                                 </div>
-                                <input type="range" min="0" max="100" :value="getSkillScore(skill)" @input="e => updateSkill(skill, e.target.value)" class="w-full accent-violet-500">
+                                <input type="range" min="0" max="100" :value="getSkillScore(skill)" @input="e => updateSkill(skill, e.target.value)" class="w-full accent-violet-500" :disabled="!hasPermission('manageIntel')">
                             </div>
                         </div>
                         <div class="flex-1 fun-card p-4 flex items-center justify-center bg-white relative">
@@ -106,7 +106,7 @@ export const SUBJECT_DETAIL_SECTION = `
                     <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
                          <div class="flex justify-between items-center">
                             <h3 class="font-black font-heading text-2xl text-black">Intel Ledger</h3>
-                            <button @click="openModal('add-intel')" class="bg-violet-500 text-white px-4 py-2 rounded-xl text-sm font-bold fun-btn hover:bg-violet-400">Add Stuff</button>
+                            <button v-if="hasPermission('manageIntel')" @click="openModal('add-intel')" class="bg-violet-500 text-white px-4 py-2 rounded-xl text-sm font-bold fun-btn hover:bg-violet-400">Add Stuff</button>
                         </div>
                         <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
                             <h4 class="text-sm font-black uppercase text-gray-400 border-b-2 border-gray-300 pb-1 ml-2">{{ category }}</h4>
@@ -114,14 +114,14 @@ export const SUBJECT_DETAIL_SECTION = `
                                 <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
                                     <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
                                     <div class="font-bold text-xs text-black">{{item.label}}</div>
-                                    <button @click.prevent="deleteItem('subject_intel', item.id)" class="absolute top-1 right-1 text-red-300 hover:text-red-500 text-[10px]"><i class="fa-solid fa-times"></i></button>
+                                    <button v-if="hasPermission('manageIntel')" @click.prevent="deleteItem('subject_intel', item.id)" class="absolute top-1 right-1 text-red-300 hover:text-red-500 text-[10px]"><i class="fa-solid fa-times"></i></button>
                                 </a>
                             </div>
                             <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
                                     <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
                                     <div class="text-black font-bold break-words text-sm">{{item.value}}</div>
-                                    <button @click="deleteItem('subject_intel', item.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold hover:scale-110"><i class="fa-solid fa-trash"></i></button>
+                                    <button v-if="hasPermission('manageIntel')" @click="deleteItem('subject_intel', item.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold hover:scale-110"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -131,7 +131,7 @@ export const SUBJECT_DETAIL_SECTION = `
                     <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
                         <div class="flex justify-between items-center">
                              <h3 class="font-black font-heading text-2xl text-black">History Log</h3>
-                             <button @click="openModal('add-interaction')" class="bg-green-400 text-white hover:bg-green-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Log Event</button>
+                             <button v-if="hasPermission('manageIntel')" @click="openModal('add-interaction')" class="bg-green-400 text-white hover:bg-green-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Log Event</button>
                         </div>
                         <div class="flex-1 fun-card p-6 overflow-y-auto min-h-0 bg-white">
                             <div class="relative pl-8 border-l-4 border-gray-200 space-y-8 my-4">
@@ -140,7 +140,7 @@ export const SUBJECT_DETAIL_SECTION = `
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
                                         <span class="text-lg font-black font-heading text-black">{{ix.type}}</span>
                                         <span class="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded border border-gray-200">{{new Date(ix.date).toLocaleString()}}</span>
-                                        <button @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-gray-300 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
+                                        <button v-if="hasPermission('manageIntel')" @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-gray-300 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                     <div class="bg-gray-50 p-4 rounded-xl text-sm font-bold text-gray-700 border-2 border-gray-200 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
                                 </div>
@@ -152,7 +152,7 @@ export const SUBJECT_DETAIL_SECTION = `
                     <div v-show="subTab === 'map'" class="h-full flex flex-col relative p-4 md:p-8">
                         <div class="flex justify-between items-center mb-4 shrink-0">
                             <h3 class="font-black font-heading text-2xl text-black">Locations</h3>
-                            <button @click="openModal('add-location')" class="bg-blue-400 text-white hover:bg-blue-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Add Pin</button>
+                            <button v-if="hasPermission('manageLocations')" @click="openModal('add-location')" class="bg-blue-400 text-white hover:bg-blue-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Add Pin</button>
                         </div>
                         
                         <!-- Main Layout -->
@@ -195,10 +195,10 @@ export const SUBJECT_DETAIL_SECTION = `
                                             <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1 shrink-0" title="Copy Coordinates">
                                                 <i class="fa-solid fa-copy"></i>
                                             </button>
-                                            <button @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 shrink-0">
+                                            <button v-if="hasPermission('manageLocations')" @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 shrink-0">
                                                 <i class="fa-solid fa-pen"></i> Edit
                                             </button>
-                                            <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200 shrink-0">
+                                            <button v-if="hasPermission('manageLocations')" @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200 shrink-0">
                                                 <i class="fa-solid fa-trash"></i>
                                             </button>
                                         </div>
@@ -213,7 +213,7 @@ export const SUBJECT_DETAIL_SECTION = `
                     <div v-show="subTab === 'network'" class="h-full flex flex-col p-4 md:p-8">
                          <div class="flex justify-between items-center mb-4">
                             <h3 class="font-black font-heading text-2xl text-black">Connections</h3>
-                            <button @click="openModal('add-rel')" class="bg-pink-400 text-white hover:bg-pink-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Link Person</button>
+                            <button v-if="hasPermission('manageRelationships')" @click="openModal('add-rel')" class="bg-pink-400 text-white hover:bg-pink-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Link Person</button>
                         </div>
                         <div v-if="selected.familyReport && selected.familyReport.length > 0" class="fun-card p-4 mb-6 border-l-[10px] border-l-purple-400 bg-purple-50">
                              <h4 class="text-lg font-black text-purple-700 mb-3 flex items-center gap-2 font-heading"><i class="fa-solid fa-people-roof"></i> Family</h4>
@@ -238,8 +238,8 @@ export const SUBJECT_DETAIL_SECTION = `
                                         <div><div class="text-sm font-black text-black">{{rel.target_name}}</div><div class="text-xs font-bold text-blue-500">{{rel.relationship_type}} &harr; {{rel.role_b || 'Associate'}}</div></div>
                                     </div>
                                     <div class="flex gap-2">
-                                        <button @click="openModal('edit-rel', rel)" class="text-gray-400 hover:text-blue-500 p-2"><i class="fa-solid fa-pen"></i></button>
-                                        <button @click="deleteItem('subject_relationships', rel.id)" class="text-gray-400 hover:text-red-500 p-2"><i class="fa-solid fa-trash"></i></button>
+                                        <button v-if="hasPermission('manageRelationships')" @click="openModal('edit-rel', rel)" class="text-gray-400 hover:text-blue-500 p-2"><i class="fa-solid fa-pen"></i></button>
+                                        <button v-if="hasPermission('manageRelationships')" @click="deleteItem('subject_relationships', rel.id)" class="text-gray-400 hover:text-red-500 p-2"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                 </div>
                             </div>
@@ -248,11 +248,11 @@ export const SUBJECT_DETAIL_SECTION = `
 
                     <div v-if="subTab === 'files'" class="space-y-6">
                          <div class="flex gap-4">
-                            <div @click="triggerUpload('media')" class="h-28 w-32 rounded-2xl border-4 border-dashed border-gray-300 bg-white flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:text-blue-500 transition-all text-gray-400 group">
+                            <div v-if="hasPermission('manageFiles')" @click="triggerUpload('media')" class="h-28 w-32 rounded-2xl border-4 border-dashed border-gray-300 bg-white flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:text-blue-500 transition-all text-gray-400 group">
                                 <i class="fa-solid fa-cloud-arrow-up text-3xl mb-1 group-hover:scale-110 transition-transform"></i>
                                 <span class="text-xs font-black uppercase">Upload</span>
                             </div>
-                            <div @click="openModal('add-media-link')" class="h-28 w-32 rounded-2xl border-4 border-gray-200 bg-white flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition-all text-gray-400 hover:text-black gap-1 group">
+                            <div v-if="hasPermission('manageFiles')" @click="openModal('add-media-link')" class="h-28 w-32 rounded-2xl border-4 border-gray-200 bg-white flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition-all text-gray-400 hover:text-black gap-1 group">
                                 <i class="fa-solid fa-link text-2xl group-hover:scale-110 transition-transform"></i>
                                 <span class="text-xs font-black uppercase">Link</span>
                             </div>
@@ -265,7 +265,7 @@ export const SUBJECT_DETAIL_SECTION = `
                                 </div>
                                 <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
                                 <div class="absolute bottom-2 left-2 right-2 bg-black/80 p-1 rounded-lg text-[10px] font-bold text-white truncate text-center pointer-events-none z-10">{{m.description}}</div>
-                                <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-0 right-0 bg-red-500 text-white w-8 h-8 flex items-center justify-center rounded-bl-xl font-bold shadow-sm z-20 hover:bg-red-600 border-l-2 border-b-2 border-white"><i class="fa-solid fa-times"></i></button>
+                                <button v-if="hasPermission('manageFiles')" @click.stop="deleteItem('subject_media', m.id)" class="absolute top-0 right-0 bg-red-500 text-white w-8 h-8 flex items-center justify-center rounded-bl-xl font-bold shadow-sm z-20 hover:bg-red-600 border-l-2 border-b-2 border-white"><i class="fa-solid fa-times"></i></button>
                             </div>
                         </div>
                     </div>

@@ -24,3 +24,21 @@ export const SUBJECT_COLUMNS = [
     'digital_identifiers',
     'network_x', 'network_y'
 ];
+
+export const SUBJECT_DETAIL_TABS = ['overview', 'capabilities', 'attributes', 'timeline', 'map', 'network', 'files'];
+export const MAIN_APP_TABS = ['dashboard', 'targets', 'map', 'network', 'admins'];
+
+export const DEFAULT_ALLOWED_SECTIONS = {
+    mainTabs: ['dashboard', 'targets', 'map', 'network'],
+    subjectTabs: SUBJECT_DETAIL_TABS,
+    permissions: {
+        createSubjects: true,
+        editSubjects: true,
+        deleteSubjects: true,
+        manageIntel: true,
+        manageLocations: true,
+        manageRelationships: true,
+        manageFiles: true,
+        manageShares: true
+    }
+};

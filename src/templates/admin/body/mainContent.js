@@ -2,6 +2,7 @@ import { DASHBOARD_SECTION } from './dashboardSection.js';
 import { TARGETS_SECTION } from './targetsSection.js';
 import { GLOBAL_MAP_SECTION } from './mapSection.js';
 import { GLOBAL_NETWORK_SECTION } from './networkSection.js';
+import { ADMIN_SECTION } from './adminSection.js';
 import { SUBJECT_DETAIL_SECTION } from './subjectSection.js';
 import { MOBILE_NAV_SECTION } from './mobileNavSection.js';
 
@@ -12,6 +13,7 @@ ${DASHBOARD_SECTION}
 ${TARGETS_SECTION}
 ${GLOBAL_MAP_SECTION}
 ${GLOBAL_NETWORK_SECTION}
+${ADMIN_SECTION}
 ${SUBJECT_DETAIL_SECTION}
         </main>
 ${MOBILE_NAV_SECTION}`;

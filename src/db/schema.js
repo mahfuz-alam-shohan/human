@@ -4,6 +4,7 @@ async function dropUnusedTables(db) {
     // List of tables that are part of the current system
     const ALLOWED_TABLES = [
         'admins', 
+        'admin_logins',
         'subjects', 
         'subject_skills', 
         'subject_intel', 
@@ -45,7 +46,20 @@ export async function ensureSchema(db) {
             id INTEGER PRIMARY KEY, 
             email TEXT UNIQUE, 
             password_hash TEXT, 
+            allowed_sections TEXT,
+            is_master INTEGER DEFAULT 0,
+            is_disabled INTEGER DEFAULT 0,
+            token_version INTEGER DEFAULT 0,
+            last_login_at TEXT,
             created_at TEXT
+        )`),
+
+        db.prepare(`CREATE TABLE IF NOT EXISTS admin_logins (
+            id INTEGER PRIMARY KEY,
+            admin_id INTEGER,
+            user_agent TEXT,
+            ip_address TEXT,
+            logged_in_at TEXT
         )`),
         
         db.prepare(`CREATE TABLE IF NOT EXISTS subjects (
@@ -172,6 +186,11 @@ export async function ensureSchema(db) {
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN allowed_sections TEXT").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN is_master INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN is_disabled INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN token_version INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN last_login_at TEXT").run(); } catch (e) {}
 
       // --- CLEANUP ---
       // Drop tables that are no longer part of the defined schema

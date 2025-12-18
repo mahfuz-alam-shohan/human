@@ -1,9 +1,13 @@
+import { SUBJECT_DETAIL_TABS } from '../constants.js';
 import { errorResponse, response } from '../utils.js';
 import { generateFamilyReport } from '../analysis.js';
 
-export async function handleGetSubjectFull(db, id, adminId) {
+export async function handleGetSubjectFull(db, id, adminId, adminCtx) {
     const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
     if (!subject) return errorResponse("Subject not found", 404);
+
+    const allowedTabs = adminCtx?.is_master ? SUBJECT_DETAIL_TABS : (adminCtx?.allowed_sections?.subjectTabs || SUBJECT_DETAIL_TABS);
+    const canSee = (tab) => adminCtx?.is_master || allowedTabs.includes(tab);
 
     const [media, intel, relationships, interactions, locations, skills] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
@@ -19,16 +23,16 @@ export async function handleGetSubjectFull(db, id, adminId) {
         db.prepare('SELECT * FROM subject_skills WHERE subject_id = ?').bind(id).all()
     ]);
 
-    const familyReport = generateFamilyReport(relationships.results, id);
+    const familyReport = canSee('network') ? generateFamilyReport(relationships.results, id) : [];
 
     return response({
         ...subject,
-        media: media.results,
-        intel: intel.results,
-        relationships: relationships.results,
-        interactions: interactions.results,
-        locations: locations.results,
-        skills: skills.results,
+        media: canSee('files') ? media.results : [],
+        intel: canSee('attributes') ? intel.results : [],
+        relationships: canSee('network') ? relationships.results : [],
+        interactions: canSee('timeline') ? interactions.results : [],
+        locations: canSee('map') ? locations.results : [],
+        skills: canSee('capabilities') ? skills.results : [],
         familyReport: familyReport
     });
 }
