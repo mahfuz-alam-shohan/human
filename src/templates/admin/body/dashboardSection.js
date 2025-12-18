@@ -28,7 +28,7 @@ export const DASHBOARD_SECTION = `
                             <h3 class="text-lg font-heading font-black text-black"><i class="fa-solid fa-bolt text-yellow-500 mr-2"></i>Recent Buzz</h3>
                             <button @click="fetchData" class="text-gray-400 hover:text-black hover:rotate-180 transition-transform duration-500"><i class="fa-solid fa-arrows-rotate text-xl"></i></button>
                         </div>
-                        <div class="divide-y-2 divide-black overflow-y-auto flex-1 min-h-0 bg-white">
+                        <div class="divide-y-2 divide-black overflow-y-auto flex-1 min-h-0 bg-white touch-scroll">
                             <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-gray-50 cursor-pointer flex gap-4 items-start transition-colors">
                                 <div class="w-12 h-12 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 shrink-0 border-2 border-black shadow-[2px_2px_0px_#000]">
                                     <i class="fa-solid" :class="item.type === 'interaction' ? 'fa-comments' : (item.type === 'location' ? 'fa-location-dot' : 'fa-user')"></i>

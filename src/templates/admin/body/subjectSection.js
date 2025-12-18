@@ -3,8 +3,8 @@ export const SUBJECT_DETAIL_SECTION = `
             <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 h-full bg-white">
                 
                 <!-- HEADER (FIXED HEIGHT) -->
-                <div class="min-h-[5rem] h-auto border-b-4 border-black flex items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0 py-2">
-                    <div class="flex items-center gap-3 min-w-0">
+                <div class="min-h-[5rem] h-auto border-b-4 border-black flex items-start md:items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0 py-2 flex-wrap gap-3 md:gap-4">
+                    <div class="flex items-center gap-3 min-w-0 flex-1">
                         <button @click="changeTab('targets')" class="w-10 h-10 rounded-full flex items-center justify-center text-black border-2 border-black bg-white hover:bg-gray-100 shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all shrink-0"><i class="fa-solid fa-arrow-left"></i></button>
                         <div class="min-w-0">
                             <div class="font-black font-heading text-xl text-black truncate">{{ selected.full_name }}</div>
@@ -12,8 +12,8 @@ export const SUBJECT_DETAIL_SECTION = `
                         </div>
                     </div>
                     <!-- WRAP ADDED HERE -->
-                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
-                        <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
+                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-auto md:ml-2 w-full md:w-auto">
+                        <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all whitespace-nowrap"><i class="fa-solid fa-download"></i> JSON</button>
                         <button v-if="hasPermission('deleteSubjects')" @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
                         <button v-if="hasPermission('editSubjects')" @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
                         <button v-if="hasPermission('manageShares')" @click="openModal('share-secure')" class="bg-yellow-400 hover:bg-yellow-300 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-share-nodes"></i></button>
@@ -21,7 +21,7 @@ export const SUBJECT_DETAIL_SECTION = `
                 </div>
 
                 <!-- SUB TABS -->
-                <div class="flex border-b-4 border-black overflow-x-auto bg-white shrink-0 no-scrollbar p-2 gap-2">
+                <div class="flex border-b-4 border-black overflow-x-auto bg-white shrink-0 no-scrollbar touch-scroll p-2 gap-2">
                     <button v-for="t in visibleSubjectTabs" 
                         @click="changeSubTab(t)" 
                         :class="subTab === t ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'"
@@ -182,7 +182,7 @@ export const SUBJECT_DETAIL_SECTION = `
                                 </div>
 
                                 <!-- SCROLLING AREA -->
-                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4" style="touch-action: pan-y;">
+                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4 touch-scroll" style="touch-action: pan-y;">
                                     <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
                                         <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
                                             <div class="font-black text-black text-sm font-heading cursor-pointer">{{loc.name}}</div>

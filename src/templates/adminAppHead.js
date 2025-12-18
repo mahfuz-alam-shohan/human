@@ -79,6 +79,11 @@ export const ADMIN_APP_HEAD = `
     ::-webkit-scrollbar-thumb { background: #FCD34D; border: 3px solid black; border-radius: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* Utility helpers */
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .touch-scroll { -webkit-overflow-scrolling: touch; }
+
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
     .animate-bounce-in { animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
     @keyframes bounceIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
@@ -114,6 +119,14 @@ export const ADMIN_APP_HEAD = `
     /* Refresh Spin */
     .spin-fast { animation: spin 0.5s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Mobile polish */
+    @media (max-width: 640px) {
+        .toast-stack { left: 1rem; right: 1rem; width: auto; }
+        .toast-card { width: 100%; }
+        .mobile-brand { min-width: 0; }
+        .mobile-brand span { display: inline-block; max-width: 9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    }
   </style>
 </head>
 `;
