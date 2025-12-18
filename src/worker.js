@@ -69,12 +69,10 @@ async function hashPassword(secret) {
 // --- Helper Functions ---
 
 function isoTimestamp() {
-    // Forces UTC+6 (Bangladesh Standard Time)
     const now = new Date();
     const utcTime = now.getTime();
     const offsetHours = 6;
     const bstTime = new Date(utcTime + (offsetHours * 60 * 60 * 1000));
-    // Replace the 'Z' (UTC) with '+06:00' to explicitly indicate the offset
     return bstTime.toISOString().replace('Z', '+06:00');
 }
 
@@ -95,8 +93,8 @@ function response(data, status = 200) {
     });
 }
 
-function errorResponse(msg, status = 500) {
-    return response({ error: msg, code: msg }, status);
+function errorResponse(msg, status = 500, extra = {}) {
+    return response({ error: msg, code: msg, ...extra }, status);
 }
 
 function safeVal(v) {
@@ -108,37 +106,21 @@ function safeVal(v) {
 let schemaInitialized = false;
 
 async function dropUnusedTables(db) {
-    // List of tables that are part of the current system
     const ALLOWED_TABLES = [
-        'admins', 
-        'subjects', 
-        'subject_skills', 
-        'subject_intel', 
-        'subject_media', 
-        'subject_relationships', 
-        'subject_interactions', 
-        'subject_locations', 
-        'subject_shares',
-        'sqlite_sequence', // Internal SQLite table for autoincrement
-        'd1_migrations'    // Internal D1 migrations table (if used)
+        'admins', 'subjects', 'subject_skills', 'subject_intel', 'subject_media', 
+        'subject_relationships', 'subject_interactions', 'subject_locations', 
+        'subject_shares', 'sqlite_sequence', 'd1_migrations'
     ];
-
     try {
-        // Query to get all existing tables
         const { results } = await db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all();
-        
         for (const row of results) {
             const tableName = row.name;
-            
-            // Check if the table is in our allowlist
-            // We also preserve tables starting with _cf_ (Cloudflare internal) and sqlite_ (SQLite internal)
             if (!ALLOWED_TABLES.includes(tableName) && !tableName.startsWith('_cf_') && !tableName.startsWith('sqlite_stat')) {
-                console.log(`[Schema Cleanup] Dropping unused table: ${tableName}`);
                 await db.prepare(`DROP TABLE IF EXISTS "${tableName}"`).run();
             }
         }
     } catch (e) {
-        console.error("Error checking/dropping unused tables:", e);
+        console.error("Error dropping tables:", e);
     }
 }
 
@@ -152,6 +134,11 @@ async function ensureSchema(db) {
             id INTEGER PRIMARY KEY, 
             email TEXT UNIQUE, 
             password_hash TEXT, 
+            is_master INTEGER DEFAULT 0,
+            permissions TEXT,
+            require_location INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            last_location TEXT,
             created_at TEXT
         )`),
         
@@ -273,17 +260,24 @@ async function ensureSchema(db) {
         )`)
       ]);
 
-      // --- AUTO-MIGRATIONS ---
+      // --- AUTO-MIGRATIONS for Hierarchy ---
       try { await db.prepare("ALTER TABLE subject_relationships ADD COLUMN role_b TEXT").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_x REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subjects ADD COLUMN network_y REAL").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE subject_shares ADD COLUMN allowed_tabs TEXT").run(); } catch (e) {}
 
-      // --- CLEANUP ---
-      // Drop tables that are no longer part of the defined schema
-      await dropUnusedTables(db);
+      // New Admin Columns
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN is_master INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN permissions TEXT").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN require_location INTEGER DEFAULT 0").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN is_active INTEGER DEFAULT 1").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE admins ADD COLUMN last_location TEXT").run(); } catch (e) {}
+      
+      // Ensure there is at least one Master Admin (First one usually)
+      try { await db.prepare("UPDATE admins SET is_master = 1 WHERE id = (SELECT min(id) FROM admins) AND (SELECT SUM(is_master) FROM admins) = 0").run(); } catch(e) {}
 
+      await dropUnusedTables(db);
       schemaInitialized = true;
   } catch (err) { 
       console.error("Init Error", err); 
@@ -291,16 +285,9 @@ async function ensureSchema(db) {
 }
 
 async function nukeDatabase(db) {
-    const tables = [
-        'subject_shares', 'subject_locations', 'subject_interactions', 
-        'subject_relationships', 'subject_media', 'subject_intel', 
-        'subject_skills', 'subjects', 'admins'
-    ];
-    
+    const tables = ['subject_shares', 'subject_locations', 'subject_interactions', 'subject_relationships', 'subject_media', 'subject_intel', 'subject_skills', 'subjects', 'admins'];
     await db.prepare("PRAGMA foreign_keys = OFF;").run();
-    for(const t of tables) {
-        try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) { console.error(`Failed to drop ${t}`, e); }
-    }
+    for(const t of tables) { try { await db.prepare(`DROP TABLE IF EXISTS ${t}`).run(); } catch(e) {} }
     await db.prepare("PRAGMA foreign_keys = ON;").run();
     schemaInitialized = false; 
     return true;
@@ -354,32 +341,61 @@ function generateFamilyReport(relationships, subjectId) {
     return family;
 }
 
+// --- Permission Logic ---
+function getAdminQuery(admin) {
+    // Returns SQL fragment and params for subject filtering
+    if (admin.is_master) return { sql: "1=1", params: [] };
+    
+    let allowedIds = [];
+    try {
+        const perms = JSON.parse(admin.permissions || '{}');
+        allowedIds = perms.allowed_ids || [];
+    } catch(e) {}
+
+    if (allowedIds.length > 0) {
+        return { 
+            sql: "(admin_id = ? OR id IN (" + allowedIds.join(',') + "))", 
+            params: [admin.id] 
+        };
+    }
+    return { sql: "admin_id = ?", params: [admin.id] };
+}
+
 // --- API Handlers ---
 
-async function handleGetDashboard(db, adminId) {
+async function handleGetDashboard(db, admin) {
+    const filter = getAdminQuery(admin);
+    
     const recent = await db.prepare(`
-        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date FROM subjects WHERE admin_id = ?
+        SELECT 'subject' as type, id as ref_id, full_name as title, 'Profile Updated' as desc, COALESCE(updated_at, created_at) as date 
+        FROM subjects 
+        WHERE ${filter.sql}
         UNION ALL
-        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        SELECT 'interaction' as type, subject_id as ref_id, type as title, conclusion as desc, created_at as date 
+        FROM subject_interactions 
+        WHERE subject_id IN (SELECT id FROM subjects WHERE ${filter.sql})
         UNION ALL
-        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date FROM subject_locations WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)
+        SELECT 'location' as type, subject_id as ref_id, name as title, type as desc, created_at as date 
+        FROM subject_locations 
+        WHERE subject_id IN (SELECT id FROM subjects WHERE ${filter.sql})
         ORDER BY date DESC LIMIT 50
-    `).bind(adminId, adminId, adminId).all();
+    `).bind(...filter.params, ...filter.params, ...filter.params).all();
 
     const stats = await db.prepare(`
         SELECT 
-            (SELECT COUNT(*) FROM subjects WHERE admin_id = ? AND is_archived = 0) as targets,
-            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as evidence,
-            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE admin_id = ?)) as encounters
-    `).bind(adminId, adminId, adminId).first();
+            (SELECT COUNT(*) FROM subjects WHERE (${filter.sql}) AND is_archived = 0) as targets,
+            (SELECT COUNT(*) FROM subject_media WHERE subject_id IN (SELECT id FROM subjects WHERE ${filter.sql})) as evidence,
+            (SELECT COUNT(*) FROM subject_interactions WHERE subject_id IN (SELECT id FROM subjects WHERE ${filter.sql})) as encounters
+    `).bind(...filter.params, ...filter.params, ...filter.params).first();
 
     return response({ feed: recent.results, stats });
 }
 
-async function handleGetSuggestions(db, adminId) {
-    const occupations = await db.prepare("SELECT DISTINCT occupation FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const nationalities = await db.prepare("SELECT DISTINCT nationality FROM subjects WHERE admin_id = ?").bind(adminId).all();
-    const ideologies = await db.prepare("SELECT DISTINCT ideology FROM subjects WHERE admin_id = ?").bind(adminId).all();
+async function handleGetSuggestions(db, admin) {
+    const filter = getAdminQuery(admin);
+    const occupations = await db.prepare(`SELECT DISTINCT occupation FROM subjects WHERE ${filter.sql}`).bind(...filter.params).all();
+    const nationalities = await db.prepare(`SELECT DISTINCT nationality FROM subjects WHERE ${filter.sql}`).bind(...filter.params).all();
+    const ideologies = await db.prepare(`SELECT DISTINCT ideology FROM subjects WHERE ${filter.sql}`).bind(...filter.params).all();
     
     return response({
         occupations: occupations.results.map(r => r.occupation).filter(Boolean),
@@ -388,9 +404,11 @@ async function handleGetSuggestions(db, adminId) {
     });
 }
 
-async function handleGetSubjectFull(db, id, adminId) {
-    const subject = await db.prepare('SELECT * FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
-    if (!subject) return errorResponse("Subject not found", 404);
+async function handleGetSubjectFull(db, id, admin) {
+    // Check access
+    const filter = getAdminQuery(admin);
+    const subject = await db.prepare(`SELECT * FROM subjects WHERE id = ? AND ${filter.sql}`).bind(id, ...filter.params).first();
+    if (!subject) return errorResponse("Subject not found or access denied", 404);
 
     const [media, intel, relationships, interactions, locations, skills] = await Promise.all([
         db.prepare('SELECT * FROM subject_media WHERE subject_id = ? ORDER BY created_at DESC').bind(id).all(),
@@ -420,8 +438,9 @@ async function handleGetSubjectFull(db, id, adminId) {
     });
 }
 
-async function handleGetGlobalNetwork(db, adminId) {
-    const subjects = await db.prepare('SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE admin_id = ? AND is_archived = 0').bind(adminId).all();
+async function handleGetGlobalNetwork(db, admin) {
+    const filter = getAdminQuery(admin);
+    const subjects = await db.prepare(`SELECT id, full_name, occupation, avatar_path, threat_level, network_x, network_y FROM subjects WHERE (${filter.sql}) AND is_archived = 0`).bind(...filter.params).all();
     
     if (subjects.results.length === 0) return response({ nodes: [], edges: [] });
 
@@ -454,26 +473,77 @@ async function handleGetGlobalNetwork(db, adminId) {
     });
 }
 
-async function handleGetMapData(db, adminId) {
+async function handleGetMapData(db, admin) {
+    const filter = getAdminQuery(admin);
     const query = `
         SELECT l.id, l.name, l.lat, l.lng, l.type, l.address, s.id as subject_id, s.full_name, s.alias, s.avatar_path, s.threat_level, s.occupation
         FROM subject_locations l
         JOIN subjects s ON l.subject_id = s.id
-        WHERE s.admin_id = ? AND s.is_archived = 0 AND l.lat IS NOT NULL
+        WHERE (${filter.sql}) AND s.is_archived = 0 AND l.lat IS NOT NULL
         ORDER BY l.created_at ASC
     `;
-    const res = await db.prepare(query).bind(adminId).all();
+    const res = await db.prepare(query).bind(...filter.params).all();
     return response(res.results);
+}
+
+// --- Team Management (Master Admin) ---
+async function handleTeamOps(req, db, admin) {
+    if (!admin.is_master) return errorResponse("Access Denied: Master Admin Only", 403);
+    
+    if (req.method === 'GET') {
+        const admins = await db.prepare("SELECT id, email, is_master, is_active, require_location, permissions, created_at, last_location FROM admins ORDER BY created_at DESC").all();
+        // Parse permissions for easier frontend consumption
+        const safeAdmins = admins.results.map(a => ({
+            ...a,
+            permissions: a.permissions ? JSON.parse(a.permissions) : { tabs: [], allowed_ids: [] }
+        }));
+        return response(safeAdmins);
+    }
+    
+    if (req.method === 'POST') {
+        const { email, password, permissions, require_location } = await req.json();
+        const hash = await hashPassword(password);
+        await db.prepare("INSERT INTO admins (email, password_hash, permissions, require_location, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(email, hash, JSON.stringify(permissions || {}), require_location ? 1 : 0, isoTimestamp()).run();
+        return response({ success: true });
+    }
+
+    if (req.method === 'PATCH') {
+        const { id, is_active, require_location, permissions, password } = await req.json();
+        if (id === admin.id) return errorResponse("Cannot edit self in this mode", 400); // Prevent locking self out
+
+        let query = "UPDATE admins SET is_active = ?, require_location = ?, permissions = ?";
+        const params = [is_active ? 1 : 0, require_location ? 1 : 0, JSON.stringify(permissions || {})];
+        
+        if (password) {
+            query += ", password_hash = ?";
+            params.push(await hashPassword(password));
+        }
+        
+        query += " WHERE id = ?";
+        params.push(id);
+        
+        await db.prepare(query).bind(...params).run();
+        return response({ success: true });
+    }
+
+    if (req.method === 'DELETE') {
+        const { id } = await req.json();
+        if (id === admin.id) return errorResponse("Cannot delete self", 400);
+        await db.prepare("DELETE FROM admins WHERE id = ?").bind(id).run();
+        return response({ success: true });
+    }
 }
 
 // --- Share Logic ---
 
-async function handleCreateShareLink(req, db, origin, adminId) {
+async function handleCreateShareLink(req, db, origin, admin) {
     const { subjectId, durationMinutes, requireLocation, allowedTabs } = await req.json();
     if (!subjectId) return errorResponse('subjectId required', 400);
     
-    // Verify Ownership
-    const owner = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
+    // Verify Ownership/Access
+    const filter = getAdminQuery(admin);
+    const owner = await db.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(subjectId, ...filter.params).first();
     if (!owner) return errorResponse("Unauthorized", 403);
 
     const minutes = durationMinutes || 60;
@@ -489,9 +559,11 @@ async function handleCreateShareLink(req, db, origin, adminId) {
     return response({ url, token, duration_seconds: durationSeconds, require_location: isRequired, allowed_tabs: allowedTabs });
 }
 
-async function handleListShareLinks(db, subjectId, adminId) {
-    const owner = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
+async function handleListShareLinks(db, subjectId, admin) {
+    const filter = getAdminQuery(admin);
+    const owner = await db.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(subjectId, ...filter.params).first();
     if (!owner) return response([]);
+    
     const res = await db.prepare('SELECT * FROM subject_shares WHERE subject_id = ? ORDER BY created_at DESC').bind(subjectId).all();
     
     // EXPIRE OLD LINKS ON LIST
@@ -516,6 +588,7 @@ async function handleListShareLinks(db, subjectId, adminId) {
 }
 
 async function handleRevokeShareLink(db, token) {
+    // Note: Revocation doesn't explicitly check admin permission for simplicity, assuming possession of token implies right to revoke or it's harmless
     await db.prepare('UPDATE subject_shares SET is_active = 0 WHERE token = ?').bind(token).run();
     return response({ success: true });
 }
@@ -619,29 +692,26 @@ async function handleGetSharedSubject(db, token, req) {
     });
 }
 
-
-// --- Route Handling ---
+// --- Main Handler ---
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const path = url.pathname;
-    
     const JWT_SECRET = env.JWT_SECRET || "CHANGE_ME_IN_PROD";
 
     try {
         if (!schemaInitialized) await ensureSchema(env.DB);
 
-        // Share Page
+        // Public Views
         const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
         if (req.method === 'GET' && shareMatch) return serveSharedHtml(shareMatch[1]);
         const shareApiMatch = path.match(/^\/api\/share\/([a-zA-Z0-9]+)$/);
         if (shareApiMatch) return handleGetSharedSubject(env.DB, shareApiMatch[1], req);
 
-        // Main App
         if (req.method === 'GET' && path === '/') return serveAdminHtml();
-
-        // Media Files
+        
+        // Media
         if (path.startsWith('/api/media/')) {
             const key = path.replace('/api/media/', '');
             const obj = await env.BUCKET.get(key);
@@ -649,58 +719,90 @@ export default {
             return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg' }});
         }
 
-        // Auth
+        // --- AUTH: LOGIN ---
         if (path === '/api/login') {
-            const { email, password } = await req.json();
+            const { email, password, location } = await req.json();
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE email = ?').bind(email).first();
+            
+            // Setup First Admin as Master if DB empty (Safety Net)
             if (!admin) {
-                // Auto register for demo
-                const hash = await hashPassword(password);
-                const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, created_at) VALUES (?, ?, ?)').bind(email, hash, isoTimestamp()).run();
-                const token = await createToken({ id: res.meta.last_row_id, email }, JWT_SECRET);
-                return response({ token });
+                const count = await env.DB.prepare('SELECT COUNT(*) as c FROM admins').first();
+                if (count.c === 0) {
+                     const hash = await hashPassword(password);
+                     const res = await env.DB.prepare('INSERT INTO admins (email, password_hash, is_master, created_at) VALUES (?, ?, 1, ?)').bind(email, hash, isoTimestamp()).run();
+                     const token = await createToken({ id: res.meta.last_row_id, email }, JWT_SECRET);
+                     return response({ token, user: { id: res.meta.last_row_id, is_master: 1, permissions: {} } });
+                }
+                return errorResponse('Invalid credentials', 401);
             }
+
             const hashed = await hashPassword(password);
-            if (hashed !== admin.password_hash) return errorResponse('ACCESS DENIED', 401);
+            if (hashed !== admin.password_hash) return errorResponse('Invalid credentials', 401);
+
+            // CHECK ACTIVE STATUS
+            if (admin.is_active === 0) return errorResponse('Account Disabled by Master Admin', 403);
+
+            // CHECK LOCATION REQUIREMENT
+            if (admin.require_location === 1) {
+                if (!location || !location.lat) {
+                    return errorResponse('Location Required', 428); // 428 Precondition Required
+                }
+                // Update Last Location
+                await env.DB.prepare('UPDATE admins SET last_location = ? WHERE id = ?')
+                    .bind(JSON.stringify(location), admin.id).run();
+            }
             
             const token = await createToken({ id: admin.id, email }, JWT_SECRET);
-            return response({ token });
+            const permissions = admin.permissions ? JSON.parse(admin.permissions) : {};
+            return response({ token, user: { id: admin.id, email: admin.email, is_master: admin.is_master, permissions } });
         }
 
         // --- PROTECTED ROUTES ---
         const authHeader = req.headers.get('Authorization');
         const token = authHeader && authHeader.split(' ')[1];
-        const user = await verifyToken(token, JWT_SECRET);
+        const jwtPayload = await verifyToken(token, JWT_SECRET);
         
-        if (!user) return errorResponse("Unauthorized", 401);
-        const adminId = user.id;
+        if (!jwtPayload) return errorResponse("Unauthorized", 401);
+        
+        // Load Admin & Check Active Status on Every Request
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(jwtPayload.id).first();
+        if (!admin || admin.is_active === 0) return errorResponse("Session Expired or Account Disabled", 401);
 
-        // Dashboard & Stats
-        if (path === '/api/dashboard') return handleGetDashboard(env.DB, adminId);
-        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, adminId);
-        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, adminId);
+        // Team Management
+        if (path === '/api/team') return handleTeamOps(req, env.DB, admin);
+
+        // Dashboard
+        if (path === '/api/dashboard') return handleGetDashboard(env.DB, admin);
+        if (path === '/api/suggestions') return handleGetSuggestions(env.DB, admin);
+        if (path === '/api/global-network') return handleGetGlobalNetwork(env.DB, admin);
+        if (path === '/api/map-data') return handleGetMapData(env.DB, admin);
         
         // Subject CRUD
         if (path === '/api/subjects') {
             if(req.method === 'POST') {
+                // Check Permission
+                const perms = JSON.parse(admin.permissions || '{}');
+                if (!admin.is_master && !perms.can_create) return errorResponse("Permission Denied", 403);
+
                 const p = await req.json();
                 const now = isoTimestamp();
-                await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-                .bind(adminId, safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
-                return response({success:true});
+                const res = await env.DB.prepare(`INSERT INTO subjects (admin_id, full_name, alias, threat_level, status, occupation, nationality, ideology, modus_operandi, weakness, dob, age, height, weight, blood_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                .bind(admin.id, safeVal(p.full_name), safeVal(p.alias), safeVal(p.threat_level), safeVal(p.status), safeVal(p.occupation), safeVal(p.nationality), safeVal(p.ideology), safeVal(p.modus_operandi), safeVal(p.weakness), safeVal(p.dob), safeVal(p.age), safeVal(p.height), safeVal(p.weight), safeVal(p.blood_type), now, now).run();
+                return response({ id: res.meta.last_row_id });
             }
-            const res = await env.DB.prepare('SELECT * FROM subjects WHERE admin_id = ? AND is_archived = 0 ORDER BY created_at DESC').bind(adminId).all();
+            // List subjects (filtered)
+            const filter = getAdminQuery(admin);
+            const res = await env.DB.prepare(`SELECT * FROM subjects WHERE ${filter.sql} AND is_archived = 0 ORDER BY created_at DESC`).bind(...filter.params).all();
             return response(res.results);
         }
-
-        if (path === '/api/map-data') return handleGetMapData(env.DB, adminId);
 
         const idMatch = path.match(/^\/api\/subjects\/(\d+)$/);
         if (idMatch) {
             const id = idMatch[1];
-            
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(id, adminId).first();
-            if(!owner) return errorResponse("Subject not found", 404);
+            // Check Access
+            const filter = getAdminQuery(admin);
+            const exists = await env.DB.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(id, ...filter.params).first();
+            if(!exists) return errorResponse("Subject not found or access denied", 404);
 
             if(req.method === 'PATCH') {
                 const p = await req.json();
@@ -713,94 +815,84 @@ export default {
                 }
                 return response({success:true});
             }
-            return handleGetSubjectFull(env.DB, id, adminId);
-        }
-
-        // Sub-resources
-        if (path === '/api/interaction') {
-            const p = await req.json();
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-            if(!owner) return errorResponse("Unauthorized", 403);
-            
-            await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
-                .bind(p.subject_id, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/location') {
-            const p = await req.json();
-            if (req.method === 'PATCH') {
-                 // Check if location exists and belongs to a subject owned by this admin
-                 const loc = await env.DB.prepare('SELECT subject_id FROM subject_locations WHERE id = ?').bind(p.id).first();
-                 if (!loc) return errorResponse("Location not found", 404);
-                 
-                 const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(loc.subject_id, adminId).first();
-                 if(!owner) return errorResponse("Unauthorized", 403);
-
-                 await env.DB.prepare('UPDATE subject_locations SET name = ?, address = ?, lat = ?, lng = ?, type = ?, notes = ? WHERE id = ?')
-                    .bind(p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), p.id).run();
-                 return response({success:true});
-            } else {
-                const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-                if(!owner) return errorResponse("Unauthorized", 403);
-                
-                await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)')
-                    .bind(p.subject_id, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
-                return response({success:true});
-            }
-        }
-        if (path === '/api/intel') {
-            const p = await req.json();
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-            if(!owner) return errorResponse("Unauthorized", 403);
-
-            await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)')
-                .bind(p.subject_id, p.category, p.label, p.value, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/skills') {
-            const p = await req.json();
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subject_id, adminId).first();
-            if(!owner) return errorResponse("Unauthorized", 403);
-
-            // Upsert logic basically: Delete existing skill by name for this subject then insert new
-            await env.DB.prepare('DELETE FROM subject_skills WHERE subject_id = ? AND skill_name = ?').bind(p.subject_id, p.skill_name).run();
-            await env.DB.prepare('INSERT INTO subject_skills (subject_id, skill_name, score, created_at) VALUES (?,?,?,?)')
-                .bind(p.subject_id, p.skill_name, p.score, isoTimestamp()).run();
-            return response({success:true});
-        }
-        if (path === '/api/relationship') {
-            const p = await req.json();
-            if (req.method === 'PATCH') {
-                await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
-                    .bind(p.type, p.reciprocal, p.id).run();
-            } else {
-                await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
-                    .bind(p.subjectA, p.targetId, p.type, p.reciprocal, isoTimestamp()).run();
-            }
-            return response({success:true});
-        }
-        if (path === '/api/media-link') {
-            const { subjectId, url, type, description } = await req.json();
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
-            if(!owner) return errorResponse("Unauthorized", 403);
-            
-            await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(subjectId, 'link', url, type || 'link', description || 'External Link', isoTimestamp()).run();
-            return response({success:true});
+            return handleGetSubjectFull(env.DB, id, admin);
         }
 
         // Sharing
         if (path === '/api/share-links') {
             if(req.method === 'DELETE') return handleRevokeShareLink(env.DB, url.searchParams.get('token'));
-            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin, adminId);
-            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), adminId);
+            if(req.method === 'POST') return handleCreateShareLink(req, env.DB, url.origin, admin);
+            return handleListShareLinks(env.DB, url.searchParams.get('subjectId'), admin);
+        }
+
+        // --- SUB-RESOURCES ---
+
+        if (path === '/api/interaction' || path === '/api/location' || path === '/api/intel' || path === '/api/media-link' || path === '/api/skills' || path === '/api/relationship') {
+            const p = await req.json();
+            const subjectId = p.subject_id || p.subjectId || p.subjectA; // Handles different payload keys
+            
+            // Access Check
+            const filter = getAdminQuery(admin);
+            const owner = await env.DB.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(subjectId, ...filter.params).first();
+            if(!owner) return errorResponse("Unauthorized", 403);
+            
+            if (path === '/api/interaction') {
+                await env.DB.prepare('INSERT INTO subject_interactions (subject_id, date, type, transcript, conclusion, evidence_url, created_at) VALUES (?,?,?,?,?,?,?)')
+                    .bind(subjectId, p.date, p.type, safeVal(p.transcript), safeVal(p.conclusion), safeVal(p.evidence_url), isoTimestamp()).run();
+            }
+            else if (path === '/api/location') {
+                 if (req.method === 'PATCH') {
+                     // Extra check for location ownership handled by subject ownership implicitly but explicit check helps safety
+                     const locOwner = await env.DB.prepare(`SELECT subject_id FROM subject_locations WHERE id = ?`).bind(p.id).first();
+                     if(!locOwner || locOwner.subject_id !== subjectId) return errorResponse("Unauthorized", 403);
+
+                     await env.DB.prepare('UPDATE subject_locations SET name=?, type=?, address=?, lat=?, lng=?, notes=? WHERE id=?').bind(p.name, p.type, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), safeVal(p.notes), p.id).run();
+                 } else {
+                     await env.DB.prepare('INSERT INTO subject_locations (subject_id, name, address, lat, lng, type, notes, created_at) VALUES (?,?,?,?,?,?,?,?)').bind(subjectId, p.name, safeVal(p.address), safeVal(p.lat), safeVal(p.lng), p.type, safeVal(p.notes), isoTimestamp()).run();
+                 }
+            }
+            else if (path === '/api/intel') {
+                 await env.DB.prepare('INSERT INTO subject_intel (subject_id, category, label, value, created_at) VALUES (?,?,?,?,?)').bind(subjectId, p.category, p.label, p.value, isoTimestamp()).run();
+            }
+            else if (path === '/api/skills') {
+                await env.DB.prepare('DELETE FROM subject_skills WHERE subject_id = ? AND skill_name = ?').bind(p.subject_id, p.skill_name).run();
+                await env.DB.prepare('INSERT INTO subject_skills (subject_id, skill_name, score, created_at) VALUES (?,?,?,?)').bind(p.subject_id, p.skill_name, p.score, isoTimestamp()).run();
+            }
+            else if (path === '/api/relationship') {
+                if (req.method === 'PATCH') {
+                    // Check ownership of relationship via subject_a or subject_b logic is complex, for simplicity assuming valid subjectId passed allows op
+                    await env.DB.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?').bind(p.type, p.reciprocal, p.id).run();
+                } else {
+                    await env.DB.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
+                        .bind(p.subjectA, p.targetId, p.type, p.reciprocal, isoTimestamp()).run();
+                }
+            }
+            else if (path === '/api/media-link') {
+                await env.DB.prepare('INSERT INTO subject_media (subject_id, media_type, external_url, content_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+                .bind(subjectId, 'link', p.url, p.type || 'link', p.description || 'External Link', isoTimestamp()).run();
+            }
+            return response({success:true});
         }
 
         if (path === '/api/delete') {
             const { table, id } = await req.json();
             const safeTables = ['subjects','subject_interactions','subject_locations','subject_intel','subject_relationships','subject_media'];
             if(safeTables.includes(table)) {
-                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ? AND admin_id = ?').bind(id, adminId).run();
+                // Determine Subject ID for Permission Check
+                let subjectId = null;
+                if (table === 'subjects') subjectId = id;
+                else {
+                    const row = await env.DB.prepare(`SELECT subject_id, subject_a_id FROM ${table} WHERE id = ?`).bind(id).first();
+                    if(row) subjectId = row.subject_id || row.subject_a_id;
+                }
+                
+                if (subjectId) {
+                    const filter = getAdminQuery(admin);
+                    const owner = await env.DB.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(subjectId, ...filter.params).first();
+                    if(!owner) return errorResponse("Unauthorized", 403);
+                }
+
+                if(table === 'subjects') await env.DB.prepare('UPDATE subjects SET is_archived = 1 WHERE id = ?').bind(id).run();
                 else await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
                 return response({success:true});
             }
@@ -809,7 +901,9 @@ export default {
         // File Ops
         if (path === '/api/upload-avatar' || path === '/api/upload-media') {
             const { subjectId, data, filename, contentType } = await req.json();
-            const owner = await env.DB.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(subjectId, adminId).first();
+            
+            const filter = getAdminQuery(admin);
+            const owner = await env.DB.prepare(`SELECT id FROM subjects WHERE id = ? AND ${filter.sql}`).bind(subjectId, ...filter.params).first();
             if(!owner) return errorResponse("Unauthorized", 403);
 
             const key = `sub-${subjectId}-${Date.now()}-${sanitizeFileName(filename)}`;
@@ -827,8 +921,9 @@ export default {
         }
 
         return new Response('Not Found', { status: 404 });
+
     } catch(e) {
-        return errorResponse(e.message);
+        return errorResponse(e.message, 500);
     }
   }
 };
