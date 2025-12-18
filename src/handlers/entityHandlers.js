@@ -55,12 +55,22 @@ export async function handleSkills(req, db, adminId) {
     return response({success:true});
 }
 
-export async function handleRelationship(req, db) {
+export async function handleRelationship(req, db, adminId) {
     const p = await req.json();
     if (req.method === 'PATCH') {
+        const rel = await db.prepare('SELECT subject_a_id, subject_b_id FROM subject_relationships WHERE id = ?').bind(p.id).first();
+        if (!rel) return errorResponse("Relationship not found", 404);
+        const owner = await db.prepare('SELECT id FROM subjects WHERE (id = ? OR id = ?) AND admin_id = ?').bind(rel.subject_a_id, rel.subject_b_id, adminId).first();
+        if (!owner) return errorResponse("Unauthorized", 403);
         await db.prepare('UPDATE subject_relationships SET relationship_type = ?, role_b = ? WHERE id = ?')
             .bind(p.type, p.reciprocal, p.id).run();
     } else {
+        const ownerA = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.subjectA, adminId).first();
+        if (!ownerA) return errorResponse("Unauthorized", 403);
+        if (p.targetId) {
+            const ownerB = await db.prepare('SELECT id FROM subjects WHERE id = ? AND admin_id = ?').bind(p.targetId, adminId).first();
+            if (!ownerB) return errorResponse("Unauthorized", 403);
+        }
         await db.prepare('INSERT INTO subject_relationships (subject_a_id, subject_b_id, relationship_type, role_b, created_at) VALUES (?,?,?,?,?)')
             .bind(p.subjectA, p.targetId, p.type, p.reciprocal, isoTimestamp()).run();
     }

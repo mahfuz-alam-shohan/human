@@ -18,12 +18,28 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const loading = ref(false);
         const processing = ref(false); 
         const auth = reactive({ email: '', password: '' });
-        const tabs = [
+        const adminProfile = ref(null);
+        const allTabs = [
             { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Briefing' },
             { id: 'targets', icon: 'fa-solid fa-address-book', label: 'Database' },
             { id: 'map', icon: 'fa-solid fa-map-location-dot', label: 'Global Map' },
             { id: 'network', icon: 'fa-solid fa-circle-nodes', label: 'Network' },
+            { id: 'admins', icon: 'fa-solid fa-user-shield', label: 'Admins' },
         ];
+        const defaultAllowed = {
+            mainTabs: ['dashboard', 'targets', 'map', 'network'],
+            subjectTabs: ['overview', 'capabilities', 'attributes', 'timeline', 'map', 'network', 'files'],
+            permissions: {
+                createSubjects: true,
+                editSubjects: true,
+                deleteSubjects: true,
+                manageIntel: true,
+                manageLocations: true,
+                manageRelationships: true,
+                manageFiles: true,
+                manageShares: true
+            }
+        };
         
         const currentTab = ref('dashboard');
         const subTab = ref('overview');
@@ -33,6 +49,9 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const subjects = ref([]);
         const suggestions = reactive({ occupations: [], nationalities: [], ideologies: [] });
         const selected = ref(null);
+        const admins = ref([]);
+        const adminLogs = ref([]);
+        const editingAdminId = ref(null);
         const activeShareLinks = ref([]);
         const search = ref('');
         const modal = reactive({ active: null, data: null });
@@ -61,6 +80,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             const local = new Date(d.getTime() - offset);
             return local.toISOString().slice(0, 16);
         };
+        const cloneAllowed = () => JSON.parse(JSON.stringify(defaultAllowed));
 
         const forms = reactive({
             subject: {}, 
@@ -69,7 +89,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             intel: {}, 
             rel: { type: '', reciprocal: '' }, 
             share: { minutes: 60, requireLocation: false, allowedTabs: [] }, 
-            mediaLink: {}
+            mediaLink: {},
+            admin: { email: '', password: '', allowedSections: cloneAllowed(), is_disabled: false, is_master: false }
         });
 
         // Charts
@@ -103,6 +124,17 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         };
 
         // Computed
+        const allowedSections = computed(() => adminProfile.value?.allowed_sections || cloneAllowed());
+        const hasPermission = (perm) => adminProfile.value?.is_master || !!allowedSections.value.permissions?.[perm];
+        const canSeeTab = (tab) => {
+            if (tab === 'detail') return true;
+            if (tab === 'admins') return !!adminProfile.value?.is_master;
+            return adminProfile.value?.is_master || allowedSections.value.mainTabs.includes(tab);
+        };
+        const visibleTabs = computed(() => allTabs.filter(t => canSeeTab(t.id)));
+        const visibleSubjectTabs = computed(() => (adminProfile.value?.is_master ? defaultAllowed.subjectTabs : allowedSections.value.subjectTabs));
+        const pickSubjectTab = () => visibleSubjectTabs.value[0] || 'overview';
+        const subjectTabLabels = { overview: 'Overview', capabilities: 'Capabilities', attributes: 'Attributes', timeline: 'Timeline', map: 'Map', network: 'Network', files: 'Files' };
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
@@ -150,25 +182,70 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             } catch(e) { notify('System Error', e.message, 'error'); throw e; }
         };
 
+        const ensureTabValidity = () => {
+            if (currentTab.value === 'detail') return;
+            if (!visibleTabs.value.length) { currentTab.value = 'dashboard'; return; }
+            if (!visibleTabs.value.find(t => t.id === currentTab.value)) {
+                currentTab.value = visibleTabs.value[0]?.id || 'dashboard';
+            }
+        };
+        const ensureSubTabValidity = () => {
+            if (!visibleSubjectTabs.value.includes(subTab.value)) {
+                subTab.value = pickSubjectTab();
+            }
+        };
+
         const handleAuth = async () => {
             loading.value = true;
             try {
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(auth) });
                 localStorage.setItem('token', res.token);
+                adminProfile.value = res.admin;
                 view.value = 'app';
-                fetchData();
+                ensureTabValidity();
+                ensureSubTabValidity();
+                await fetchData();
+                if (currentTab.value === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
             } catch(e) {} finally { loading.value = false; }
+        };
+        const hydrateSession = async () => {
+            try {
+                const profile = await api('/me');
+                adminProfile.value = profile;
+                ensureTabValidity();
+                ensureSubTabValidity();
+            } catch(e) {
+                localStorage.removeItem('token');
+                view.value = 'auth';
+                throw e;
+            }
         };
 
         const fetchData = async () => {
-            const [d, s, sugg] = await Promise.all([api('/dashboard'), api('/subjects'), api('/suggestions')]);
-            stats.value = d.stats; feed.value = d.feed; subjects.value = s; Object.assign(suggestions, sugg);
+            const jobs = [];
+            if (canSeeTab('dashboard')) {
+                jobs.push(api('/dashboard').then(d => { stats.value = d.stats; feed.value = d.feed; }).catch(() => {}));
+            } else {
+                stats.value = {}; feed.value = [];
+            }
+
+            if (canSeeTab('targets')) {
+                jobs.push(api('/subjects').then(s => { subjects.value = s; }).catch(() => { subjects.value = []; }));
+                jobs.push(api('/suggestions').then(sugg => Object.assign(suggestions, sugg)).catch(() => {
+                    suggestions.occupations = []; suggestions.nationalities = []; suggestions.ideologies = [];
+                }));
+            } else {
+                subjects.value = [];
+                suggestions.occupations = []; suggestions.nationalities = []; suggestions.ideologies = [];
+            }
+            await Promise.all(jobs);
         };
 
         const viewSubject = async (id) => {
+            if (!canSeeTab('targets')) { notify('Access Denied', 'You cannot open profiles', 'error'); return; }
             selected.value = await api('/subjects/'+id);
             currentTab.value = 'detail';
-            subTab.value = 'overview';
+            subTab.value = pickSubjectTab();
             showProfileMapList.value = false; // Reset drawer state
             analysisResult.value = analyzeLocal(selected.value);
             if(modal.active === 'cmd' || modal.active === 'mini-profile') closeModal(); 
@@ -186,6 +263,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         // Skills Logic
         const getSkillScore = (name) => selected.value.skills?.find(s => s.skill_name === name)?.score || 50;
         const updateSkill = async (name, val) => {
+            if (!hasPermission('manageIntel')) { notify('Access Denied', 'Editing capabilities is restricted', 'error'); return; }
             await api('/skills', { method: 'POST', body: JSON.stringify({ subject_id: selected.value.id, skill_name: name, score: val }) });
             // Update local
             const idx = selected.value.skills.findIndex(s => s.skill_name === name);
@@ -232,6 +310,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
 
         // Quick Note
         const quickAppend = async (field) => {
+            if (!hasPermission('editSubjects')) { notify('Access Denied', 'You cannot modify notes', 'error'); return; }
             if (processing.value) return;
             const note = prompt("Add note:");
             if(!note) return;
@@ -355,9 +434,29 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             notify('Copied', str, 'success');
         };
 
-        const changeTab = (t) => { currentTab.value = t; };
-        const changeSubTab = (t) => { subTab.value = t; };
+        const changeTab = (t) => { 
+            if (!canSeeTab(t)) { notify('Access Denied', 'You cannot view this tab', 'error'); return; }
+            currentTab.value = t; 
+            if (t === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
+        };
+        const changeSubTab = (t) => { 
+            if (!visibleSubjectTabs.value.includes(t)) { notify('Access Denied', 'This section is hidden for you', 'error'); return; }
+            subTab.value = t; 
+        };
         const openModal = (t, item = null) => {
+             const permMap = {
+                'add-subject': 'createSubjects',
+                'edit-profile': 'editSubjects',
+                'add-interaction': 'manageIntel',
+                'add-intel': 'manageIntel',
+                'add-location': 'manageLocations',
+                'edit-location': 'manageLocations',
+                'add-rel': 'manageRelationships',
+                'edit-rel': 'manageRelationships',
+                'share-secure': 'manageShares',
+                'add-media-link': 'manageFiles'
+             };
+             if (permMap[t] && !hasPermission(permMap[t])) { notify('Access Denied', 'You are not allowed to do this', 'error'); return; }
              modal.active = t;
              if(t === 'add-subject') forms.subject = { threat_level: 'Low', status: 'Active' };
              if(t === 'edit-profile') forms.subject = { ...selected.value };
@@ -401,8 +500,11 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                     await viewSubject(selected.value.id);
                 } else {
                     await fetchData();
-                    if(currentTab.value === 'map') { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                    if(currentTab.value === 'map' && canSeeTab('map')) { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
+                    if(currentTab.value === 'admins' && adminProfile.value?.is_master) await fetchAdminConsole();
                 }
+                ensureTabValidity();
+                ensureSubTabValidity();
                 notify('Synced', 'Data refreshed', 'success');
             } catch(e) {
                 // error handled in api wrapper
@@ -417,6 +519,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             processing.value = true; 
             try { 
                 const isEdit = modal.active === 'edit-profile'; 
+                const required = isEdit ? 'editSubjects' : 'createSubjects';
+                if (!hasPermission(required)) { notify('Access Denied', 'You cannot save this profile', 'error'); return; }
                 await api(isEdit ? '/subjects/' + selected.value.id : '/subjects', { method: isEdit ? 'PATCH' : 'POST', body: JSON.stringify(forms.subject) }); 
                 if(isEdit) selected.value = { ...selected.value, ...forms.subject }; else fetchData(); 
                 closeModal(); 
@@ -426,12 +530,14 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         
         const submitInteraction = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageIntel')) { notify('Access Denied', 'You cannot log this', 'error'); return; }
             processing.value = true; 
             try { await api('/interaction', { method: 'POST', body: JSON.stringify(forms.interaction) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
         };
         
         const submitLocation = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageLocations')) { notify('Access Denied', 'You cannot edit locations', 'error'); return; }
             processing.value = true; 
             try { 
                 // Determine method based on presence of ID (edit vs add)
@@ -444,12 +550,14 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         
         const submitIntel = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageIntel')) { notify('Access Denied', 'You cannot add intel', 'error'); return; }
             processing.value = true; 
             try { await api('/intel', { method: 'POST', body: JSON.stringify(forms.intel) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
         };
         
         const submitRel = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageRelationships')) { notify('Access Denied', 'You cannot change relationships', 'error'); return; }
             processing.value = true; 
             try { 
                 const method = forms.rel.id ? 'PATCH' : 'POST'; 
@@ -461,12 +569,22 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         
         const submitMediaLink = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageFiles')) { notify('Access Denied', 'You cannot add files', 'error'); return; }
             processing.value = true; 
             try { await api('/media-link', { method: 'POST', body: JSON.stringify(forms.mediaLink) }); viewSubject(selected.value.id); closeModal(); } finally { processing.value = false; } 
         };
         
         const deleteItem = async (table, id) => { 
             if(processing.value) return;
+            const permMap = {
+                subject_interactions: 'manageIntel',
+                subject_locations: 'manageLocations',
+                subject_intel: 'manageIntel',
+                subject_relationships: 'manageRelationships',
+                subject_media: 'manageFiles'
+            };
+            const perm = permMap[table] || 'editSubjects';
+            if (!hasPermission(perm)) { notify('Access Denied', 'You cannot remove this', 'error'); return; }
             if(confirm('Delete item?')) { 
                 processing.value = true;
                 try { await api('/delete', { method: 'POST', body: JSON.stringify({ table, id }) }); viewSubject(selected.value.id); } finally { processing.value = false; }
@@ -475,6 +593,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         
         const deleteProfile = async () => { 
             if(processing.value) return;
+            if (!hasPermission('deleteSubjects')) { notify('Access Denied', 'You cannot delete profiles', 'error'); return; }
             if(confirm('WARNING: DELETE THIS PROFILE?')) { 
                 processing.value = true;
                 try { await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id: selected.value.id }) }); fetchData(); changeTab('targets'); } finally { processing.value = false; }
@@ -484,7 +603,10 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         // Files
         const fileInput = ref(null);
         const uploadType = ref(null);
-        const triggerUpload = (type) => { uploadType.value = type; fileInput.value.click(); };
+        const triggerUpload = (type) => { 
+            if (!hasPermission('manageFiles')) { notify('Access Denied', 'You cannot upload files', 'error'); return; }
+            uploadType.value = type; fileInput.value.click(); 
+        };
         const handleFile = async (e) => {
              const f = e.target.files[0]; if(!f) return;
              if(processing.value) return;
@@ -506,23 +628,68 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         
         const createShareLink = async () => { 
             if(processing.value) return;
+            if (!hasPermission('manageShares')) { notify('Access Denied', 'You cannot create shares', 'error'); return; }
             processing.value = true;
             try { await api('/share-links', { method: 'POST', body: JSON.stringify({ subjectId: selected.value.id, durationMinutes: forms.share.minutes, requireLocation: forms.share.requireLocation, allowedTabs: forms.share.allowedTabs }) }); fetchShareLinks(); } finally { processing.value = false; }
         };
         
         const revokeLink = async (t) => { 
             if(processing.value) return;
+            if (!hasPermission('manageShares')) { notify('Access Denied', 'You cannot revoke shares', 'error'); return; }
             processing.value = true;
             try { await api('/share-links?token='+t, { method: 'DELETE' }); fetchShareLinks(); } finally { processing.value = false; }
+        };
+
+        // Admin Management
+        const resetAdminForm = () => { editingAdminId.value = null; Object.assign(forms.admin, { email: '', password: '', allowedSections: cloneAllowed(), is_disabled: false, is_master: false }); };
+        const editAdmin = (admin) => {
+            editingAdminId.value = admin.id;
+            Object.assign(forms.admin, { email: admin.email, password: '', allowedSections: JSON.parse(JSON.stringify(admin.allowed_sections)), is_disabled: admin.is_disabled, is_master: admin.is_master });
+        };
+        const saveAdmin = async () => {
+            if (processing.value) return;
+            if (!adminProfile.value?.is_master) { notify('Access Denied', 'Only the master admin can do this', 'error'); return; }
+            if (!editingAdminId.value && !forms.admin.password) { notify('Missing Data', 'New admins need a password', 'error'); return; }
+            processing.value = true;
+            try {
+                const payload = { email: forms.admin.email, allowedSections: forms.admin.allowedSections, is_disabled: forms.admin.is_disabled, is_master: forms.admin.is_master };
+                if (forms.admin.password) payload.password = forms.admin.password;
+                if (editingAdminId.value) await api('/admins/' + editingAdminId.value, { method: 'PATCH', body: JSON.stringify(payload) });
+                else await api('/admins', { method: 'POST', body: JSON.stringify(payload) });
+                await fetchAdminConsole();
+                resetAdminForm();
+                notify('Saved', 'Admin permissions updated', 'success');
+            } finally { processing.value = false; }
+        };
+        const toggleAdminStatus = async (admin) => {
+            if (!adminProfile.value?.is_master) return notify('Access Denied', 'Master only', 'error');
+            await api('/admins/' + admin.id, { method: 'PATCH', body: JSON.stringify({ is_disabled: !admin.is_disabled }) });
+            await fetchAdminConsole();
+        };
+        const forceLogoutAdmin = async (admin) => {
+            if (!adminProfile.value?.is_master) return notify('Access Denied', 'Master only', 'error');
+            await api('/admins/' + admin.id, { method: 'PATCH', body: JSON.stringify({ forceLogout: true }) });
+            await fetchAdminConsole();
+            notify('Logged Out', admin.email + ' sessions revoked', 'success');
+        };
+        const fetchAdminConsole = async () => {
+            if (!adminProfile.value?.is_master) return;
+            const [list, logs] = await Promise.all([api('/admins'), api('/admins/logins')]);
+            admins.value = list;
+            adminLogs.value = logs;
         };
         
         const copyToClipboard = (t) => { navigator.clipboard.writeText(t); notify('Copied', 'Link copied', 'success'); };
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
-        const openSettings = () => { if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } };
+        const openSettings = () => { 
+            if (!adminProfile.value?.is_master) { notify('Master Only', 'Only the master admin can reset data', 'error'); return; }
+            if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } 
+        };
         const handleLogout = () => { localStorage.removeItem('token'); location.reload(); };
 
         watch(subTab, (val) => {
+            if(!visibleSubjectTabs.value.includes(val)) return;
             if(val === 'map') nextTick(() => initMap('subjectMap', selected.value.locations || []));
             if(val === 'capabilities') nextTick(renderSkillsChart); // RENDER CHART ON TAB CHANGE
             if(val === 'network') nextTick(() => {
@@ -564,8 +731,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         });
 
         watch(currentTab, (val) => {
-             if(val === 'map') nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
-             if(val === 'network') nextTick(async () => {
+             if(val === 'map' && canSeeTab('map')) nextTick(async () => { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); });
+             if(val === 'network' && canSeeTab('network')) nextTick(async () => {
                 const data = await api('/global-network');
                 const container = document.getElementById('globalNetworkGraph');
                 
@@ -662,17 +829,24 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                     }
                 });
             });
+            if (val === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
         });
 
-        onMounted(() => { if(localStorage.getItem('token')) { view.value = 'app'; fetchData(); } });
+        onMounted(async () => { 
+            if(localStorage.getItem('token')) { 
+                view.value = 'app'; 
+                await hydrateSession(); 
+                await fetchData(); 
+            } 
+        });
 
         return {
-            view, loading, processing, auth, tabs, currentTab, subTab, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
-            analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel,
+            view, loading, processing, auth, adminProfile, visibleTabs, currentTab, subTab, visibleSubjectTabs, subjectTabLabels, stats, feed, subjects, filteredSubjects, selected, search, modal, forms,
+            analysisResult, cmdQuery, cmdResults, cmdInput, locationSearchQuery, locationSearchResults, modalTitle, groupedIntel, admins, adminLogs,
             handleAuth, fetchData, viewSubject, changeTab, changeSubTab, openModal, closeModal, 
-            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile,
-            fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor,
-            activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout,
+            submitSubject, submitInteraction, submitLocation, submitIntel, submitRel, triggerUpload, handleFile, deleteItem, deleteProfile, hasPermission,
+            fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor, saveAdmin, editAdmin, resetAdminForm, toggleAdminStatus, forceLogoutAdmin,
+            activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout, fetchAdminConsole,
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
             showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
             fileInput,

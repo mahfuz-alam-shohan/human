@@ -18,7 +18,7 @@ export const DASHBOARD_SECTION = `
                             <div class="text-4xl font-black text-black mt-1">{{ stats.evidence || 0 }}</div>
                             <i class="fa-solid fa-file absolute -bottom-4 -right-4 text-6xl text-green-300 opacity-50 group-hover:rotate-12 transition-transform"></i>
                         </div>
-                        <button @click="openModal('add-subject')" class="bg-yellow-300 text-black p-4 rounded-xl fun-btn flex flex-col items-center justify-center gap-1 hover:bg-yellow-400">
+                        <button v-if="hasPermission('createSubjects')" @click="openModal('add-subject')" class="bg-yellow-300 text-black p-4 rounded-xl fun-btn flex flex-col items-center justify-center gap-1 hover:bg-yellow-400">
                             <i class="fa-solid fa-plus text-3xl"></i><span class="text-xs font-black uppercase font-heading">Add New</span>
                         </button>
                     </div>
