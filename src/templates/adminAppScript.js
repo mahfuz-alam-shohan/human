@@ -7,14 +7,14 @@ export const ADMIN_APP_SCRIPT = `
         // --- STATE ---
         const view = ref('auth');
         const loading = ref(false);
-        const user = ref({ permissions: {} }); // Current logged in user
+        const user = ref({ permissions: {} }); 
         const detailTab = ref('Intel');
         
         // Auth
         const auth = reactive({ email: '', password: '', reqLocation: false, error: null });
 
         // Data
-        const team = ref([]); // Admin list
+        const team = ref([]); 
         const subjects = ref([]);
         const feed = ref([]);
         const stats = ref({});
@@ -22,32 +22,22 @@ export const ADMIN_APP_SCRIPT = `
         const currentTab = ref('dashboard');
         const search = ref('');
         const filterStatus = ref('All');
-        const suggestions = reactive({ occupations: [], nationalities: [], ideologies: [] });
-        const shareResult = ref(null);
 
-        // Forms & Modals
+        // Forms
         const modal = reactive({ active: null });
         const forms = reactive({
-            admin: { permissions: { tabs: [], can_create: false } },
+            admin: { permissions: { tabs: [], allowed_ids: [], detail_tabs: [], can_create: false } },
             subject: { status: 'Active', threat_level: 'Low' },
-            intel: {},
-            interaction: {},
-            location: {},
-            relationship: {},
-            media: {},
-            share: { durationMinutes: 60, requireLocation: false, allowedTabs: ['Profile', 'Intel', 'Files', 'Map', 'History', 'Network'] }
+            intel: {}, interaction: {}, location: {}, relationship: {}, media: {}, skill: {}, share: {}
         });
         
-        // Notifications
         const toasts = ref([]);
-        const notify = (title, msg, type = 'success') => {
-             toasts.value.push({id:Date.now(), title, msg, color: type==='error'?'red':'green', icon: type==='error'?'fa-circle-xmark':'fa-circle-check'});
+        const notify = (title, msg) => {
+             toasts.value.push({id:Date.now(), title, msg, icon: 'fa-check-circle'});
              setTimeout(()=>toasts.value.shift(), 3000);
         };
 
-        // --- COMPUTED PROPERTIES ---
-
-        // Controls which sidebar tabs are visible based on Permissions
+        // --- COMPUTED ---
         const visibleTabs = computed(() => {
             const all = [
                 { id: 'dashboard', icon: 'fa-solid fa-chart-pie', label: 'Briefing' },
@@ -55,17 +45,12 @@ export const ADMIN_APP_SCRIPT = `
                 { id: 'map', icon: 'fa-solid fa-map-location-dot', label: 'Global Map' },
                 { id: 'network', icon: 'fa-solid fa-circle-nodes', label: 'Network' },
             ];
-            
             let allowed = all;
             if (!user.value.is_master) {
                 const tabs = user.value.permissions?.tabs || [];
                 allowed = all.filter(t => tabs.includes(t.id));
             }
-            
-            // Only Master sees Team tab
-            if (user.value.is_master) {
-                allowed.push({ id: 'team', icon: 'fa-solid fa-users-gear', label: 'Team' });
-            }
+            if (user.value.is_master) allowed.push({ id: 'team', icon: 'fa-solid fa-users-gear', label: 'Team' });
             return allowed;
         });
 
@@ -74,331 +59,218 @@ export const ADMIN_APP_SCRIPT = `
         const filteredSubjects = computed(() => {
             let res = subjects.value;
             if (filterStatus.value !== 'All') res = res.filter(s => s.status === filterStatus.value);
-            if (search.value) {
-                const q = search.value.toLowerCase();
-                res = res.filter(s => s.full_name.toLowerCase().includes(q) || (s.alias && s.alias.toLowerCase().includes(q)));
-            }
+            if (search.value) res = res.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase()) || (s.alias && s.alias.toLowerCase().includes(search.value.toLowerCase())));
             return res;
         });
 
-        // --- API WRAPPER ---
+        const canViewDetailTab = (tab) => {
+            if (user.value.is_master) return true;
+            const allowed = user.value.permissions?.detail_tabs || [];
+            return allowed.length === 0 || allowed.includes(tab);
+        };
+
+        // --- API ---
         const api = async (ep, opts = {}) => {
             const token = localStorage.getItem('token');
             const headers = { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) };
             try {
                 const res = await fetch('/api' + ep, { ...opts, headers });
-                
-                // Auth Errors
-                if(res.status === 401) { 
-                    localStorage.removeItem('token'); 
-                    view.value = 'auth'; 
-                    throw new Error("Session Expired"); 
-                }
-                // Location Requirement Trigger
+                if(res.status === 401) { localStorage.removeItem('token'); view.value = 'auth'; throw new Error("Expired"); }
                 if (res.status === 428) throw new Error("LOCATION_REQUIRED");
-
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 return data;
             } catch(e) {
-                if (e.message !== "LOCATION_REQUIRED") notify('System Error', e.message, 'error');
+                if (e.message !== "LOCATION_REQUIRED") notify('Error', e.message);
                 throw e;
             }
         };
 
-        // --- AUTHENTICATION FLOW ---
+        // --- AUTH ---
         const handleAuth = async (coords = null) => {
             loading.value = true;
             auth.error = null;
             try {
                 const body = { email: auth.email, password: auth.password };
                 if (coords) body.location = { lat: coords.latitude, lng: coords.longitude };
-
                 const res = await api('/login', { method: 'POST', body: JSON.stringify(body) });
-                
                 localStorage.setItem('token', res.token);
                 user.value = res.user;
                 view.value = 'app';
-                fetchData(); // Initial Data Load
-
+                fetchData();
             } catch(e) {
-                if (e.message === "LOCATION_REQUIRED") {
-                    auth.reqLocation = true; // Show Location UI
-                    auth.error = null;
-                } else {
-                    auth.error = e.message;
-                }
-            } finally {
-                loading.value = false;
-            }
+                if (e.message === "LOCATION_REQUIRED") auth.reqLocation = true;
+                else auth.error = e.message;
+            } finally { loading.value = false; }
         };
 
         const retryAuthWithLocation = () => {
              loading.value = true;
-             if (!navigator.geolocation) {
-                 auth.error = "Geolocation not supported by device";
-                 loading.value = false;
-                 return;
-             }
              navigator.geolocation.getCurrentPosition(
                  (pos) => handleAuth(pos.coords),
-                 (err) => {
-                     auth.error = "Location denied: " + err.message;
-                     loading.value = false;
-                 },
+                 (err) => { auth.error = "Location denied"; loading.value = false; },
                  { enableHighAccuracy: true }
              );
         };
 
-        const handleLogout = () => {
-            localStorage.removeItem('token');
-            location.reload();
-        };
+        const handleLogout = () => { localStorage.removeItem('token'); location.reload(); };
 
-        // --- DATA FETCHING ---
+        // --- DATA ---
         const fetchData = async () => {
-            try {
-                // Determine what to fetch based on permissions
-                const allowedIds = visibleTabs.value.map(t => t.id);
-                
-                if (user.value.is_master) fetchTeam();
-                
-                if (allowedIds.includes('dashboard')) {
-                    const d = await api('/dashboard');
-                    stats.value = d.stats; 
-                    feed.value = d.feed;
-                }
-                
-                if (allowedIds.includes('targets')) {
-                    subjects.value = await api('/subjects');
-                    const suggs = await api('/suggestions');
-                    Object.assign(suggestions, suggs);
-                }
-                
-                if (allowedIds.includes('map')) {
-                    // Map data fetched when tab activates
-                }
-
-            } catch(e) { console.error(e); }
+            const allowed = visibleTabs.value.map(t=>t.id);
+            if (user.value.is_master) team.value = await api('/team');
+            
+            if (allowed.includes('dashboard')) {
+                const d = await api('/dashboard');
+                stats.value = d.stats; feed.value = d.feed;
+                nextTick(initChart);
+            }
+            // Master needs subjects for dropdowns in modals even if tab hidden
+            if (allowed.includes('targets') || user.value.is_master) {
+                subjects.value = await api('/subjects');
+            }
         };
 
-        const fetchTeam = async () => {
-            team.value = await api('/team');
-        };
-
-        // --- TEAM MANAGEMENT ---
+        // --- ACTIONS ---
         const submitAdmin = async () => {
-             const endpoint = '/team';
              const method = modal.active === 'add-admin' ? 'POST' : 'PATCH';
-             await api(endpoint, { method, body: JSON.stringify(forms.admin) });
-             
-             fetchTeam();
-             closeModal();
-             notify('Team Updated', `Admin ${forms.admin.email} processed.`);
+             await api('/team', { method, body: JSON.stringify(forms.admin) });
+             fetchData(); closeModal(); notify('System', 'Admin Access Updated');
         };
 
         const deleteAdmin = async (id) => {
-            if(!confirm("Permanently revoke this admin's access?")) return;
-            await api('/team', { method: 'DELETE', body: JSON.stringify({id}) });
-            fetchTeam();
-            notify('Revoked', 'Admin removed from system');
+            if(confirm("Permanently remove this admin?")) { await api('/team', { method: 'DELETE', body: JSON.stringify({id}) }); fetchData(); }
         };
 
-        // --- SUBJECT MANAGEMENT ---
-        const submitSubject = async () => {
-            const method = modal.active === 'add-subject' ? 'POST' : 'PATCH';
-            const url = modal.active === 'add-subject' ? '/subjects' : '/subjects/' + forms.subject.id;
-            
-            const res = await api(url, { method, body: JSON.stringify(forms.subject) });
-            
-            if (modal.active === 'add-subject') {
-                viewSubject(res.id);
-            } else {
-                viewSubject(forms.subject.id); // Refresh
-            }
-            fetchData(); // Refresh list
-            closeModal();
-        };
-
-        const archiveSubject = async (id) => {
-            if(!confirm("Archive this profile? It will be hidden from main lists.")) return;
-            await api('/delete', { method: 'POST', body: JSON.stringify({ table: 'subjects', id }) });
-            selected.value = null;
-            currentTab.value = 'targets';
-            fetchData();
-        };
-
-        // --- SUB-DATA HANDLING (Generic) ---
         const submitGeneric = async () => {
-             const type = modal.active.split('-')[1]; // intel, interaction, location...
+             const type = modal.active.split('-')[1]; // subject, intel, interaction...
              let body = { ...forms[type] };
+             if (type !== 'subject') body.subject_id = selected.value.id;
+             if (type === 'relationship') body.subjectA = selected.value.id;
+
+             const method = (type === 'subject' && body.id) ? 'PATCH' : 'POST';
+             const url = type === 'subject' ? (body.id ? '/subjects/'+body.id : '/subjects') : '/' + type;
+
+             const res = await api(url, { method, body: JSON.stringify(body) });
              
-             // Contextual IDs
-             body.subject_id = selected.value.id; 
-             if (type === 'relationship') body.subjectA = selected.value.id; 
-
-             await api('/' + (type === 'media-link' ? 'media-link' : type), { method: 'POST', body: JSON.stringify(body) });
-             
-             viewSubject(selected.value.id); // Refresh detail view
-             closeModal();
-             notify('Data Logged', `${type} added to profile.`);
-        };
-
-        const handleFileUpload = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async () => {
-                const base64 = reader.result.split(',')[1];
-                await api('/upload-media', { 
-                    method: 'POST', 
-                    body: JSON.stringify({ 
-                        subjectId: selected.value.id, 
-                        data: base64, 
-                        filename: file.name, 
-                        contentType: file.type 
-                    }) 
-                });
-                viewSubject(selected.value.id);
-                notify('Upload Complete', 'File encrypted and stored.');
-            };
-            reader.readAsDataURL(file);
-        };
-
-        // --- VIEW LOGIC ---
-        const viewSubject = async (id) => {
-            loading.value = true;
-            try {
-                selected.value = await api('/subjects/'+id);
-                currentTab.value = 'detail';
-                // Reset map if map tab active
-                if(detailTab.value === 'Map') initSubjectMap(); 
-            } finally { loading.value = false; }
-        };
-
-        const resolveImg = (p) => p ? (p.startsWith('http') || p.startsWith('/') ? p : '/api/media/'+p) : null;
-
-        const changeTab = (t) => {
-             if (visibleTabs.value.find(vt => vt.id === t)) {
-                 currentTab.value = t;
-                 selected.value = null;
+             if (type === 'subject') {
+                 if(!body.id) viewSubject(res.id); // View new
+                 else viewSubject(body.id); // Refresh current
+                 fetchData();
+             } else {
+                 viewSubject(selected.value.id);
              }
+             closeModal();
+             notify('System', 'Data point committed');
+        };
+        
+        const handleFileUpload = (e) => {
+             const file = e.target.files[0];
+             if(!file) return;
+             const reader = new FileReader();
+             reader.onload = async () => {
+                 await api('/upload-media', { method:'POST', body: JSON.stringify({ subjectId: selected.value.id, data: reader.result.split(',')[1], filename: file.name, contentType: file.type })});
+                 viewSubject(selected.value.id);
+                 notify('Upload', 'File Encrypted & Stored');
+             }
+             reader.readAsDataURL(file);
         };
 
-        const openModal = (type, data = null) => {
+        const viewSubject = async (id) => {
+            selected.value = await api('/subjects/'+id);
+            currentTab.value = 'detail';
+            // Default tab logic
+            if (!canViewDetailTab(detailTab.value)) {
+                const tabs = ['Intel', 'Media', 'Network', 'Timeline', 'Map', 'Skills'];
+                detailTab.value = tabs.find(t => canViewDetailTab(t)) || '';
+            }
+            if(detailTab.value === 'Map') nextTick(initSubjectMap);
+        };
+
+        const openModal = (type, data) => {
             modal.active = type;
-            // Reset Forms
-            if (type === 'add-admin') forms.admin = { is_active: true, require_location: false, permissions: { tabs: ['dashboard', 'targets'], can_create: false } };
+            if (type === 'add-admin') forms.admin = { is_active: true, require_location: false, permissions: { tabs: ['dashboard', 'targets'], detail_tabs:['Intel','Media','Timeline','Network','Map','Skills'], allowed_ids: [], can_create: false } };
             if (type === 'edit-admin') forms.admin = { ...data, password: '' };
-            if (type === 'add-subject') forms.subject = { status: 'Active', threat_level: 'Low' };
+            if (type === 'add-subject') forms.subject = { status:'Active', threat_level:'Low' };
             if (type === 'edit-subject') forms.subject = { ...data };
-            
-            // Sub-forms
-            if (type === 'add-interaction') forms.interaction = { date: new Date().toISOString().slice(0,16), type: 'Sighting' };
-            if (type === 'add-location') forms.location = { type: 'Last Seen' };
-            if (type === 'share') { shareResult.value = null; forms.share.requireLocation = false; }
+            if (type.includes('interaction')) forms.interaction = { date: new Date().toISOString().slice(0,16), type:'Sighting' };
         };
 
         const closeModal = () => modal.active = null;
+        const changeTab = (t) => currentTab.value = t;
+        const resolveImg = (p) => p ? (p.startsWith('http')?p:'/api/media/'+p) : null;
 
-        // --- SHARING ---
-        const openShareModal = () => openModal('share');
-        
-        const createShare = async () => {
-            const res = await api('/share-links', { 
-                method: 'POST', 
-                body: JSON.stringify({ subjectId: selected.value.id, ...forms.share }) 
-            });
-            shareResult.value = res.url;
-        };
-
-        const copyShare = () => {
-            navigator.clipboard.writeText(shareResult.value);
-            notify('Copied', 'Secure link on clipboard');
-            closeModal();
-        };
-
-        // --- VISUALIZATION INIT ---
-        
-        const initSubjectMap = () => {
-             nextTick(() => {
-                const el = document.getElementById('subjectMap');
-                if(!el || !selected.value) return;
-                // Re-init logic (Leaflet requires destroying old map or check if exists)
-                // Simplified for this context:
-                if(el._leaflet_id) return; // Already init
-                
-                const map = L.map('subjectMap').setView([20,0], 2);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
-                
-                selected.value.locations.forEach(l => {
-                    L.marker([l.lat, l.lng]).addTo(map).bindPopup(l.name + ' (' + l.type + ')');
-                });
+        // --- VISUALIZATION ---
+        const initChart = () => {
+             const ctx = document.getElementById('dashboardChart');
+             if(!ctx || window.myChart) return;
+             // Mock data for visual, real data can be derived from feed
+             window.myChart = new Chart(ctx, {
+                 type: 'line',
+                 data: { labels: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], datasets: [{ label: 'Signals', data: [12, 19, 3, 5, 2, 3, 9], borderColor: 'black', tension: 0.4 }] },
+                 options: { responsive: true, maintainAspectRatio: false }
              });
+        };
+
+        const initSubjectMap = () => {
+             const mapId = 'subjectMap';
+             const el = document.getElementById(mapId);
+             if(!el) return;
+             // Crude re-init prevention
+             if(el.innerHTML) el.innerHTML = '';
+             const map = L.map(mapId).setView([20,0], 2);
+             L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+             selected.value.locations.forEach(l => L.marker([l.lat, l.lng]).addTo(map).bindPopup(l.name));
         };
 
         const initGlobalMap = async () => {
              const data = await api('/map-data');
              const el = document.getElementById('warRoomMap');
              if(!el) return;
-             // Check if map already exists to avoid error
-             // Note: In real app, store map instance in ref to remove() it.
+             if(el.innerHTML) el.innerHTML = '';
              const map = L.map('warRoomMap').setView([20,0], 2);
              L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
              data.forEach(d => {
-                 L.marker([d.lat, d.lng]).addTo(map).bindPopup(\`<b>\${d.full_name}</b><br>\${d.name}\`);
+                 const icon = L.divIcon({ className: 'custom-icon', html: \`<div class="w-2 h-2 bg-red-500 rounded-full border border-white"></div>\` });
+                 L.marker([d.lat, d.lng], {icon}).addTo(map).bindPopup(\`<b>\${d.full_name}</b><br>\${d.name}\`);
              });
         };
 
         const initNetwork = async () => {
-             const data = await api('/global-network');
+             const d = await api('/global-network');
              const container = document.getElementById('globalNetworkGraph');
              if(!container) return;
-             
              const options = {
                  nodes: { borderWidth: 2, size: 30, color: { border: '#000', background: '#fff' }, font: { color: '#fff' } },
                  edges: { color: 'gray', smooth: true },
-                 physics: { stabilization: false, barnesHut: { gravitationalConstant: -8000 } }
+                 physics: { stabilization: false }
              };
-             new vis.Network(container, data, options);
+             new vis.Network(container, d, options);
         };
 
-        // --- WATCHERS ---
         watch(currentTab, (t) => {
-             if (t === 'map') nextTick(initGlobalMap);
-             if (t === 'network') nextTick(initNetwork);
+            if(t==='map') nextTick(initGlobalMap);
+            if(t==='network') nextTick(initNetwork);
+            if(t==='dashboard') nextTick(initChart);
         });
         
-        watch(detailTab, (t) => {
-             if (t === 'Map') initSubjectMap();
-        });
+        watch(detailTab, (t) => { if(t==='Map') nextTick(initSubjectMap); });
 
-        // --- LIFECYCLE ---
         onMounted(() => {
-            const t = localStorage.getItem('token');
-            if(t) {
+            if(localStorage.getItem('token')) {
                 try {
-                    // Pre-decode for UI
-                    const payload = JSON.parse(atob(t.split('.')[1]));
+                    const payload = JSON.parse(atob(localStorage.getItem('token').split('.')[1]));
                     user.value = { is_master: false, email: payload.email }; 
-                    handleAuth(); // Verify token & get fresh permissions
-                } catch(e) {
-                    view.value = 'auth';
-                }
+                    handleAuth();
+                } catch(e) { view.value = 'auth'; }
             }
         });
 
         return {
-            view, loading, auth, user, visibleTabs, canCreate,
-            currentTab, detailTab, stats, feed, team, subjects, filteredSubjects, selected,
-            modal, forms, toasts, suggestions, shareResult,
-            search, filterStatus,
-            
-            handleAuth, retryAuthWithLocation, handleLogout,
-            changeTab, openModal, closeModal, viewSubject,
-            submitAdmin, deleteAdmin, submitSubject, submitGeneric, archiveSubject,
-            handleFileUpload, resolveImg, fetchData,
-            openShareModal, createShare, copyShare
+            view, auth, user, team, subjects, feed, stats, selected, currentTab, detailTab,
+            visibleTabs, canCreate, filteredSubjects, modal, forms, toasts, search, filterStatus, loading,
+            handleAuth, retryAuthWithLocation, handleLogout, fetchData, submitAdmin, deleteAdmin,
+            submitGeneric, handleFileUpload, viewSubject, openModal, closeModal, changeTab, resolveImg, canViewDetailTab
         };
       }
     }).mount('#app');
