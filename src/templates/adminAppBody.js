@@ -1,5 +1,5 @@
 export const ADMIN_APP_BODY = `
-<body class="h-[100dvh] overflow-hidden text-slate-900">
+<body class="h-[100dvh] overflow-hidden text-slate-900 bg-slate-50 font-sans">
   <div id="app" class="h-full flex flex-col">
 
     <!-- TOAST NOTIFICATIONS -->
@@ -14,659 +14,639 @@ export const ADMIN_APP_BODY = `
     </div>
 
     <!-- AUTH SCREEN -->
-    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative bg-yellow-100">
-        <!-- Decoration blobbies -->
-        <div class="absolute inset-0 overflow-hidden pointer-events-none">
-            <div class="absolute top-10 left-10 text-9xl text-pink-300 opacity-50 rotate-12"><i class="fa-solid fa-cloud"></i></div>
-            <div class="absolute bottom-10 right-10 text-9xl text-blue-300 opacity-50 -rotate-12"><i class="fa-solid fa-star"></i></div>
-        </div>
-
+    <div v-if="view === 'auth'" class="flex-1 flex items-center justify-center p-6 relative bg-yellow-50 pattern-grid">
         <div class="w-full max-w-sm fun-card p-8 relative z-10 bg-white">
             <div class="text-center mb-8">
                 <div class="w-20 h-20 bg-yellow-300 border-4 border-black rounded-full flex items-center justify-center mx-auto mb-4 text-black text-3xl shadow-[4px_4px_0px_#000]">
-                    <i class="fa-solid fa-face-smile-wink"></i>
+                    <i class="fa-solid fa-user-secret"></i>
                 </div>
-                <h1 class="text-4xl font-heading font-black text-black tracking-tight mb-1">People OS</h1>
-                <p class="text-slate-500 text-lg font-bold">Top Secret Stuff! 🤫</p>
+                <h1 class="text-4xl font-heading font-black text-black tracking-tight mb-1">PEOPLE OS</h1>
+                <div class="text-xs font-bold text-gray-400 tracking-widest uppercase">Intelligence Database</div>
             </div>
+            
+            <div v-if="auth.reqLocation" class="bg-blue-50 border-2 border-blue-500 rounded-xl p-4 mb-4 text-center animate-pulse">
+                <i class="fa-solid fa-location-dot text-3xl text-blue-500 mb-2"></i>
+                <div class="text-sm font-bold text-blue-900">Security Check</div>
+                <div class="text-xs text-blue-700">Master Admin requires your location to grant access.</div>
+            </div>
+
             <form @submit.prevent="handleAuth" class="space-y-4">
-                <input v-model="auth.email" type="email" placeholder="Who are you?" class="fun-input w-full p-4 text-lg" required>
-                <input v-model="auth.password" type="password" placeholder="Secret Password" class="fun-input w-full p-4 text-lg" required>
-                <button type="submit" :disabled="loading" class="w-full bg-violet-500 hover:bg-violet-400 text-white font-heading font-bold py-4 rounded-xl text-lg fun-btn flex items-center justify-center">
+                <input v-model="auth.email" type="email" placeholder="Identifier" class="fun-input w-full p-4 text-lg" required :disabled="auth.reqLocation">
+                <input v-model="auth.password" type="password" placeholder="Passcode" class="fun-input w-full p-4 text-lg" required :disabled="auth.reqLocation">
+                
+                <button v-if="!auth.reqLocation" type="submit" :disabled="loading" class="w-full bg-violet-600 hover:bg-violet-500 text-white font-heading font-bold py-4 rounded-xl text-lg fun-btn flex items-center justify-center">
                     <i v-if="loading" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-                    {{ loading ? 'Checking...' : 'Let Me In!' }}
+                    {{ loading ? 'Verifying...' : 'Access System' }}
+                </button>
+                
+                <button v-else type="button" @click="retryAuthWithLocation" :disabled="loading" class="w-full bg-blue-500 hover:bg-blue-400 text-white font-heading font-bold py-4 rounded-xl text-lg fun-btn flex items-center justify-center">
+                     <i v-if="loading" class="fa-solid fa-satellite-dish fa-spin mr-2"></i>
+                     {{ loading ? 'Acquiring GPS...' : 'Share Location & Login' }}
                 </button>
             </form>
+            <div v-if="auth.error" class="mt-4 text-center text-red-500 font-bold text-sm bg-red-100 p-2 rounded border border-red-200">{{ auth.error }}</div>
         </div>
     </div>
 
     <!-- MAIN APP -->
     <div v-else class="flex-1 flex flex-col md:flex-row h-full overflow-hidden relative">
         
-        <!-- SIDEBAR (Desktop) -->
+        <!-- SIDEBAR -->
         <nav class="hidden md:flex flex-col w-24 bg-white border-r-4 border-black items-center py-6 z-20 shrink-0">
-            <div class="mb-8 text-yellow-500 text-4xl drop-shadow-[2px_2px_0px_#000]"><i class="fa-solid fa-cube"></i></div>
-            <div class="flex-1 space-y-4 w-full px-3">
-                <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'bg-pink-300 text-black shadow-[3px_3px_0px_#000]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" class="w-full aspect-square rounded-2xl border-4 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none" :title="t.label">
-                    <i :class="t.icon" class="text-2xl group-hover:scale-110 transition-transform"></i>
-                    <span class="text-[10px] font-heading font-bold uppercase tracking-wider">{{t.label}}</span>
+            <div class="mb-8 text-yellow-500 text-4xl drop-shadow-[2px_2px_0px_#000] cursor-pointer hover:scale-110 transition-transform" @click="changeTab('dashboard')"><i class="fa-solid fa-cube"></i></div>
+            
+            <div class="flex-1 space-y-4 w-full px-3 overflow-y-auto no-scrollbar">
+                <button v-for="t in visibleTabs" :key="t.id" @click="changeTab(t.id)" 
+                    :class="currentTab === t.id ? 'bg-black text-white shadow-[3px_3px_0px_rgba(0,0,0,0.3)]' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'" 
+                    class="w-full aspect-square rounded-2xl border-2 border-black flex flex-col items-center justify-center gap-1 transition-all group active:translate-y-1 active:shadow-none relative">
+                    <i :class="t.icon" class="text-xl group-hover:scale-110 transition-transform"></i>
+                    <span class="text-[9px] font-heading font-bold uppercase tracking-wider">{{t.label}}</span>
+                    <!-- Team Badge -->
+                    <div v-if="t.id === 'team'" class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></div>
                 </button>
             </div>
-            
-            <!-- Desktop Refresh Button -->
-            <button @click="refreshApp" :disabled="processing" class="text-gray-400 hover:text-green-500 p-4 transition-colors text-xl" title="Refresh Data">
-                <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
-            </button>
 
-            <button @click="openModal('cmd')" class="text-gray-400 hover:text-blue-500 p-4 transition-colors text-xl"><i class="fa-solid fa-magnifying-glass"></i></button>
-            <button @click="openSettings" class="text-gray-400 hover:text-black p-4 transition-colors text-xl"><i class="fa-solid fa-gear"></i></button>
-            <button @click="handleLogout" class="text-gray-400 hover:text-red-500 p-4 transition-colors text-xl"><i class="fa-solid fa-power-off"></i></button>
+            <div class="flex flex-col items-center gap-4 w-full px-2 mt-4">
+                <div v-if="user.is_master" class="text-[8px] font-black uppercase text-center bg-yellow-300 px-1 py-0.5 rounded border border-black w-full text-black">MASTER</div>
+                <div v-else class="text-[8px] font-black uppercase text-center bg-gray-200 px-1 py-0.5 rounded border border-gray-400 w-full text-gray-500">AGENT</div>
+                <button @click="handleLogout" class="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-colors"><i class="fa-solid fa-power-off text-xl"></i></button>
+            </div>
         </nav>
 
-        <!-- MOBILE TOP BAR -->
-        <header class="md:hidden h-16 bg-white border-b-4 border-black flex items-center justify-between px-4 z-20 shrink-0 sticky top-0 shadow-lg">
-            <div class="flex items-center gap-2">
-                <div class="w-10 h-10 bg-violet-500 rounded-lg border-2 border-black flex items-center justify-center text-white text-lg shadow-[2px_2px_0px_#000]">
-                    <i class="fa-solid fa-cube"></i>
-                </div>
-                <span class="font-heading font-black text-xl text-black tracking-tight">People OS</span>
-            </div>
-            <div class="flex items-center gap-1">
-                 <!-- Mobile Refresh Button -->
-                 <button @click="refreshApp" :disabled="processing" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-green-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all">
-                    <i class="fa-solid fa-arrows-rotate" :class="{'spin-fast': processing}"></i>
-                 </button>
-                 <button @click="openModal('cmd')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center text-black hover:bg-yellow-100 bg-white shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-magnifying-glass"></i></button>
-            </div>
-        </header>
+        <!-- CONTENT AREA -->
+        <main class="flex-1 relative overflow-hidden flex flex-col pb-20 md:pb-0 safe-area-pb bg-slate-50">
 
-        <!-- CONTENT -->
-        <main class="flex-1 relative overflow-hidden flex flex-col pb-20 md:pb-0 safe-area-pb">
+            <!-- TAB: DASHBOARD -->
+            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0 custom-scrollbar">
+                 <div class="max-w-7xl mx-auto space-y-6">
+                    <!-- Header -->
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h2 class="text-4xl font-heading font-black text-black">Command Center</h2>
+                            <p class="text-gray-500 font-bold">Welcome back, {{ user.email }}</p>
+                        </div>
+                        <div class="flex gap-2">
+                             <button v-if="canCreate" @click="openModal('add-subject')" class="bg-black text-white px-6 py-3 rounded-xl fun-btn font-bold flex items-center gap-2">
+                                <i class="fa-solid fa-plus"></i> New Target
+                            </button>
+                        </div>
+                    </div>
 
-            <!-- DASHBOARD -->
-            <div v-if="currentTab === 'dashboard'" class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0">
-                <div class="max-w-6xl mx-auto space-y-6">
+                    <!-- Stats Row -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div class="fun-card p-4 bg-pink-100 relative overflow-hidden group hover:-rotate-1">
-                            <div class="text-xs text-pink-600 font-black font-heading uppercase tracking-wider">Subjects</div>
-                            <div class="text-4xl font-black text-black mt-1">{{ stats.targets || 0 }}</div>
-                            <i class="fa-solid fa-users absolute -bottom-4 -right-4 text-6xl text-pink-300 opacity-50 group-hover:rotate-12 transition-transform"></i>
+                        <div class="fun-card p-4 bg-white flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center text-xl border-2 border-pink-200"><i class="fa-solid fa-users"></i></div>
+                            <div><div class="text-3xl font-black">{{ stats.targets || 0 }}</div><div class="text-xs text-gray-500 font-bold uppercase">Subjects</div></div>
                         </div>
-                        <div class="fun-card p-4 bg-blue-100 relative overflow-hidden group hover:rotate-1">
-                            <div class="text-xs text-blue-600 font-black font-heading uppercase tracking-wider">Events</div>
-                            <div class="text-4xl font-black text-black mt-1">{{ stats.encounters || 0 }}</div>
-                            <i class="fa-solid fa-comments absolute -bottom-4 -right-4 text-6xl text-blue-300 opacity-50 group-hover:-rotate-12 transition-transform"></i>
+                        <div class="fun-card p-4 bg-white flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xl border-2 border-blue-200"><i class="fa-solid fa-eye"></i></div>
+                            <div><div class="text-3xl font-black">{{ stats.encounters || 0 }}</div><div class="text-xs text-gray-500 font-bold uppercase">Sightings</div></div>
                         </div>
-                        <div class="fun-card p-4 bg-green-100 relative overflow-hidden group hover:-rotate-1">
-                            <div class="text-xs text-green-600 font-black font-heading uppercase tracking-wider">Evidence</div>
-                            <div class="text-4xl font-black text-black mt-1">{{ stats.evidence || 0 }}</div>
-                            <i class="fa-solid fa-file absolute -bottom-4 -right-4 text-6xl text-green-300 opacity-50 group-hover:rotate-12 transition-transform"></i>
+                        <div class="fun-card p-4 bg-white flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xl border-2 border-purple-200"><i class="fa-solid fa-file-contract"></i></div>
+                            <div><div class="text-3xl font-black">{{ stats.evidence || 0 }}</div><div class="text-xs text-gray-500 font-bold uppercase">Files</div></div>
                         </div>
-                        <button @click="openModal('add-subject')" class="bg-yellow-300 text-black p-4 rounded-xl fun-btn flex flex-col items-center justify-center gap-1 hover:bg-yellow-400">
-                            <i class="fa-solid fa-plus text-3xl"></i><span class="text-xs font-black uppercase font-heading">Add New</span>
-                        </button>
+                         <div class="fun-card p-4 bg-green-100 flex items-center gap-4 border-green-300">
+                            <div class="w-12 h-12 rounded-full bg-green-200 text-green-700 flex items-center justify-center text-xl border-2 border-green-400"><i class="fa-solid fa-satellite"></i></div>
+                            <div><div class="text-xs font-black text-green-800 uppercase">System Status</div><div class="text-sm font-bold text-green-700">ONLINE</div></div>
+                        </div>
                     </div>
 
-                    <div class="fun-card overflow-hidden flex flex-col h-[50vh] md:h-auto border-4">
-                        <div class="p-4 border-b-4 border-black flex justify-between items-center bg-white">
-                            <h3 class="text-lg font-heading font-black text-black"><i class="fa-solid fa-bolt text-yellow-500 mr-2"></i>Recent Buzz</h3>
-                            <button @click="fetchData" class="text-gray-400 hover:text-black hover:rotate-180 transition-transform duration-500"><i class="fa-solid fa-arrows-rotate text-xl"></i></button>
+                    <!-- Feed -->
+                    <div class="fun-card overflow-hidden flex flex-col h-[50vh] border-4 bg-white">
+                        <div class="p-4 border-b-4 border-black bg-gray-50 flex justify-between items-center">
+                            <h3 class="text-lg font-heading font-black"><i class="fa-solid fa-bell mr-2 text-yellow-500"></i>Intel Feed</h3>
+                            <button @click="fetchData" class="text-sm font-bold text-blue-500 hover:underline">Refresh</button>
                         </div>
-                        <div class="divide-y-2 divide-black overflow-y-auto flex-1 min-h-0 bg-white">
-                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-4 hover:bg-gray-50 cursor-pointer flex gap-4 items-start transition-colors">
-                                <div class="w-12 h-12 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 shrink-0 border-2 border-black shadow-[2px_2px_0px_#000]">
-                                    <i class="fa-solid" :class="item.type === 'interaction' ? 'fa-comments' : (item.type === 'location' ? 'fa-location-dot' : 'fa-user')"></i>
+                        <div class="overflow-y-auto flex-1 bg-white p-2 space-y-2 custom-scrollbar">
+                            <div v-for="item in feed" :key="item.date" @click="viewSubject(item.ref_id)" class="p-3 hover:bg-blue-50 cursor-pointer border border-gray-100 rounded-xl flex items-start gap-3 transition-colors group">
+                                <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 group-hover:bg-blue-200 group-hover:text-blue-700 border border-gray-200 shrink-0">
+                                    <i v-if="item.type === 'subject'" class="fa-solid fa-user"></i>
+                                    <i v-else-if="item.type === 'interaction'" class="fa-solid fa-comments"></i>
+                                    <i v-else class="fa-solid fa-map-pin"></i>
                                 </div>
-                                <div class="min-w-0 pt-1">
-                                    <div class="text-base font-black font-heading text-black truncate">{{ item.title }}</div>
-                                    <div class="text-xs font-bold text-gray-500 mt-0.5 truncate">{{ item.desc }} &bull; {{ new Date(item.date).toLocaleDateString() }}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- TARGETS LIST -->
-            <div v-if="currentTab === 'targets'" class="flex-1 flex flex-col min-h-0 h-full">
-                <div class="p-4 border-b-4 border-black bg-white z-10 sticky top-0 shrink-0">
-                    <div class="relative max-w-2xl mx-auto">
-                        <i class="fa-solid fa-search absolute left-4 top-4 text-gray-400 text-lg"></i>
-                        <input v-model="search" placeholder="Find someone..." class="fun-input w-full py-3 pl-12 pr-4 text-lg">
-                    </div>
-                </div>
-                
-                <div class="flex-1 overflow-y-auto min-h-0 p-4 flex flex-col md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
-                    <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="fun-card p-4 cursor-pointer hover:bg-blue-50 group relative overflow-hidden flex gap-4 items-center shrink-0 min-h-[90px] border-black border-3">
-                         <div class="w-16 h-16 bg-gray-200 rounded-full overflow-hidden shrink-0 border-2 border-black shadow-[2px_2px_0px_#000]">
-                            <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover">
-                            <div v-else class="w-full h-full flex items-center justify-center text-gray-400 text-xl font-black">{{ s.full_name.charAt(0) }}</div>
-                        </div>
-                        <div class="min-w-0 flex-1">
-                            <div class="font-black font-heading text-lg text-black truncate">{{ s.full_name }}</div>
-                            <div class="text-xs font-bold text-gray-500 truncate mb-2">{{ s.occupation || 'Unknown' }}</div>
-                            <span class="text-[10px] px-2 py-1 rounded-lg uppercase font-black border-2 border-black inline-block" :class="getThreatColor(s.threat_level)">{{ s.threat_level }}</span>
-                        </div>
-                        <i class="fa-solid fa-chevron-right text-gray-300 absolute right-4 group-hover:text-black group-hover:translate-x-1 transition-all"></i>
-                    </div>
-                </div>
-            </div>
-
-            <!-- GLOBAL MAP TAB -->
-            <div v-if="currentTab === 'map'" class="flex-1 flex h-full relative bg-blue-100 min-h-0 border-4 border-black m-2 md:m-4 rounded-xl overflow-hidden shadow-[4px_4px_0px_#000]">
-                <div class="absolute inset-0 z-0" id="warRoomMap"></div>
-                <div class="absolute top-4 left-1/2 -translate-x-1/2 z-[400] w-64 md:w-80">
-                    <div class="relative group">
-                        <input v-model="mapSearchQuery" @input="updateMapFilter" placeholder="Scout Map..." class="w-full bg-white border-4 border-black rounded-full py-2 pl-10 pr-4 font-bold text-sm shadow-[4px_4px_0px_#000] focus:outline-none focus:translate-y-1 focus:shadow-none transition-all">
-                        <i class="fa-solid fa-crosshairs absolute left-3.5 top-3 text-black"></i>
-                    </div>
-                </div>
-                <div class="absolute top-16 left-4 bottom-4 w-72 fun-card z-[400] flex flex-col overflow-hidden shadow-2xl transition-transform duration-300 p-0" :class="{'translate-x-0': showMapSidebar, '-translate-x-[120%]': !showMapSidebar}">
-                    <div class="p-3 border-b-4 border-black flex justify-between items-center bg-yellow-200">
-                        <h3 class="font-black font-heading text-black">Active Points</h3>
-                        <div class="text-xs font-bold bg-white border-2 border-black text-black px-2 py-0.5 rounded-md">{{filteredMapData.length}}</div>
-                    </div>
-                    <div class="flex-1 overflow-y-auto p-2 space-y-2 bg-white min-h-0">
-                        <div v-for="loc in filteredMapData" @click="flyToGlobal(loc)" class="p-2 rounded-xl hover:bg-gray-100 cursor-pointer border-2 border-transparent hover:border-black transition-all flex items-center gap-3">
-                             <div class="w-10 h-10 rounded-full overflow-hidden border-2 border-black bg-gray-100 shrink-0"><img :src="resolveImg(loc.avatar_path) || 'https://ui-avatars.com/api/?name='+loc.full_name" class="w-full h-full object-cover"></div>
-                             <div class="min-w-0"><div class="font-bold text-sm text-black truncate font-heading">{{loc.full_name}}</div><div class="text-[10px] font-bold text-gray-500 truncate">{{loc.name}}</div></div>
-                        </div>
-                    </div>
-                </div>
-                <button @click="showMapSidebar = !showMapSidebar" class="absolute top-16 left-4 z-[401] bg-white p-3 rounded-xl shadow-[4px_4px_0px_#000] text-black border-4 border-black fun-btn" v-if="!showMapSidebar"><i class="fa-solid fa-list-ul"></i></button>
-            </div>
-
-            <!-- GLOBAL NETWORK TAB -->
-            <div v-if="currentTab === 'network'" class="flex-1 flex flex-col h-full bg-white relative min-h-0 m-4 border-4 border-black rounded-xl shadow-[4px_4px_0px_#000] overflow-hidden">
-                <div id="globalNetworkGraph" class="w-full h-full bg-white"></div>
-            </div>
-
-            <!-- SUBJECT DETAIL -->
-            <div v-if="currentTab === 'detail' && selected" class="flex-1 flex flex-col min-h-0 h-full bg-white">
-                
-                <!-- HEADER (FIXED HEIGHT) -->
-                <div class="min-h-[5rem] h-auto border-b-4 border-black flex items-center px-4 justify-between bg-yellow-50 z-10 sticky top-0 shrink-0 py-2">
-                    <div class="flex items-center gap-3 min-w-0">
-                        <button @click="changeTab('targets')" class="w-10 h-10 rounded-full flex items-center justify-center text-black border-2 border-black bg-white hover:bg-gray-100 shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all shrink-0"><i class="fa-solid fa-arrow-left"></i></button>
-                        <div class="min-w-0">
-                            <div class="font-black font-heading text-xl text-black truncate">{{ selected.full_name }}</div>
-                            <div class="text-xs font-bold text-gray-500 truncate uppercase tracking-widest">{{ selected.alias || 'The Profile' }}</div>
-                        </div>
-                    </div>
-                    <!-- WRAP ADDED HERE -->
-                    <div class="flex gap-2 flex-wrap justify-end shrink-0 ml-2 max-w-[50%]">
-                        <button @click="exportData" class="hidden md:flex items-center gap-2 bg-white hover:bg-gray-50 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-download"></i> JSON</button>
-                        <button @click="deleteProfile" class="bg-red-400 hover:bg-red-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-trash"></i></button>
-                        <button @click="openModal('edit-profile')" class="bg-blue-400 hover:bg-blue-300 text-white px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-pen"></i></button>
-                        <button @click="openModal('share-secure')" class="bg-yellow-400 hover:bg-yellow-300 text-black px-3 py-2 rounded-lg text-xs font-bold border-2 border-black shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all"><i class="fa-solid fa-share-nodes"></i></button>
-                    </div>
-                </div>
-
-                <!-- SUB TABS -->
-                <div class="flex border-b-4 border-black overflow-x-auto bg-white shrink-0 no-scrollbar p-2 gap-2">
-                    <button v-for="t in ['Overview', 'Capabilities', 'Attributes', 'Timeline', 'Map', 'Network', 'Files']" 
-                        @click="changeSubTab(t.toLowerCase())" 
-                        :class="subTab === t.toLowerCase() ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'"
-                        class="px-4 py-2 text-sm font-black font-heading rounded-lg border-2 border-black transition-all whitespace-nowrap">
-                        {{ t }}
-                    </button>
-                </div>
-
-                <!-- DETAIL CONTENT WRAPPER -->
-                <!-- UPDATED: Fixed constraints for map view scrolling -->
-                <div :class="['flex-1 min-h-0 bg-yellow-50', (subTab === 'map' || subTab === 'network') ? 'relative overflow-hidden flex flex-col' : 'overflow-y-auto p-4 md:p-8']">
-                    
-                    <!-- OVERVIEW -->
-                    <div v-if="subTab === 'overview'" class="space-y-6 max-w-5xl mx-auto">
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div class="space-y-4">
-                                <div class="aspect-[4/5] bg-white rounded-2xl relative overflow-hidden group shadow-[6px_6px_0px_#000] border-4 border-black max-w-[220px] mx-auto md:max-w-none md:mx-0">
-                                    <img :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
-                                    <button @click="triggerUpload('avatar')" class="hidden md:flex absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 items-center justify-center text-white font-bold transition-all backdrop-blur-sm">
-                                        <i class="fa-solid fa-camera mr-2"></i> New Pic
-                                    </button>
-                                    <button @click="triggerUpload('avatar')" class="md:hidden absolute bottom-3 right-3 bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-lg border-2 border-white z-10 active:scale-90 transition-transform">
-                                        <i class="fa-solid fa-camera"></i>
-                                    </button>
-                                </div>
-                                <div class="fun-card p-4 text-center">
-                                    <div class="text-xs text-gray-400 font-black uppercase mb-1">Threat Level</div>
-                                    <span class="text-xl font-black px-3 py-1 rounded-lg border-2 border-black inline-block" :class="getThreatColor(selected.threat_level, true)">{{selected.threat_level}}</span>
-                                </div>
-                            </div>
-                            <div class="md:col-span-2 space-y-6">
-                                <div class="fun-card p-6 border-l-[10px] border-l-blue-500">
-                                    <h3 class="text-lg font-heading font-black text-blue-600 mb-2">The Gist</h3>
-                                    <p class="text-base font-bold text-gray-700 leading-relaxed">{{ analysisResult?.summary || 'Not enough info yet!' }}</p>
-                                    <div class="flex gap-2 mt-4 flex-wrap">
-                                        <span v-for="tag in analysisResult?.tags" class="text-[10px] px-3 py-1 bg-violet-200 text-violet-800 rounded-full border-2 border-black font-black">{{tag}}</span>
+                                <div class="flex-1">
+                                    <div class="flex justify-between">
+                                        <div class="font-black text-black text-sm">{{ item.title }}</div>
+                                        <div class="text-[10px] text-gray-400 font-mono">{{ new Date(item.date).toLocaleDateString() }}</div>
                                     </div>
-                                </div>
-                                <div class="fun-card p-6 md:p-8">
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-12">
-                                        <div><label class="text-[10px] text-gray-400 font-black uppercase block mb-1">Name</label><div class="text-xl font-bold text-black border-b-2 border-gray-200 pb-1">{{selected.full_name}}</div></div>
-                                        <div><label class="text-[10px] text-gray-400 font-black uppercase block mb-1">Origin</label><div class="text-xl font-bold text-black border-b-2 border-gray-200 pb-1">{{selected.nationality || '???'}}</div></div>
-                                        <div><label class="text-[10px] text-gray-400 font-black uppercase block mb-1">Job</label><div class="text-xl font-bold text-black border-b-2 border-gray-200 pb-1">{{selected.occupation || '???'}}</div></div>
-                                        <div><label class="text-[10px] text-gray-400 font-black uppercase block mb-1">Group</label><div class="text-xl font-bold text-black border-b-2 border-gray-200 pb-1">{{selected.ideology || '???'}}</div></div>
-                                    </div>
-                                    <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div>
-                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Habits</label><button @click="quickAppend('modus_operandi')" class="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded border border-blue-300 hover:bg-blue-200"><i class="fa-solid fa-plus"></i> Add</button></div>
-                                            <div class="text-sm font-bold text-gray-600 bg-gray-50 p-4 rounded-xl h-32 overflow-y-auto whitespace-pre-wrap border-2 border-gray-200">{{selected.modus_operandi || 'Empty...'}}</div>
-                                        </div>
-                                        <div>
-                                            <div class="flex justify-between mb-2"><label class="text-[10px] text-gray-400 font-black uppercase">Weakness</label><button @click="quickAppend('weakness')" class="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded border border-red-300 hover:bg-red-200"><i class="fa-solid fa-plus"></i> Add</button></div>
-                                            <div class="text-sm font-bold text-gray-600 bg-gray-50 p-4 rounded-xl h-32 overflow-y-auto whitespace-pre-wrap border-2 border-gray-200">{{selected.weakness || 'Empty...'}}</div>
-                                        </div>
-                                    </div>
+                                    <div class="text-xs text-gray-500 line-clamp-1">{{ item.desc }}</div>
                                 </div>
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
 
-                    <!-- CAPABILITIES -->
-                    <div v-show="subTab === 'capabilities'" class="max-w-5xl mx-auto h-full flex flex-col md:flex-row gap-6">
-                        <div class="w-full md:w-1/3 fun-card p-4 space-y-4">
-                            <h3 class="font-black font-heading text-lg">Skill Set</h3>
-                            <div v-for="skill in ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth']" :key="skill" class="space-y-1">
-                                <div class="flex justify-between text-xs font-bold">
-                                    <span>{{skill}}</span>
-                                    <span>{{ getSkillScore(skill) }}%</span>
-                                </div>
-                                <input type="range" min="0" max="100" :value="getSkillScore(skill)" @input="e => updateSkill(skill, e.target.value)" class="w-full accent-violet-500">
-                            </div>
+            <!-- TAB: TEAM (NEW) -->
+            <div v-if="currentTab === 'team'" class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0 custom-scrollbar">
+                <div class="max-w-6xl mx-auto space-y-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                             <h2 class="text-3xl font-heading font-black">Team Command</h2>
+                             <p class="text-gray-500">Manage access and surveillance of sub-admins.</p>
                         </div>
-                        <div class="flex-1 fun-card p-4 flex items-center justify-center bg-white relative">
-                            <div class="absolute top-2 left-2 text-xs font-bold text-gray-400 uppercase">Analysis Radar</div>
-                            <div class="w-full max-w-md aspect-square relative">
-                                <canvas id="skillsChart"></canvas>
-                            </div>
-                        </div>
+                        <button @click="openModal('add-admin')" class="bg-violet-600 text-white px-6 py-3 rounded-xl fun-btn font-bold shadow-[4px_4px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-user-plus mr-2"></i>Add Admin</button>
                     </div>
                     
-                    <!-- ATTRIBUTES -->
-                    <div v-if="subTab === 'attributes'" class="max-w-5xl mx-auto space-y-6">
-                         <div class="flex justify-between items-center">
-                            <h3 class="font-black font-heading text-2xl text-black">Intel Ledger</h3>
-                            <button @click="openModal('add-intel')" class="bg-violet-500 text-white px-4 py-2 rounded-xl text-sm font-bold fun-btn hover:bg-violet-400">Add Stuff</button>
-                        </div>
-                        <div v-for="(items, category) in groupedIntel" :key="category" class="space-y-3">
-                            <h4 class="text-sm font-black uppercase text-gray-400 border-b-2 border-gray-300 pb-1 ml-2">{{ category }}</h4>
-                            <div v-if="category === 'Social Media'" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <a v-for="item in items" :key="item.id" :href="item.value" target="_blank" class="fun-card p-3 flex flex-col items-center justify-center gap-2 group hover:scale-105 transition-transform" :style="{borderColor: getSocialInfo(item.value).color}">
-                                    <i :class="getSocialInfo(item.value).icon" class="text-3xl" :style="{color: getSocialInfo(item.value).color}"></i>
-                                    <div class="font-bold text-xs text-black">{{item.label}}</div>
-                                    <button @click.prevent="deleteItem('subject_intel', item.id)" class="absolute top-1 right-1 text-red-300 hover:text-red-500 text-[10px]"><i class="fa-solid fa-times"></i></button>
-                                </a>
-                            </div>
-                            <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div v-for="item in items" :key="item.id" class="fun-card p-4 relative group hover:bg-yellow-50">
-                                    <div class="text-[10px] text-violet-500 font-black uppercase mb-1">{{item.label}}</div>
-                                    <div class="text-black font-bold break-words text-sm">{{item.value}}</div>
-                                    <button @click="deleteItem('subject_intel', item.id)" class="absolute top-2 right-2 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold hover:scale-110"><i class="fa-solid fa-trash"></i></button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- TIMELINE -->
-                    <div v-show="subTab === 'timeline'" class="h-full flex flex-col space-y-4">
-                        <div class="flex justify-between items-center">
-                             <h3 class="font-black font-heading text-2xl text-black">History Log</h3>
-                             <button @click="openModal('add-interaction')" class="bg-green-400 text-white hover:bg-green-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Log Event</button>
-                        </div>
-                        <div class="flex-1 fun-card p-6 overflow-y-auto min-h-0 bg-white">
-                            <div class="relative pl-8 border-l-4 border-gray-200 space-y-8 my-4">
-                                <div v-for="ix in selected.interactions" :key="ix.id" class="relative group">
-                                    <div class="absolute -left-[43px] top-1 w-6 h-6 rounded-full bg-white border-4 border-black shadow-sm"></div>
-                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                                        <span class="text-lg font-black font-heading text-black">{{ix.type}}</span>
-                                        <span class="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded border border-gray-200">{{new Date(ix.date).toLocaleString()}}</span>
-                                        <button @click="deleteItem('subject_interactions', ix.id)" class="ml-auto text-gray-300 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash"></i></button>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div v-for="adm in team" :key="adm.id" class="fun-card p-5 relative bg-white flex flex-col gap-4" :class="{'opacity-60 grayscale': !adm.is_active}">
+                            <div class="flex justify-between items-start">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center border-2 border-black text-lg font-black" :class="adm.is_master ? 'bg-yellow-300' : 'bg-gray-200'">{{ adm.email.substring(0,2).toUpperCase() }}</div>
+                                    <div class="overflow-hidden">
+                                        <div class="font-black text-sm truncate w-32" :title="adm.email">{{adm.email}}</div>
+                                        <div class="text-[10px] font-bold text-gray-400">Since {{new Date(adm.created_at).toLocaleDateString()}}</div>
                                     </div>
-                                    <div class="bg-gray-50 p-4 rounded-xl text-sm font-bold text-gray-700 border-2 border-gray-200 whitespace-pre-wrap">{{ix.transcript || ix.conclusion}}</div>
+                                </div>
+                                <div v-if="adm.is_master" class="bg-black text-white px-2 py-1 rounded text-[10px] font-black uppercase tracking-wider">MASTER</div>
+                                <div v-else class="flex gap-2">
+                                    <button @click="openModal('edit-admin', adm)" class="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <button @click="deleteAdmin(adm.id)" class="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded"><i class="fa-solid fa-trash-can"></i></button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- MAP (Detail) with Mobile Drawer -->
-                    <div v-show="subTab === 'map'" class="h-full flex flex-col relative p-4 md:p-8">
-                        <div class="flex justify-between items-center mb-4 shrink-0">
-                            <h3 class="font-black font-heading text-2xl text-black">Locations</h3>
-                            <button @click="openModal('add-location')" class="bg-blue-400 text-white hover:bg-blue-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Add Pin</button>
-                        </div>
-                        
-                        <!-- Main Layout -->
-                        <div class="flex-1 flex md:grid md:grid-cols-3 gap-6 min-h-0 relative overflow-hidden">
                             
-                            <!-- MAP CONTAINER -->
-                            <div class="w-full h-full md:col-span-2 bg-white rounded-2xl overflow-hidden relative border-4 border-black shadow-[4px_4px_0px_#000]">
-                                <div id="subjectMap" class="w-full h-full z-0"></div>
-                                
-                                <!-- Mobile: Toggle Button -->
-                                <button @click="showProfileMapList = !showProfileMapList" class="md:hidden absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur-sm p-3 rounded-xl border-4 border-black shadow-[2px_2px_0px_#000] font-bold text-sm fun-btn">
-                                    <i class="fa-solid" :class="showProfileMapList ? 'fa-map' : 'fa-list'"></i> {{ showProfileMapList ? 'Hide List' : 'Locations' }}
-                                </button>
-                            </div>
-
-                            <!-- LIST CONTAINER -->
-                            <!-- FIX: overflow-hidden on parent to contain the inner scrollable div -->
-                            <div :class="[
-                                'absolute md:static inset-y-0 right-0 w-full md:w-auto bg-white/95 md:bg-transparent z-[401] md:z-auto transition-transform duration-300 transform',
-                                showProfileMapList ? 'translate-x-0 shadow-2xl' : 'translate-x-full md:translate-x-0'
-                            ]" class="flex flex-col h-full border-l-4 border-black md:border-l-0 md:border-none p-4 md:p-0 overflow-hidden">
-                                
-                                <!-- Mobile Header -->
-                                <div class="md:hidden flex justify-between items-center mb-4 pb-2 border-b-2 border-gray-200 shrink-0">
-                                    <h3 class="font-black font-heading text-xl">Saved Locations</h3>
-                                    <button @click="showProfileMapList = false" class="text-red-500 font-bold bg-red-100 p-2 rounded-full w-8 h-8 flex items-center justify-center"><i class="fa-solid fa-times"></i></button>
-                                </div>
-
-                                <!-- SCROLLING AREA -->
-                                <div class="space-y-3 overflow-y-auto flex-1 min-h-0 md:pr-1 overscroll-contain pb-4" style="touch-action: pan-y;">
-                                    <div v-for="loc in selected.locations" :key="loc.id" class="fun-card p-4 hover:bg-blue-50 border-2 flex flex-col gap-2">
-                                        <div class="flex justify-between items-center" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">
-                                            <div class="font-black text-black text-sm font-heading cursor-pointer">{{loc.name}}</div>
-                                            <span class="text-[10px] uppercase bg-white text-black px-2 py-0.5 rounded border-2 border-black font-bold shadow-[2px_2px_0px_#000]">{{loc.type}}</span>
-                                        </div>
-                                        <div class="text-xs font-bold text-gray-500 mb-2 cursor-pointer" @click="flyTo(loc); if(window.innerWidth < 768) showProfileMapList = false;">{{loc.address}}</div>
-                                        
-                                        <!-- ACTION BUTTONS: Wrapped for mobile -->
-                                        <div class="flex gap-2 justify-end mt-1 pt-2 border-t-2 border-dashed border-gray-200 flex-wrap">
-                                            <button @click.stop="copyCoords(loc.lat, loc.lng)" class="text-xs font-bold text-blue-500 hover:text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200 flex items-center gap-1 shrink-0" title="Copy Coordinates">
-                                                <i class="fa-solid fa-copy"></i>
-                                            </button>
-                                            <button @click.stop="openModal('edit-location', loc)" class="text-xs font-bold text-green-600 hover:text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 shrink-0">
-                                                <i class="fa-solid fa-pen"></i> Edit
-                                            </button>
-                                            <button @click.stop="deleteItem('subject_locations', loc.id)" class="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 px-2 py-1 rounded border border-red-200 shrink-0">
-                                                <i class="fa-solid fa-trash"></i>
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div v-if="selected.locations.length === 0" class="text-center text-gray-400 font-bold py-8">No locations saved yet.</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- NETWORK (Detail) -->
-                    <div v-show="subTab === 'network'" class="h-full flex flex-col p-4 md:p-8">
-                         <div class="flex justify-between items-center mb-4">
-                            <h3 class="font-black font-heading text-2xl text-black">Connections</h3>
-                            <button @click="openModal('add-rel')" class="bg-pink-400 text-white hover:bg-pink-300 px-4 py-2 rounded-xl text-sm font-bold fun-btn">Link Person</button>
-                        </div>
-                        <div v-if="selected.familyReport && selected.familyReport.length > 0" class="fun-card p-4 mb-6 border-l-[10px] border-l-purple-400 bg-purple-50">
-                             <h4 class="text-lg font-black text-purple-700 mb-3 flex items-center gap-2 font-heading"><i class="fa-solid fa-people-roof"></i> Family</h4>
-                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                 <div v-for="fam in selected.familyReport" class="flex items-center gap-3 p-2 rounded-xl bg-white border-2 border-black shadow-[3px_3px_0px_#000] hover:translate-y-1 hover:shadow-none transition-all cursor-pointer" @click="viewSubject(fam.id)">
-                                     <div class="w-10 h-10 rounded-full bg-gray-200 overflow-hidden shrink-0 border-2 border-black"><img :src="resolveImg(fam.avatar)" class="w-full h-full object-cover"></div>
-                                     <div><div class="text-sm font-bold text-black">{{fam.name}}</div><div class="text-[10px] text-purple-600 uppercase tracking-wide font-black">{{fam.role}}</div></div>
-                                 </div>
-                             </div>
-                        </div>
-                        <div class="flex-1 fun-card border-4 border-black relative overflow-hidden min-h-[400px]">
-                            <div id="relNetwork" class="absolute inset-0"></div>
-                        </div>
-                        <div class="mt-6">
-                            <div class="space-y-2">
-                                <div v-for="rel in selected.relationships" :key="rel.id" class="flex items-center justify-between p-3 fun-card hover:bg-gray-50">
-                                    <div class="flex items-center gap-3">
-                                         <div class="w-10 h-10 rounded-full bg-gray-100 overflow-hidden shrink-0 border-2 border-black">
-                                            <img v-if="rel.target_avatar" :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
-                                            <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{rel.target_name.charAt(0)}}</div>
-                                        </div>
-                                        <div><div class="text-sm font-black text-black">{{rel.target_name}}</div><div class="text-xs font-bold text-blue-500">{{rel.relationship_type}} &harr; {{rel.role_b || 'Associate'}}</div></div>
-                                    </div>
-                                    <div class="flex gap-2">
-                                        <button @click="openModal('edit-rel', rel)" class="text-gray-400 hover:text-blue-500 p-2"><i class="fa-solid fa-pen"></i></button>
-                                        <button @click="deleteItem('subject_relationships', rel.id)" class="text-gray-400 hover:text-red-500 p-2"><i class="fa-solid fa-trash"></i></button>
+                            <div v-if="!adm.is_master" class="bg-gray-50 p-3 rounded-xl border-2 border-gray-100 space-y-2">
+                                <div class="flex items-center justify-between border-b border-gray-200 pb-2">
+                                    <span class="text-[10px] font-bold uppercase text-gray-400">Status</span>
+                                    <div class="flex items-center gap-1">
+                                         <div class="w-2 h-2 rounded-full" :class="adm.is_active ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></div>
+                                         <span :class="adm.is_active ? 'text-green-700' : 'text-red-700'" class="font-black text-xs">{{adm.is_active ? 'ACTIVE' : 'DISABLED'}}</span>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div v-if="subTab === 'files'" class="space-y-6">
-                         <div class="flex gap-4">
-                            <div @click="triggerUpload('media')" class="h-28 w-32 rounded-2xl border-4 border-dashed border-gray-300 bg-white flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:text-blue-500 transition-all text-gray-400 group">
-                                <i class="fa-solid fa-cloud-arrow-up text-3xl mb-1 group-hover:scale-110 transition-transform"></i>
-                                <span class="text-xs font-black uppercase">Upload</span>
-                            </div>
-                            <div @click="openModal('add-media-link')" class="h-28 w-32 rounded-2xl border-4 border-gray-200 bg-white flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition-all text-gray-400 hover:text-black gap-1 group">
-                                <i class="fa-solid fa-link text-2xl group-hover:scale-110 transition-transform"></i>
-                                <span class="text-xs font-black uppercase">Link</span>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                            <div v-for="m in selected.media" :key="m.id" class="fun-card group relative aspect-square overflow-hidden bg-white p-2">
-                                <div class="w-full h-full rounded-lg overflow-hidden border-2 border-gray-200 relative">
-                                    <img v-if="m.media_type === 'link' || m.content_type.startsWith('image')" :src="m.external_url || '/api/media/'+m.object_key" class="w-full h-full object-cover transition-transform group-hover:scale-110" onerror="this.src='https://placehold.co/400?text=IMG'">
-                                    <div v-else class="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50"><i class="fa-solid fa-file text-5xl"></i></div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[10px] font-bold uppercase text-gray-400">Location Lock</span>
+                                    <span :class="adm.require_location ? 'text-blue-600 bg-blue-100 px-1 rounded' : 'text-gray-400'" class="font-black text-xs">{{adm.require_location ? 'REQUIRED' : 'OFF'}}</span>
                                 </div>
-                                <a :href="m.external_url || '/api/media/'+m.object_key" target="_blank" class="absolute inset-0 z-10"></a>
-                                <div class="absolute bottom-2 left-2 right-2 bg-black/80 p-1 rounded-lg text-[10px] font-bold text-white truncate text-center pointer-events-none z-10">{{m.description}}</div>
-                                <button @click.stop="deleteItem('subject_media', m.id)" class="absolute top-0 right-0 bg-red-500 text-white w-8 h-8 flex items-center justify-center rounded-bl-xl font-bold shadow-sm z-20 hover:bg-red-600 border-l-2 border-b-2 border-white"><i class="fa-solid fa-times"></i></button>
+                                <div v-if="adm.last_location" class="pt-2 text-[10px] text-gray-500 font-mono text-center bg-white p-1 rounded border border-gray-100 mt-2">
+                                    <i class="fa-solid fa-map-pin text-red-500 mr-1"></i>
+                                    {{ JSON.parse(adm.last_location).lat.toFixed(4) }}, {{ JSON.parse(adm.last_location).lng.toFixed(4) }}
+                                </div>
+                            </div>
+                            <div v-else class="bg-yellow-50 p-3 rounded-xl border-2 border-yellow-100 text-center text-xs font-bold text-yellow-700">
+                                Full System Access
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>
-        
-        <!-- MOBILE NAV -->
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 h-auto min-h-[4rem] bg-white border-t-4 border-black flex justify-around items-center z-50 safe-area-pb py-1 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
-            <button v-for="t in tabs" @click="changeTab(t.id)" :class="currentTab === t.id ? 'text-black translate-y-[-4px]' : 'text-gray-400'" class="flex flex-col items-center justify-center w-full h-full p-2 active:bg-gray-100 transition-all">
-                <i :class="t.icon" class="text-2xl mb-1 drop-shadow-md"></i>
-                <span class="text-[10px] font-black uppercase tracking-wide">{{t.label}}</span>
-            </button>
-        </nav>
-    </div>
 
-    <!-- MODALS -->
-    <div v-if="modal.active && modal.active !== 'mini-profile'" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-        <div class="w-full max-w-2xl fun-card flex flex-col max-h-[90vh] animate-bounce-in overflow-hidden border-4">
-             
-             <div class="flex justify-between items-center p-4 border-b-4 border-black bg-yellow-300">
-                <h3 class="font-black text-xl text-black font-heading">{{ modalTitle }}</h3>
-                <button @click="closeModal" class="w-8 h-8 rounded-full flex items-center justify-center bg-white border-2 border-black shadow-[2px_2px_0px_#000] active:translate-y-1 active:shadow-none transition-all"><i class="fa-solid fa-xmark font-bold"></i></button>
-            </div>
-            
-            <div class="overflow-y-auto p-4 md:p-6 space-y-6 bg-white">
-                <!-- COMMAND PALETTE -->
-                <div v-if="modal.active === 'cmd'">
-                    <input ref="cmdInput" v-model="cmdQuery" placeholder="Start typing..." class="fun-input w-full p-4 text-xl mb-4">
-                    <div class="space-y-2">
-                        <div v-for="res in cmdResults" @click="res.action" class="p-3 rounded-xl hover:bg-blue-100 cursor-pointer flex justify-between items-center border-2 border-gray-100 hover:border-black transition-all group">
-                             <div><div class="font-black text-lg text-black font-heading">{{res.title}}</div><div class="text-xs font-bold text-gray-500">{{res.desc}}</div></div>
-                             <i class="fa-solid fa-arrow-right text-gray-300 group-hover:text-black font-bold"></i>
+            <!-- TAB: TARGETS -->
+            <div v-if="currentTab === 'targets'" class="flex-1 overflow-y-auto p-4 md:p-8 min-h-0 custom-scrollbar">
+                 <div class="max-w-7xl mx-auto">
+                    <div class="mb-6 flex gap-4">
+                        <input v-model="search" placeholder="Search targets by name, alias, or ID..." class="fun-input flex-1 p-3 text-lg bg-white shadow-sm">
+                        <select v-model="filterStatus" class="fun-input p-3 bg-white shadow-sm font-bold">
+                            <option value="All">All Status</option>
+                            <option value="Active">Active</option>
+                            <option value="Monitoring">Monitoring</option>
+                            <option value="Deceased">Deceased</option>
+                            <option value="Incarcerated">Incarcerated</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        <!-- Add New Card -->
+                        <div v-if="canCreate" @click="openModal('add-subject')" class="fun-card border-2 border-dashed border-gray-300 bg-gray-50 flex flex-col items-center justify-center p-6 cursor-pointer hover:bg-gray-100 hover:border-gray-400 transition-all gap-2 group min-h-[250px]">
+                            <div class="w-16 h-16 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-gray-300 group-hover:scale-110 transition-transform"><i class="fa-solid fa-plus text-2xl"></i></div>
+                            <span class="font-black text-gray-400 uppercase tracking-widest text-xs">New Profile</span>
                         </div>
-                    </div>
-                </div>
 
-                <!-- ADD/EDIT REL -->
-                 <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
-                    <div class="p-4 bg-blue-100 border-2 border-blue-400 rounded-xl text-sm font-bold text-blue-900 mb-4">{{ modal.active === 'edit-rel' ? 'Editing link for' : 'Linking' }} <strong>{{selected.full_name}}</strong></div>
-                    <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="fun-input w-full p-3 text-sm" required>
-                        <option value="" disabled selected>Pick a Person</option>
-                        <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
-                    </select>
-                    <div class="border-t-2 border-dashed border-gray-300 pt-4 mt-2">
-                         <label class="block text-xs font-black uppercase text-gray-400 mb-2">The Connection</label>
-                         <div class="grid grid-cols-2 gap-4">
-                             <div><div class="text-[10px] text-gray-500 font-bold mb-1">Role of {{selected.full_name}}</div><input v-model="forms.rel.type" list="preset-roles-a" placeholder="e.g. Father" class="fun-input w-full p-3 text-sm" @input="autoFillReciprocal"></div>
-                             <div><div class="text-[10px] text-gray-500 font-bold mb-1">Role of Target</div><input v-model="forms.rel.reciprocal" list="preset-roles-b" placeholder="e.g. Son" class="fun-input w-full p-3 text-sm"></div>
-                         </div>
-                         <div class="flex flex-wrap gap-2 mt-4"><div v-for="p in presets" @click="applyPreset(p)" class="text-[10px] px-3 py-1 bg-gray-100 border-2 border-black rounded-lg cursor-pointer hover:bg-black hover:text-white font-bold shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-1 transition-all">{{p.a}} &harr; {{p.b}}</div></div>
-                    </div>
-                    <button type="submit" :disabled="processing" class="w-full bg-green-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn hover:bg-green-500">{{ processing ? 'Sticking...' : 'Stick It!' }}</button>
-                 </form>
-
-                <!-- ADD/EDIT SUBJECT -->
-                <form v-if="['add-subject', 'edit-profile'].includes(modal.active)" @submit.prevent="submitSubject" class="space-y-6">
-                    <div v-if="modal.active === 'edit-profile'" class="bg-gray-100 p-4 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-between">
-                         <div class="text-sm font-bold text-gray-600">Profile Picture</div>
-                         <button type="button" @click="triggerUpload('avatar')" class="bg-white px-4 py-2 rounded-lg border-2 border-black font-bold text-xs hover:bg-gray-50 flex items-center gap-2">
-                            <i class="fa-solid fa-camera"></i> Change Photo
-                         </button>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                        <div class="space-y-4">
-                            <label class="block text-xs font-black uppercase text-gray-400">Who is it?</label>
-                            <input v-model="forms.subject.full_name" placeholder="Full Name *" class="fun-input w-full p-3 text-sm" required>
-                            <input v-model="forms.subject.alias" placeholder="Nickname" class="fun-input w-full p-3 text-sm">
-                            <input v-model="forms.subject.occupation" list="list-occupations" placeholder="Job" class="fun-input w-full p-3 text-sm">
-                            <input v-model="forms.subject.nationality" list="list-nationalities" placeholder="Origin" class="fun-input w-full p-3 text-sm">
-                        </div>
-                        <div class="space-y-4">
-                             <label class="block text-xs font-black uppercase text-gray-400">Details</label>
-                             <select v-model="forms.subject.threat_level" class="fun-input w-full p-3 text-sm">
-                                <option value="Low">🟢 Low Priority</option><option value="Medium">🟡 Medium Priority</option><option value="High">🟠 High Priority</option><option value="Critical">🔴 Critical</option>
-                            </select>
-                            <div class="grid grid-cols-2 gap-2">
-                                <input type="date" v-model="forms.subject.dob" class="fun-input w-full p-3 text-sm text-gray-500">
-                                <input type="number" v-model="forms.subject.age" placeholder="Age" class="fun-input w-full p-3 text-sm">
-                            </div>
-                             <input v-model="forms.subject.ideology" list="list-ideologies" placeholder="Team/Group" class="fun-input w-full p-3 text-sm">
-                        </div>
-                    </div>
-                    <div class="pt-4 border-t-2 border-gray-200"><h4 class="text-xs font-black uppercase text-gray-400 mb-4">Stats</h4><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><input v-model="forms.subject.height" placeholder="Height" class="fun-input p-2 text-xs"><input v-model="forms.subject.weight" placeholder="Weight" class="fun-input p-2 text-xs"><input v-model="forms.subject.blood_type" placeholder="Blood" class="fun-input p-2 text-xs"></div></div>
-                    <div class="space-y-4"><label class="block text-xs font-black uppercase text-gray-400">Secret Notes</label><textarea v-model="forms.subject.modus_operandi" placeholder="Habits..." rows="3" class="fun-input w-full p-3 text-sm"></textarea><textarea v-model="forms.subject.weakness" placeholder="Weakness..." rows="3" class="fun-input w-full p-3 text-sm"></textarea></div>
-                    <button type="submit" :disabled="processing" class="w-full bg-violet-500 hover:bg-violet-400 text-white font-black font-heading py-4 rounded-xl text-lg fun-btn">{{ processing ? 'Saving...' : 'Save This Person' }}</button>
-                </form>
-
-                <!-- ADD INTEL -->
-                <form v-if="modal.active === 'add-intel'" @submit.prevent="submitIntel" class="space-y-4">
-                    <select v-model="forms.intel.category" class="fun-input w-full p-3 text-sm">
-                        <option>General</option><option>Contact Info</option><option>Social Media</option><option>Education</option><option>Financial</option><option>Medical</option><option>Family</option>
-                    </select>
-                    <input v-model="forms.intel.label" placeholder="Label (e.g. Phone)" class="fun-input w-full p-3 text-sm" required>
-                    <textarea v-model="forms.intel.value" @input="handleIntelInput" placeholder="Value" rows="3" class="fun-input w-full p-3 text-sm" required></textarea>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-500">Add Info</button>
-                 </form>
-
-                 <!-- ADD MEDIA LINK -->
-                 <form v-if="modal.active === 'add-media-link'" @submit.prevent="submitMediaLink" class="space-y-4">
-                    <input v-model="forms.mediaLink.url" placeholder="Paste URL Here" class="fun-input w-full p-3 text-sm" required>
-                    <input v-model="forms.mediaLink.description" placeholder="What is it?" class="fun-input w-full p-3 text-sm">
-                    <select v-model="forms.mediaLink.type" class="fun-input w-full p-3 text-sm"><option value="image/jpeg">Image</option><option value="application/pdf">Document</option><option value="video/mp4">Video</option><option value="text/plain">Other</option></select>
-                    <button type="submit" :disabled="processing" class="w-full bg-pink-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-pink-500">Save Link</button>
-                 </form>
-
-                 <!-- SHARE -->
-                 <div v-if="modal.active === 'share-secure'" class="space-y-6">
-                    <p class="text-sm font-bold text-gray-500">Make a secret link for others.</p>
-                    
-                    <div class="flex items-center gap-3 p-4 bg-yellow-100 rounded-xl border-2 border-yellow-500">
-                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                            <input type="checkbox" name="toggle" id="location-toggle" v-model="forms.share.requireLocation" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
-                            <label for="location-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer border-2 border-black"></label>
-                        </div>
-                        <div class="flex-1">
-                             <div class="text-xs font-black uppercase text-yellow-800">Lock with Location</div>
-                             <div class="text-[10px] font-bold text-yellow-700">Viewer MUST share location to see content.</div>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label class="block text-xs font-black uppercase text-gray-400">Allowed Access</label>
-                        <div class="flex flex-wrap gap-2">
-                            <label v-for="tab in ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']" :key="tab" class="flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-200 border-2 border-transparent has-[:checked]:border-black has-[:checked]:bg-white transition-all shadow-sm">
-                                <input type="checkbox" :value="tab" v-model="forms.share.allowedTabs" class="accent-black w-4 h-4">
-                                <span class="text-xs font-bold">{{ tab }}</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="flex gap-2">
-                        <select v-model="forms.share.minutes" class="fun-input w-32 p-2 text-sm"><option :value="30">30 Mins</option><option :value="60">1 Hour</option><option :value="1440">24 Hours</option><option :value="10080">7 Days</option></select>
-                        <button @click="createShareLink" :disabled="processing" class="flex-1 bg-yellow-400 text-black font-black rounded-xl text-sm fun-btn hover:bg-yellow-500">Create Magic Link</button>
-                    </div>
-                    
-                    <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
-                        <div v-for="link in activeShareLinks" class="flex justify-between items-center p-3 bg-gray-100 rounded-xl border-2 border-gray-300">
-                            <div>
-                                <div class="text-xs font-mono font-bold text-gray-600">...{{link.token.slice(-8)}}</div>
-                                <div class="text-[10px] font-bold text-gray-400 uppercase">
-                                    {{link.is_active ? 'Active' : 'Dead'}} &bull; {{link.views}} peeks 
-                                    <span v-if="link.require_location" class="text-red-500 ml-1"><i class="fa-solid fa-lock"></i> LOC</span>
+                        <!-- Subject Cards -->
+                        <div v-for="s in filteredSubjects" :key="s.id" @click="viewSubject(s.id)" class="fun-card bg-white p-3 cursor-pointer hover:-translate-y-1 hover:shadow-[6px_6px_0px_#000] transition-all flex flex-col h-full group">
+                            <div class="relative aspect-square rounded-lg overflow-hidden border-2 border-black mb-3 bg-gray-100">
+                                <img v-if="s.avatar_path" :src="resolveImg(s.avatar_path)" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500">
+                                <div v-else class="w-full h-full flex items-center justify-center text-gray-300 text-4xl"><i class="fa-solid fa-user"></i></div>
+                                <div class="absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-black uppercase border border-black shadow-sm"
+                                    :class="{
+                                        'bg-red-500 text-white': s.threat_level === 'High',
+                                        'bg-orange-400 text-black': s.threat_level === 'Medium',
+                                        'bg-green-400 text-black': s.threat_level === 'Low'
+                                    }">
+                                    {{ s.threat_level }}
                                 </div>
                             </div>
-                            <div class="flex gap-2"><button @click="copyToClipboard(getShareUrl(link.token))" class="text-blue-500 hover:text-blue-700 font-bold p-2"><i class="fa-regular fa-copy"></i></button><button v-if="link.is_active" @click="revokeLink(link.token)" class="text-red-400 hover:text-red-600 p-2"><i class="fa-solid fa-ban"></i></button></div>
+                            <div class="flex-1">
+                                <div class="font-black text-lg leading-tight mb-1">{{ s.full_name }}</div>
+                                <div v-if="s.alias" class="text-xs text-purple-600 font-bold mb-2">"{{ s.alias }}"</div>
+                                <div class="flex flex-wrap gap-1 mt-auto">
+                                    <span class="bg-gray-100 px-1.5 py-0.5 rounded text-[10px] font-mono border border-gray-200">{{ s.occupation || 'Unknown' }}</span>
+                                    <span class="bg-gray-100 px-1.5 py-0.5 rounded text-[10px] font-mono border border-gray-200">{{ s.nationality || 'Unknown' }}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                  </div>
-                 
-                 <!-- LOCATION PICKER (ADD/EDIT) -->
-                 <form v-if="['add-location', 'edit-location'].includes(modal.active)" @submit.prevent="submitLocation" class="space-y-4">
-                    <div class="relative">
-                         <input v-model="locationSearchQuery" @input="debounceSearch" placeholder="Find place..." class="fun-input w-full p-3 pl-10 text-sm">
-                         <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400"></i>
-                         <div v-if="locationSearchResults.length" class="absolute w-full bg-white border-2 border-black max-h-48 overflow-y-auto mt-1 shadow-xl rounded-xl z-50">
-                             <div v-for="res in locationSearchResults" :key="res.place_id" @click="selectLocation(res)" class="p-3 hover:bg-yellow-100 cursor-pointer text-xs border-b border-gray-100 font-bold text-gray-700">{{ res.display_name }}</div>
-                         </div>
+            </div>
+
+            <!-- TAB: MAP -->
+            <div v-if="currentTab === 'map'" class="flex-1 relative bg-slate-200 w-full h-full">
+                <div id="warRoomMap" class="absolute inset-0 z-0"></div>
+                <div class="absolute top-4 left-4 z-10 bg-white p-4 rounded-xl shadow-lg border-2 border-black">
+                    <h3 class="font-black text-lg">Global Intel</h3>
+                    <div class="text-xs text-gray-500">{{ subjects.length }} targets tracking</div>
+                </div>
+            </div>
+
+            <!-- TAB: NETWORK -->
+            <div v-if="currentTab === 'network'" class="flex-1 relative bg-slate-900 w-full h-full overflow-hidden">
+                <div id="globalNetworkGraph" class="w-full h-full"></div>
+                <div class="absolute top-4 left-4 bg-black/50 text-white p-4 rounded-xl border border-white/20 backdrop-blur">
+                    <h3 class="font-black">Network Graph</h3>
+                    <p class="text-xs opacity-70">Double click node to open profile</p>
+                </div>
+            </div>
+
+            <!-- VIEW: DETAIL -->
+            <div v-if="currentTab === 'detail' && selected" class="absolute inset-0 z-30 bg-white flex flex-col overflow-hidden">
+                
+                <!-- Detail Header -->
+                <div class="bg-white border-b-4 border-black p-4 shrink-0 flex items-center justify-between shadow-sm">
+                    <div class="flex items-center gap-4">
+                        <button @click="changeTab('targets')" class="w-10 h-10 rounded-full border-2 border-black flex items-center justify-center hover:bg-gray-100 transition-colors"><i class="fa-solid fa-arrow-left"></i></button>
+                        <div class="flex items-center gap-3">
+                             <div class="w-12 h-12 rounded-full overflow-hidden border-2 border-black">
+                                 <img v-if="selected.avatar_path" :src="resolveImg(selected.avatar_path)" class="w-full h-full object-cover">
+                                 <div v-else class="w-full h-full bg-gray-200 flex items-center justify-center"><i class="fa-solid fa-user"></i></div>
+                             </div>
+                             <div>
+                                 <h2 class="text-2xl font-black leading-none">{{ selected.full_name }}</h2>
+                                 <div class="text-sm font-mono text-gray-500">{{ selected.occupation }} • {{ selected.nationality }}</div>
+                             </div>
+                        </div>
                     </div>
-                    <div class="h-48 w-full bg-gray-100 rounded-xl border-2 border-black relative overflow-hidden"><div id="locationPickerMap" class="absolute inset-0 z-0"></div></div>
+                    <div class="flex gap-2">
+                        <button @click="openShareModal(selected)" class="fun-btn bg-cyan-400 px-4 py-2 rounded-lg font-bold text-sm border-2 border-black flex items-center gap-2 hover:bg-cyan-300">
+                            <i class="fa-solid fa-share-nodes"></i> Share Access
+                        </button>
+                        <button @click="archiveSubject(selected.id)" class="fun-btn bg-red-100 text-red-600 px-4 py-2 rounded-lg font-bold text-sm border-2 border-red-200 hover:bg-red-200">
+                            <i class="fa-solid fa-box-archive"></i> Archive
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Detail Content -->
+                <div class="flex-1 overflow-hidden flex flex-col md:flex-row">
                     
-                    <!-- NEW: Manual Coordinates -->
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="text-[10px] font-bold text-gray-500 uppercase">Latitude</label>
-                            <input v-model.number="forms.location.lat" type="number" step="any" placeholder="0.0000" class="fun-input w-full p-2 text-xs" @input="updatePickerMarker">
+                    <!-- Sidebar (Profile) -->
+                    <div class="w-full md:w-80 bg-gray-50 border-r border-gray-200 overflow-y-auto p-4 shrink-0 space-y-6">
+                        
+                        <!-- Threat Card -->
+                        <div class="fun-card p-4 bg-white text-center">
+                            <div class="text-[10px] font-black uppercase text-gray-400 mb-1">Threat Level</div>
+                            <div class="inline-block px-3 py-1 rounded-full border-2 font-black text-sm uppercase"
+                            :class="{
+                                'border-red-500 text-red-600 bg-red-50': selected.threat_level === 'High',
+                                'border-orange-500 text-orange-600 bg-orange-50': selected.threat_level === 'Medium',
+                                'border-green-500 text-green-600 bg-green-50': selected.threat_level === 'Low'
+                            }">{{ selected.threat_level }}</div>
                         </div>
-                        <div>
-                            <label class="text-[10px] font-bold text-gray-500 uppercase">Longitude</label>
-                            <input v-model.number="forms.location.lng" type="number" step="any" placeholder="0.0000" class="fun-input w-full p-2 text-xs" @input="updatePickerMarker">
+
+                        <!-- Basic Info -->
+                        <div class="space-y-4">
+                            <div v-for="(v, k) in {DOB: selected.dob, Age: selected.age, Gender: selected.gender, Blood: selected.blood_type, Height: selected.height, Weight: selected.weight}" :key="k" class="flex justify-between border-b border-gray-200 pb-1" v-if="v">
+                                <span class="text-xs font-bold text-gray-400 uppercase">{{k}}</span>
+                                <span class="text-sm font-mono font-bold">{{v}}</span>
+                            </div>
                         </div>
+
+                        <!-- Tags/Ideology -->
+                        <div v-if="selected.ideology" class="p-3 bg-purple-50 rounded-xl border border-purple-100">
+                             <div class="text-[10px] font-black uppercase text-purple-400 mb-1">Ideology</div>
+                             <div class="text-sm font-bold text-purple-900">{{ selected.ideology }}</div>
+                        </div>
+                        
+                        <!-- Modus Operandi -->
+                        <div v-if="selected.modus_operandi" class="p-3 bg-slate-100 rounded-xl border border-slate-200">
+                             <div class="text-[10px] font-black uppercase text-slate-400 mb-1">Modus Operandi</div>
+                             <div class="text-xs text-slate-700 leading-relaxed">{{ selected.modus_operandi }}</div>
+                        </div>
+                        
+                        <!-- Edit Button -->
+                        <button @click="openModal('edit-subject', selected)" class="w-full py-2 border-2 border-gray-300 rounded-lg text-gray-500 font-bold hover:bg-gray-100 text-sm">Edit Profile Data</button>
                     </div>
 
-                    <input v-model="forms.location.name" placeholder="Name (e.g. Secret Base)" class="fun-input w-full p-3 text-sm">
-                    <select v-model="forms.location.type" class="fun-input w-full p-3 text-sm"><option>Residence</option><option>Workplace</option><option>Frequented Spot</option><option>Other</option></select>
-                    <button type="submit" :disabled="processing" class="w-full bg-blue-500 text-white font-black py-4 rounded-xl fun-btn hover:bg-blue-600">{{ modal.active === 'edit-location' ? 'Update Pin' : 'Drop Pin' }}</button>
-                </form>
+                    <!-- Main Content (Tabs) -->
+                    <div class="flex-1 flex flex-col min-w-0 bg-white">
+                        <!-- Inner Tabs -->
+                        <div class="flex border-b border-gray-200 overflow-x-auto hide-scrollbar">
+                            <button v-for="t in ['Intel', 'Media', 'Network', 'Timeline', 'Map']" @click="detailTab = t" 
+                                :class="detailTab === t ? 'border-b-4 border-black text-black bg-gray-50' : 'text-gray-400 hover:text-black'"
+                                class="px-6 py-3 font-heading font-bold text-sm uppercase tracking-wide whitespace-nowrap transition-colors">
+                                {{ t }}
+                            </button>
+                        </div>
+                        
+                        <div class="flex-1 overflow-y-auto p-6 bg-slate-50 relative">
+                            
+                            <!-- SUB-TAB: INTEL -->
+                            <div v-if="detailTab === 'Intel'" class="space-y-6">
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-black text-xl">Intel Points</h3>
+                                    <button @click="openModal('add-intel')" class="bg-black text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-800"><i class="fa-solid fa-plus mr-1"></i> Add Data</button>
+                                </div>
+                                <div v-if="!selected.intel || selected.intel.length === 0" class="text-center py-10 text-gray-400 italic">No intelligence data collected.</div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div v-for="item in selected.intel" :key="item.id" class="fun-card p-4 bg-white border-l-4 border-l-blue-500">
+                                        <div class="flex justify-between items-start mb-2">
+                                            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-black uppercase">{{ item.category }}</span>
+                                            <span class="text-[10px] text-gray-400">{{ new Date(item.created_at).toLocaleDateString() }}</span>
+                                        </div>
+                                        <div class="font-black text-sm mb-1">{{ item.label }}</div>
+                                        <div class="text-gray-600 text-sm">{{ item.value }}</div>
+                                    </div>
+                                </div>
+                            </div>
 
-                <form v-if="modal.active === 'add-interaction'" @submit.prevent="submitInteraction" class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <input type="datetime-local" v-model="forms.interaction.date" class="fun-input p-3 text-sm" required>
-                        <select v-model="forms.interaction.type" class="fun-input p-3 text-sm"><option>Meeting</option><option>Call</option><option>Email</option><option>Event</option><option>Observation</option></select>
+                            <!-- SUB-TAB: TIMELINE -->
+                            <div v-if="detailTab === 'Timeline'" class="space-y-6">
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-black text-xl">Interaction Log</h3>
+                                    <button @click="openModal('add-interaction')" class="bg-black text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-800"><i class="fa-solid fa-plus mr-1"></i> Log Event</button>
+                                </div>
+                                <div class="relative pl-6 border-l-2 border-gray-200 space-y-8">
+                                    <div v-for="log in selected.interactions" :key="log.id" class="relative">
+                                        <div class="absolute -left-[31px] w-4 h-4 rounded-full border-2 border-white shadow-sm" :class="log.type === 'Sighting' ? 'bg-blue-500' : 'bg-purple-500'"></div>
+                                        <div class="fun-card p-4 bg-white">
+                                            <div class="flex justify-between mb-2">
+                                                <div class="font-black text-sm uppercase text-gray-400">{{ log.type }}</div>
+                                                <div class="text-xs font-mono text-gray-400">{{ new Date(log.date).toLocaleString() }}</div>
+                                            </div>
+                                            <div class="text-sm font-medium mb-2">{{ log.transcript }}</div>
+                                            <div v-if="log.conclusion" class="bg-yellow-50 p-2 rounded text-xs text-yellow-800 border border-yellow-100">
+                                                <strong>Conclusion:</strong> {{ log.conclusion }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- SUB-TAB: MEDIA -->
+                            <div v-if="detailTab === 'Media'" class="space-y-6">
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-black text-xl">Evidence Locker</h3>
+                                    <div class="flex gap-2">
+                                        <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden">
+                                        <button @click="$refs.fileInput.click()" class="bg-black text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-800"><i class="fa-solid fa-upload mr-1"></i> Upload</button>
+                                        <button @click="openModal('add-media-link')" class="bg-gray-200 text-black px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-300"><i class="fa-solid fa-link mr-1"></i> Link</button>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div v-for="m in selected.media" :key="m.id" class="group relative aspect-square bg-gray-100 rounded-xl overflow-hidden border border-gray-200 cursor-pointer" @click="window.open(resolveImg(m.object_key || m.external_url), '_blank')">
+                                        <img v-if="m.content_type.startsWith('image')" :src="resolveImg(m.object_key || m.external_url)" class="w-full h-full object-cover">
+                                        <div v-else class="w-full h-full flex items-center justify-center text-4xl text-gray-300"><i class="fa-solid fa-file"></i></div>
+                                        <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                            <div class="text-white text-xs truncate w-full">{{ m.description }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- SUB-TAB: NETWORK -->
+                            <div v-if="detailTab === 'Network'" class="h-full flex flex-col">
+                                <div class="flex justify-between items-center mb-4 shrink-0">
+                                    <h3 class="font-black text-xl">Known Associates</h3>
+                                    <button @click="openModal('add-relationship')" class="bg-black text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-800"><i class="fa-solid fa-link mr-1"></i> Connect</button>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                     <div v-for="rel in selected.relationships" :key="rel.id" class="fun-card p-3 bg-white flex items-center gap-3">
+                                         <div class="w-10 h-10 rounded-full overflow-hidden border border-black shrink-0">
+                                             <img :src="resolveImg(rel.target_avatar)" class="w-full h-full object-cover">
+                                         </div>
+                                         <div class="flex-1 min-w-0">
+                                             <div class="font-black text-sm truncate">{{ rel.target_name }}</div>
+                                             <div class="text-xs text-gray-500">{{ rel.relationship_type }} <i class="fa-solid fa-arrow-right mx-1 text-[8px]"></i> {{ rel.role_b }}</div>
+                                         </div>
+                                         <button @click="viewSubject(rel.subject_a_id == selected.id ? rel.subject_b_id : rel.subject_a_id)" class="text-xs font-bold text-blue-500 hover:underline">View</button>
+                                     </div>
+                                </div>
+                            </div>
+                            
+                            <!-- SUB-TAB: MAP -->
+                            <div v-if="detailTab === 'Map'" class="h-full flex flex-col">
+                                <div class="flex justify-between items-center mb-4 shrink-0">
+                                    <h3 class="font-black text-xl">Location History</h3>
+                                    <button @click="openModal('add-location')" class="bg-black text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-gray-800"><i class="fa-solid fa-map-pin mr-1"></i> Pin</button>
+                                </div>
+                                <div class="flex-1 bg-gray-200 rounded-xl relative overflow-hidden border-2 border-black min-h-[300px]">
+                                    <div id="subjectMap" class="absolute inset-0"></div>
+                                </div>
+                            </div>
+
+                        </div>
                     </div>
-                    <textarea v-model="forms.interaction.transcript" placeholder="What happened?" rows="5" class="fun-input w-full p-3 text-sm"></textarea>
-                    <button type="submit" :disabled="processing" class="w-full bg-orange-400 text-white font-black py-4 rounded-xl fun-btn hover:bg-orange-500">Log It</button>
-                </form>
+                </div>
             </div>
-        </div>
+
+        </main>
     </div>
 
-    <!-- Hidden Input -->
-    <input type="file" ref="fileInput" class="absolute opacity-0 -z-10 w-0 h-0 overflow-hidden" @change="handleFile">
-    <datalist id="list-occupations"><option v-for="i in suggestions.occupations" :value="i"></option></datalist>
-    <datalist id="list-nationalities"><option v-for="i in suggestions.nationalities" :value="i"></option></datalist>
-    <datalist id="list-ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
-    <datalist id="preset-roles-a"><option v-for="p in presets" :value="p.a"></option></datalist>
-    <datalist id="preset-roles-b"><option v-for="p in presets" :value="p.b"></option></datalist>
+    <!-- MODALS -->
     
-    <!-- Mini Profile Modal -->
-    <div v-if="modal.active === 'mini-profile'" class="fixed inset-0 z-[110] flex items-center justify-center pointer-events-none">
-        <div class="w-full max-w-sm fun-card bg-white shadow-2xl flex flex-col animate-bounce-in border-4 border-black p-6 text-center pointer-events-auto relative">
-            <button @click="closeModal" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-100 text-red-500 border-2 border-black flex items-center justify-center font-bold hover:bg-red-200"><i class="fa-solid fa-times"></i></button>
-            <div class="w-24 h-24 rounded-full overflow-hidden border-4 border-black bg-gray-100 mx-auto mb-4 shadow-[4px_4px_0px_#000]">
-                <img v-if="resolveImg(modal.data.avatar_path)" :src="resolveImg(modal.data.avatar_path)" class="w-full h-full object-cover">
-                <div v-else class="w-full h-full flex items-center justify-center text-4xl font-black text-gray-300">{{modal.data.full_name.charAt(0)}}</div>
-            </div>
-            <h3 class="text-2xl font-black text-black mb-1 font-heading">{{modal.data.full_name}}</h3>
-            
-            <div class="flex flex-wrap justify-center gap-2 mb-6">
-                <span class="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-full border-2 border-gray-200">{{modal.data.occupation || 'No Job'}}</span>
-                <span v-if="modal.data.nationality" class="text-xs font-bold text-blue-500 bg-blue-50 px-3 py-1 rounded-full border-2 border-blue-100">{{modal.data.nationality}}</span>
-                <span v-if="modal.data.threat_level" class="text-xs font-bold px-3 py-1 rounded-full border-2" :class="getThreatColor(modal.data.threat_level, true)">{{modal.data.threat_level}}</span>
-            </div>
+    <!-- ADMIN MODAL -->
+    <div v-if="modal.active === 'add-admin' || modal.active === 'edit-admin'" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="w-full max-w-lg fun-card bg-white border-4 border-black p-6 animate-bounce-in">
+             <div class="flex justify-between items-center mb-6">
+                 <h3 class="font-heading font-black text-2xl">{{ modal.active === 'add-admin' ? 'Recruit Admin' : 'Update Access' }}</h3>
+                 <button @click="closeModal" class="text-gray-400 hover:text-black"><i class="fa-solid fa-times text-xl"></i></button>
+             </div>
+             
+             <form @submit.prevent="submitAdmin" class="space-y-4">
+                 <div class="space-y-1">
+                     <label class="text-xs font-bold uppercase text-gray-500">Credentials</label>
+                     <input v-if="modal.active === 'add-admin'" v-model="forms.admin.email" type="email" placeholder="Email Address" class="fun-input w-full p-3" required>
+                     <input v-model="forms.admin.password" type="password" :placeholder="modal.active === 'add-admin' ? 'Set Password' : 'New Password (Optional)'" class="fun-input w-full p-3" :required="modal.active === 'add-admin'">
+                 </div>
+                 
+                 <div class="grid grid-cols-2 gap-4">
+                     <div class="bg-gray-50 p-3 rounded-xl border-2 border-gray-200 hover:border-green-300 transition-colors">
+                         <label class="flex items-center gap-3 cursor-pointer">
+                             <input type="checkbox" v-model="forms.admin.is_active" class="w-5 h-5 accent-green-500">
+                             <div class="leading-tight">
+                                 <div class="font-black text-sm">Active Status</div>
+                                 <div class="text-[10px] text-gray-400">Can login to system</div>
+                             </div>
+                         </label>
+                     </div>
+                     <div class="bg-gray-50 p-3 rounded-xl border-2 border-gray-200 hover:border-blue-300 transition-colors">
+                         <label class="flex items-center gap-3 cursor-pointer">
+                             <input type="checkbox" v-model="forms.admin.require_location" class="w-5 h-5 accent-blue-500">
+                             <div class="leading-tight">
+                                 <div class="font-black text-sm">GPS Lock</div>
+                                 <div class="text-[10px] text-gray-400">Require location</div>
+                             </div>
+                         </label>
+                     </div>
+                 </div>
 
-            <button @click="viewSubject(modal.data.id)" class="w-full bg-blue-500 hover:bg-blue-400 text-white font-black py-3 rounded-xl text-lg fun-btn shadow-[3px_3px_0px_#000] active:shadow-none active:translate-y-1">Open Folder</button>
+                 <div class="bg-yellow-50 p-4 rounded-xl border-2 border-yellow-200 space-y-3">
+                     <div class="text-xs font-black uppercase text-yellow-700 border-b border-yellow-200 pb-1">Permission Matrix</div>
+                     <div class="grid grid-cols-2 gap-2">
+                         <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" value="dashboard" v-model="forms.admin.permissions.tabs" class="accent-black"> Dashboard</label>
+                         <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" value="targets" v-model="forms.admin.permissions.tabs" class="accent-black"> Database</label>
+                         <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" value="map" v-model="forms.admin.permissions.tabs" class="accent-black"> Global Map</label>
+                         <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" value="network" v-model="forms.admin.permissions.tabs" class="accent-black"> Network</label>
+                     </div>
+                     <div class="pt-2 border-t border-yellow-200">
+                         <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" v-model="forms.admin.permissions.can_create" class="accent-black"> Can Add New Subjects</label>
+                     </div>
+                 </div>
+
+                 <div class="flex gap-2 pt-2">
+                     <button type="button" @click="closeModal" class="flex-1 bg-gray-100 font-bold py-3 rounded-xl hover:bg-gray-200">Cancel</button>
+                     <button type="submit" class="flex-1 bg-black text-white font-bold py-3 rounded-xl hover:bg-gray-800 shadow-[4px_4px_0px_#000] active:translate-y-1 active:shadow-none">Save Access</button>
+                 </div>
+             </form>
         </div>
     </div>
+    
+    <!-- ADD/EDIT SUBJECT MODAL -->
+    <div v-if="modal.active === 'add-subject' || modal.active === 'edit-subject'" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="w-full max-w-2xl fun-card bg-white p-6 max-h-[90vh] overflow-y-auto">
+            <h3 class="font-black text-xl mb-6">{{ modal.active.includes('add') ? 'Create Profile' : 'Edit Profile' }}</h3>
+            <form @submit.prevent="submitSubject" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div><label>Full Name</label><input v-model="forms.subject.full_name" class="fun-input w-full p-2" required></div>
+                     <div><label>Alias</label><input v-model="forms.subject.alias" class="fun-input w-full p-2"></div>
+                     <div><label>Occupation</label><input v-model="forms.subject.occupation" class="fun-input w-full p-2" list="occupations"></div>
+                     <div><label>Nationality</label><input v-model="forms.subject.nationality" class="fun-input w-full p-2" list="nationalities"></div>
+                     <div><label>Threat Level</label>
+                        <select v-model="forms.subject.threat_level" class="fun-input w-full p-2">
+                            <option>Low</option><option>Medium</option><option>High</option>
+                        </select>
+                     </div>
+                     <div><label>Status</label>
+                        <select v-model="forms.subject.status" class="fun-input w-full p-2">
+                            <option>Active</option><option>Monitoring</option><option>Deceased</option><option>Incarcerated</option>
+                        </select>
+                     </div>
+                </div>
+                <div class="grid grid-cols-3 gap-4">
+                    <div><label>Age</label><input v-model="forms.subject.age" type="number" class="fun-input w-full p-2"></div>
+                    <div><label>Height</label><input v-model="forms.subject.height" class="fun-input w-full p-2"></div>
+                    <div><label>Weight</label><input v-model="forms.subject.weight" class="fun-input w-full p-2"></div>
+                </div>
+                <div><label>Ideology</label><input v-model="forms.subject.ideology" class="fun-input w-full p-2" list="ideologies"></div>
+                <div><label>Modus Operandi</label><textarea v-model="forms.subject.modus_operandi" class="fun-input w-full p-2 h-24"></textarea></div>
+                
+                <div class="flex gap-2 justify-end pt-4">
+                     <button type="button" @click="closeModal" class="px-6 py-2 rounded-xl font-bold bg-gray-100 hover:bg-gray-200">Cancel</button>
+                     <button class="px-6 py-2 rounded-xl font-bold bg-black text-white hover:bg-gray-800">Save Profile</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- GENERIC MODALS (Intel, Interaction, etc) - Structure kept simple for length but fully functional -->
+    <div v-if="['add-intel', 'add-interaction', 'add-location', 'add-relationship', 'add-media-link'].includes(modal.active)" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="w-full max-w-md fun-card bg-white p-6">
+            <h3 class="font-black text-lg mb-4">Add Data</h3>
+            <form @submit.prevent="submitGeneric" class="space-y-4">
+                
+                <!-- INTEL FORM -->
+                <div v-if="modal.active === 'add-intel'" class="space-y-3">
+                    <input v-model="forms.intel.category" placeholder="Category (e.g. Finance)" class="fun-input w-full p-2" required>
+                    <input v-model="forms.intel.label" placeholder="Label (e.g. Bank Account)" class="fun-input w-full p-2" required>
+                    <textarea v-model="forms.intel.value" placeholder="Value/Description" class="fun-input w-full p-2 h-20" required></textarea>
+                </div>
+
+                <!-- INTERACTION FORM -->
+                <div v-if="modal.active === 'add-interaction'" class="space-y-3">
+                    <select v-model="forms.interaction.type" class="fun-input w-full p-2">
+                        <option>Sighting</option><option>Meeting</option><option>Interrogation</option><option>Digital Intercept</option>
+                    </select>
+                    <input v-model="forms.interaction.date" type="datetime-local" class="fun-input w-full p-2" required>
+                    <textarea v-model="forms.interaction.transcript" placeholder="Notes/Transcript..." class="fun-input w-full p-2 h-24" required></textarea>
+                    <input v-model="forms.interaction.conclusion" placeholder="Conclusion" class="fun-input w-full p-2">
+                </div>
+                
+                <!-- LOCATION FORM -->
+                <div v-if="modal.active === 'add-location'" class="space-y-3">
+                    <input v-model="forms.location.name" placeholder="Location Name" class="fun-input w-full p-2" required>
+                    <div class="flex gap-2">
+                        <input v-model="forms.location.lat" placeholder="Latitude" class="fun-input w-full p-2" required>
+                        <input v-model="forms.location.lng" placeholder="Longitude" class="fun-input w-full p-2" required>
+                    </div>
+                    <select v-model="forms.location.type" class="fun-input w-full p-2">
+                        <option>Residence</option><option>Workplace</option><option>Last Seen</option><option>Hideout</option>
+                    </select>
+                </div>
+
+                <!-- RELATIONSHIP FORM -->
+                <div v-if="modal.active === 'add-relationship'" class="space-y-3">
+                     <select v-model="forms.relationship.targetId" class="fun-input w-full p-2" required>
+                         <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}}</option>
+                     </select>
+                     <input v-model="forms.relationship.type" placeholder="Relationship (e.g. Brother)" class="fun-input w-full p-2" required>
+                     <input v-model="forms.relationship.reciprocal" placeholder="Reciprocal Role (e.g. Sister)" class="fun-input w-full p-2" required>
+                </div>
+                
+                <!-- MEDIA LINK -->
+                <div v-if="modal.active === 'add-media-link'" class="space-y-3">
+                    <input v-model="forms.media.url" placeholder="https://" class="fun-input w-full p-2" required>
+                    <input v-model="forms.media.description" placeholder="Description" class="fun-input w-full p-2" required>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                     <button type="button" @click="closeModal" class="flex-1 bg-gray-100 font-bold py-2 rounded-xl">Cancel</button>
+                     <button type="submit" class="flex-1 bg-black text-white font-bold py-2 rounded-xl">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SHARE MODAL -->
+    <div v-if="modal.active === 'share'" class="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+        <div class="w-full max-w-md fun-card bg-white p-6">
+             <h3 class="font-black text-xl mb-4">Generate Secure Link</h3>
+             <div class="space-y-4">
+                 <div>
+                     <label class="text-xs font-bold uppercase">Duration</label>
+                     <select v-model="forms.share.durationMinutes" class="fun-input w-full p-2">
+                         <option :value="30">30 Minutes</option>
+                         <option :value="60">1 Hour</option>
+                         <option :value="1440">24 Hours</option>
+                         <option :value="10080">7 Days</option>
+                     </select>
+                 </div>
+                 
+                 <div class="bg-blue-50 p-3 rounded-xl border border-blue-200">
+                     <label class="flex items-center gap-2 cursor-pointer">
+                         <input type="checkbox" v-model="forms.share.requireLocation" class="accent-blue-500 w-4 h-4">
+                         <span class="font-bold text-sm text-blue-900">Require Location to View</span>
+                     </label>
+                 </div>
+
+                 <div class="bg-yellow-50 p-3 rounded-xl border border-yellow-200">
+                     <div class="text-[10px] font-black uppercase text-yellow-700 mb-2">Allowed Tabs</div>
+                     <div class="grid grid-cols-3 gap-2 text-xs font-bold">
+                         <label><input type="checkbox" value="Profile" v-model="forms.share.allowedTabs"> Profile</label>
+                         <label><input type="checkbox" value="Intel" v-model="forms.share.allowedTabs"> Intel</label>
+                         <label><input type="checkbox" value="Files" v-model="forms.share.allowedTabs"> Files</label>
+                         <label><input type="checkbox" value="Map" v-model="forms.share.allowedTabs"> Map</label>
+                         <label><input type="checkbox" value="History" v-model="forms.share.allowedTabs"> History</label>
+                         <label><input type="checkbox" value="Network" v-model="forms.share.allowedTabs"> Network</label>
+                     </div>
+                 </div>
+
+                 <div v-if="shareResult" class="bg-green-100 p-3 rounded border border-green-300 break-all text-xs font-mono">
+                     {{ shareResult }}
+                 </div>
+
+                 <div class="flex gap-2">
+                     <button @click="closeModal" class="flex-1 bg-gray-100 font-bold py-2 rounded-xl">Close</button>
+                     <button v-if="!shareResult" @click="createShare" class="flex-1 bg-black text-white font-bold py-2 rounded-xl">Generate</button>
+                     <button v-else @click="copyShare" class="flex-1 bg-green-500 text-white font-bold py-2 rounded-xl">Copy</button>
+                 </div>
+             </div>
+        </div>
+    </div>
+
+    <!-- DATALISTS FOR AUTOCOMPLETE -->
+    <datalist id="occupations"><option v-for="o in suggestions.occupations" :value="o"></option></datalist>
+    <datalist id="nationalities"><option v-for="n in suggestions.nationalities" :value="n"></option></datalist>
+    <datalist id="ideologies"><option v-for="i in suggestions.ideologies" :value="i"></option></datalist>
 
   </div>
-
+</body>
 `;
