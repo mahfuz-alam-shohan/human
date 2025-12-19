@@ -5,7 +5,7 @@ import { MODALS_SECTION } from './admin/body/modalsSection.js';
 
 export const ADMIN_APP_BODY = `
 <body class="h-[100dvh] overflow-hidden text-slate-900">
-  <div id="app" class="h-full flex flex-col" v-cloak>
+  <div id="app" class="h-full flex flex-col">
 
 ${TOAST_SECTION}
 

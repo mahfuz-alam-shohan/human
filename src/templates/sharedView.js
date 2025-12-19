@@ -15,9 +15,6 @@ export function serveSharedHtml(token) {
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Hide Vue templates until mounted to avoid raw mustache flashing */
-        [v-cloak] { display: none !important; }
-
         /* Kiddy Theme Variables */
         :root {
             --bg-color: #FEF3C7; /* Yellow-100 */
@@ -88,7 +85,7 @@ export function serveSharedHtml(token) {
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
-    <div id="app" class="max-w-4xl mx-auto space-y-6" v-cloak>
+    <div id="app" class="max-w-4xl mx-auto space-y-6">
         
         <!-- LOADING STATE -->
         <div v-if="loading" class="flex flex-col items-center justify-center min-h-[50vh] animate-bounce">
