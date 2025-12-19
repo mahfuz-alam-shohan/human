@@ -334,7 +334,7 @@ export function serveSharedHtml(token) {
                     return { 'Profile':'fa-id-card', 'Intel':'fa-lightbulb', 'Capabilities': 'fa-chart-radar', 'History':'fa-clock', 'Network':'fa-users', 'Files':'fa-folder-open', 'Map':'fa-map' }[t];
                 };
 
-                const groupedIntel = computed(() => data.value?.intel ? data.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
+                const groupedIntel = computed(() => (data.value && data.value.intel) ? data.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
 
                 // Social Media Detection
                 const socialMap = [
@@ -385,7 +385,10 @@ export function serveSharedHtml(token) {
                     if(chartInstance) chartInstance.destroy();
 
                     const labels = ['Leadership', 'Technical', 'Combat', 'Social Eng', 'Observation', 'Stealth'];
-                    const scores = labels.map(l => data.value.skills.find(s => s.skill_name === l)?.score || 50);
+                    const scores = labels.map(l => {
+                        const skill = data.value.skills.find(s => s.skill_name === l);
+                        return (skill && skill.score) || 50;
+                    });
 
                     chartInstance = new Chart(ctx, {
                         type: 'radar',
@@ -438,8 +441,8 @@ export function serveSharedHtml(token) {
                         // IF SUCCESSFUL, UNLOCK
                         isLocationLocked.value = false;
                         data.value = json;
-                        timer.value = json.meta?.remaining_seconds || 0;
-                        allowedTabs.value = json.meta?.allowed_tabs || ['Profile'];
+                        timer.value = (json.meta && json.meta.remaining_seconds) ? json.meta.remaining_seconds : 0;
+                        allowedTabs.value = (json.meta && json.meta.allowed_tabs) ? json.meta.allowed_tabs : ['Profile'];
                         
                         // Set Active Tab to first allowed
                         if(allowedTabs.value.length > 0) activeTab.value = allowedTabs.value[0];
