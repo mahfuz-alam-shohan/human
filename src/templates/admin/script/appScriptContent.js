@@ -94,6 +94,60 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             admin: { email: '', password: '', allowedSections: cloneAllowed(), is_disabled: false, is_master: false }
         });
 
+        const apiBaseUrl = window.location.origin || '';
+        const controlMenuSections = [
+            {
+                title: 'Access & Identity',
+                summary: 'Authenticate, identify current operator, and scope permissions. Use master credentials for full control.',
+                endpoints: [
+                    { method: 'POST', path: '/api/login', detail: 'Exchange email/password for JWT. First login seeds a master if none exist.' },
+                    { method: 'GET', path: '/api/me', detail: 'Return the admin profile tied to the provided JWT.' },
+                    { method: 'GET', path: '/api/admins', detail: 'List admins (master only).' },
+                    { method: 'POST', path: '/api/admins', detail: 'Create admin with allowed sections (master only).' },
+                    { method: 'PATCH', path: '/api/admins/:id', detail: 'Update permissions, password, disable/enable, or force logout (master only).' },
+                    { method: 'GET', path: '/api/admins/logins', detail: 'Audit trail of sign-ins (master only).' }
+                ]
+            },
+            {
+                title: 'Subjects & Intel',
+                summary: 'Full CRUD for profiles and their intelligence graph.',
+                endpoints: [
+                    { method: 'GET', path: '/api/subjects', detail: 'List active subjects (needs targets tab access).' },
+                    { method: 'POST', path: '/api/subjects', detail: 'Create subject (createSubjects permission).' },
+                    { method: 'GET', path: '/api/subjects/:id', detail: 'Fetch subject with tab-level filtering.' },
+                    { method: 'PATCH', path: '/api/subjects/:id', detail: 'Update any subject column (editSubjects permission).' },
+                    { method: 'POST', path: '/api/interaction', detail: 'Add interaction/timeline event (manageIntel).' },
+                    { method: 'POST/PATCH', path: '/api/location', detail: 'Create or edit a location (manageLocations).' },
+                    { method: 'POST', path: '/api/intel', detail: 'Add intel attribute (manageIntel).' },
+                    { method: 'POST', path: '/api/skills', detail: 'Upsert capability score (manageIntel).' },
+                    { method: 'POST/PATCH', path: '/api/relationship', detail: 'Create or edit graph edge (manageRelationships).' },
+                    { method: 'POST', path: '/api/media-link', detail: 'Attach external media link (manageFiles).' }
+                ]
+            },
+            {
+                title: 'Files, Sharing & Ops',
+                summary: 'Control evidence files, secure links, and critical operations.',
+                endpoints: [
+                    { method: 'POST', path: '/api/upload-avatar', detail: 'Upload subject avatar to bucket (manageFiles).' },
+                    { method: 'POST', path: '/api/upload-media', detail: 'Upload evidence/media (manageFiles).' },
+                    { method: 'POST', path: '/api/share-links', detail: 'Create expiring share link with optional geofence and tab whitelist (manageShares).' },
+                    { method: 'GET', path: '/api/share-links?subjectId=ID', detail: 'List share links (manageShares).' },
+                    { method: 'DELETE', path: '/api/share-links?token=...', detail: 'Revoke a share token (manageShares).' },
+                    { method: 'GET', path: '/api/map-data', detail: 'Locations feed for the global map (map tab access).' },
+                    { method: 'GET', path: '/api/global-network', detail: 'Graph nodes/edges for vis.js (network tab access).' },
+                    { method: 'POST', path: '/api/delete', detail: 'Archive subject or delete sub-records (table-based permissions).' },
+                    { method: 'POST', path: '/api/nuke', detail: 'Drop all tables (master only, irreversible).' }
+                ]
+            }
+        ];
+
+        const apiRecipes = computed(() => ({
+            login: "curl -X POST " + apiBaseUrl + "/api/login -H 'Content-Type: application/json' -d '{\\\"email\\\":\\\"MASTER_EMAIL\\\",\\\"password\\\":\\\"MASTER_PASSWORD\\\"}'",
+            subjects: "curl -H 'Authorization: Bearer <TOKEN>' " + apiBaseUrl + "/api/subjects",
+            share: "curl -X POST " + apiBaseUrl + "/api/share-links -H 'Authorization: Bearer <TOKEN>' -H 'Content-Type: application/json' -d '{\\\"subjectId\\\":123,\\\"durationMinutes\\\":60,\\\"requireLocation\\\":false}'",
+            revoke: "curl -X DELETE " + apiBaseUrl + "/api/share-links?token=<TOKEN> -H 'Authorization: Bearer <TOKEN>'"
+        }));
+
         // Charts
         let skillsChartInstance = null;
 
@@ -889,7 +943,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             fetchShareLinks, createShareLink, revokeLink, copyToClipboard, getShareUrl, resolveImg, getThreatColor, saveAdmin, editAdmin, resetAdminForm, toggleAdminStatus, forceLogoutAdmin,
             activeShareLinks, suggestions, debounceSearch, selectLocation, openSettings, handleLogout, fetchAdminConsole,
             mapData, mapSearchQuery, updateMapFilter, filteredMapData, presets, applyPreset, autoFillReciprocal, toasts, quickAppend, exportData, submitMediaLink,
-            showMapSidebar, flyToGlobal, flyTo, showProfileMapList,
+            showMapSidebar, flyToGlobal, flyTo, showProfileMapList, apiBaseUrl, controlMenuSections, apiRecipes,
             fileInput,
             getSkillScore, updateSkill, // New Capability Functions
             getSocialInfo, handleIntelInput, // Social Media Logic
