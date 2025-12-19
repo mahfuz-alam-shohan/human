@@ -9,6 +9,62 @@ export const ADMIN_SECTION = `
                         <button @click="fetchAdminConsole" class="bg-white border-2 border-black px-4 py-2 rounded-xl font-bold hover:bg-gray-50 shadow-[3px_3px_0px_#000] active:translate-y-1 active:shadow-none"><i class="fa-solid fa-rotate"></i> Refresh</button>
                     </div>
 
+                    <div v-if="adminProfile?.is_master" class="fun-card p-4 md:p-5 border-4 border-black bg-white space-y-4">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <div>
+                                <h3 class="text-xl font-heading font-black text-black flex items-center gap-2"><i class="fa-solid fa-building-flag text-green-500"></i> Mother Company Control Guide</h3>
+                                <p class="text-xs md:text-sm font-bold text-gray-500">Use these API recipes to drive the site from the parent company. Keep the master token safe.</p>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button @click="copyToClipboard(apiBaseUrl + '/api')" class="px-3 py-2 bg-green-100 border-2 border-green-500 rounded-lg text-xs font-black text-green-700 hover:bg-green-200"><i class="fa-solid fa-link mr-1"></i>Copy Base URL</button>
+                                <button @click="copyToClipboard(apiRecipes.login)" class="px-3 py-2 bg-blue-100 border-2 border-blue-500 rounded-lg text-xs font-black text-blue-700 hover:bg-blue-200"><i class="fa-solid fa-terminal mr-1"></i>Copy Login cURL</button>
+                                <button @click="copyToClipboard(apiRecipes.subjects)" class="px-3 py-2 bg-purple-100 border-2 border-purple-500 rounded-lg text-xs font-black text-purple-700 hover:bg-purple-200"><i class="fa-solid fa-database mr-1"></i>Copy Subjects cURL</button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                            <div class="bg-gray-100 border-2 border-black rounded-xl p-3 space-y-2">
+                                <div class="text-[10px] font-black uppercase text-gray-500">Base</div>
+                                <div class="font-mono text-xs break-all">{{ apiBaseUrl }}/api</div>
+                                <p class="text-xs font-bold text-gray-600">All endpoints expect <code class="bg-white px-1 py-0.5 rounded border">Authorization: Bearer &lt;token&gt;</code> after logging in.</p>
+                            </div>
+                            <div class="bg-gray-100 border-2 border-black rounded-xl p-3 space-y-2">
+                                <div class="text-[10px] font-black uppercase text-gray-500">Authenticate</div>
+                                <div class="text-[11px] font-bold text-gray-700">POST /api/login</div>
+                                <pre class="bg-white border border-gray-200 rounded-lg p-2 text-[11px] font-mono leading-5 whitespace-pre-wrap break-all">{{ apiRecipes.login }}</pre>
+                                <p class="text-[11px] text-gray-600 font-bold">First-ever login seeds a master admin if none exist.</p>
+                            </div>
+                            <div class="bg-gray-100 border-2 border-black rounded-xl p-3 space-y-2">
+                                <div class="text-[10px] font-black uppercase text-gray-500">Share & Revoke</div>
+                                <div class="text-[11px] font-bold text-gray-700">POST /api/share-links</div>
+                                <pre class="bg-white border border-gray-200 rounded-lg p-2 text-[11px] font-mono leading-5 whitespace-pre-wrap break-all">{{ apiRecipes.share }}</pre>
+                                <div class="text-[11px] font-bold text-gray-700">DELETE /api/share-links?token=...</div>
+                                <pre class="bg-white border border-gray-200 rounded-lg p-2 text-[11px] font-mono leading-5 whitespace-pre-wrap break-all">{{ apiRecipes.revoke }}</pre>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                            <div v-for="section in controlMenuSections" :key="section.title" class="border-2 border-black rounded-xl p-3 bg-yellow-50 space-y-2">
+                                <div class="flex items-start gap-2">
+                                    <i class="fa-solid fa-check-double text-green-600 mt-0.5"></i>
+                                    <div>
+                                        <div class="text-base font-heading font-black text-black">{{ section.title }}</div>
+                                        <p class="text-[11px] text-gray-600 font-bold">{{ section.summary }}</p>
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <div v-for="ep in section.endpoints" :key="ep.method + ep.path" class="bg-white border border-gray-200 rounded-lg px-2 py-1.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-full" :class="ep.method.includes('POST') || ep.method.includes('PATCH') || ep.method.includes('DELETE') ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'">{{ ep.method }}</span>
+                                            <span class="font-mono text-[11px] text-black truncate">{{ ep.path }}</span>
+                                        </div>
+                                        <div class="text-[11px] text-gray-600 font-bold mt-1">{{ ep.detail }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="fun-card p-5 space-y-4 border-4 border-black">
                             <div class="flex items-center justify-between">
