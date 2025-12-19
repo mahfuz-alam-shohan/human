@@ -66,12 +66,15 @@ export const MODALS_SECTION = `
                     </div>
                     <div v-else class="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border-2 border-gray-200">
                         <div class="w-12 h-12 rounded-full overflow-hidden border-2 border-black bg-gray-100 shrink-0">
-                            <img v-if="resolveImg(selectedRelTarget?.avatar_path || modal.data?.avatar_path || '')" :src="resolveImg(selectedRelTarget?.avatar_path || modal.data?.avatar_path || '')" class="w-full h-full object-cover">
-                            <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{ selectedRelTarget?.full_name?.charAt(0) || '?' }}</div>
+                            <img 
+                                v-if="resolveImg((selectedRelTarget && selectedRelTarget.avatar_path) ? selectedRelTarget.avatar_path : (modal.data && modal.data.avatar_path ? modal.data.avatar_path : ''))" 
+                                :src="resolveImg((selectedRelTarget && selectedRelTarget.avatar_path) ? selectedRelTarget.avatar_path : (modal.data && modal.data.avatar_path ? modal.data.avatar_path : ''))" 
+                                class="w-full h-full object-cover">
+                            <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{ (selectedRelTarget && selectedRelTarget.full_name ? selectedRelTarget.full_name.charAt(0) : '?') }}</div>
                         </div>
                         <div class="min-w-0">
-                            <div class="font-black text-sm text-gray-900 truncate">{{ selectedRelTarget?.full_name || 'Existing target' }}</div>
-                            <div class="text-[11px] font-bold text-gray-500 truncate">{{ selectedRelTarget?.occupation || 'Existing relationship' }}</div>
+                            <div class="font-black text-sm text-gray-900 truncate">{{ (selectedRelTarget && selectedRelTarget.full_name) || 'Existing target' }}</div>
+                            <div class="text-[11px] font-bold text-gray-500 truncate">{{ (selectedRelTarget && selectedRelTarget.occupation) || 'Existing relationship' }}</div>
                         </div>
                     </div>
 

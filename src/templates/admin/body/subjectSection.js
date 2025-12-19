@@ -55,9 +55,9 @@ export const SUBJECT_DETAIL_SECTION = `
                             <div class="md:col-span-2 space-y-6">
                                 <div class="fun-card p-6 border-l-[10px] border-l-blue-500">
                                     <h3 class="text-lg font-heading font-black text-blue-600 mb-2">The Gist</h3>
-                                    <p class="text-base font-bold text-gray-700 leading-relaxed">{{ analysisResult?.summary || 'Not enough info yet!' }}</p>
+                                    <p class="text-base font-bold text-gray-700 leading-relaxed">{{ (analysisResult && analysisResult.summary) || 'Not enough info yet!' }}</p>
                                     <div class="flex gap-2 mt-4 flex-wrap">
-                                        <span v-for="tag in analysisResult?.tags" class="text-[10px] px-3 py-1 bg-violet-200 text-violet-800 rounded-full border-2 border-black font-black">{{tag}}</span>
+                                        <span v-for="tag in (analysisResult && analysisResult.tags ? analysisResult.tags : [])" class="text-[10px] px-3 py-1 bg-violet-200 text-violet-800 rounded-full border-2 border-black font-black">{{tag}}</span>
                                     </div>
                                 </div>
                                 <div class="fun-card p-6 md:p-8">

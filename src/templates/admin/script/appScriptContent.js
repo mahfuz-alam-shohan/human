@@ -154,27 +154,28 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         };
 
         // Computed
-        const allowedSections = computed(() => adminProfile.value?.allowed_sections || cloneAllowed());
-        const hasPermission = (perm) => adminProfile.value?.is_master || !!allowedSections.value.permissions?.[perm];
+        const allowedSections = computed(() => (adminProfile.value && adminProfile.value.allowed_sections) ? adminProfile.value.allowed_sections : cloneAllowed());
+        const hasPermission = (perm) => (adminProfile.value && adminProfile.value.is_master) || !!(allowedSections.value.permissions && allowedSections.value.permissions[perm]);
+        const isMaster = () => !!(adminProfile.value && adminProfile.value.is_master);
         const canSeeTab = (tab) => {
             if (tab === 'detail') return true;
-            if (tab === 'control') return !!adminProfile.value?.is_master;
-            if (tab === 'admins') return !!adminProfile.value?.is_master;
-            return adminProfile.value?.is_master || allowedSections.value.mainTabs.includes(tab);
+            if (tab === 'control') return !!(adminProfile.value && adminProfile.value.is_master);
+            if (tab === 'admins') return !!(adminProfile.value && adminProfile.value.is_master);
+            return (adminProfile.value && adminProfile.value.is_master) || allowedSections.value.mainTabs.includes(tab);
         };
         const visibleTabs = computed(() => allTabs.filter(t => canSeeTab(t.id)));
-        const visibleSubjectTabs = computed(() => (adminProfile.value?.is_master ? defaultAllowed.subjectTabs : allowedSections.value.subjectTabs));
+        const visibleSubjectTabs = computed(() => (adminProfile.value && adminProfile.value.is_master ? defaultAllowed.subjectTabs : allowedSections.value.subjectTabs));
         const pickSubjectTab = () => visibleSubjectTabs.value[0] || 'overview';
         const subjectTabLabels = { overview: 'Overview', capabilities: 'Capabilities', attributes: 'Attributes', timeline: 'Timeline', map: 'Map', network: 'Network', files: 'Files' };
         const filteredSubjects = computed(() => subjects.value.filter(s => s.full_name.toLowerCase().includes(search.value.toLowerCase())));
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
-        const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
+        const groupedIntel = computed(() => (selected.value && selected.value.intel) ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
         const relationCandidates = computed(() => {
             const term = relationSearch.value.trim().toLowerCase();
             const excludeIds = new Set();
-            if (selected.value?.id) excludeIds.add(selected.value.id);
-            (selected.value?.relationships || []).forEach(r => {
+            if (selected.value && selected.value.id) excludeIds.add(selected.value.id);
+            ((selected.value && selected.value.relationships) ? selected.value.relationships : []).forEach(r => {
                 const tid = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
                 if (tid) excludeIds.add(tid);
             });
@@ -188,10 +189,12 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             if (!forms.rel.targetId) return null;
             const direct = subjects.value.find(s => s.id === forms.rel.targetId);
             if (direct) return direct;
-            const rel = selected.value?.relationships?.find(r => {
-                const tid = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
-                return tid === forms.rel.targetId;
-            });
+            const rel = (selected.value && selected.value.relationships) 
+                ? selected.value.relationships.find(r => {
+                    const tid = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                    return tid === forms.rel.targetId;
+                })
+                : null;
             if (rel) {
                 return { 
                     id: forms.rel.targetId, 
@@ -250,7 +253,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             if (currentTab.value === 'detail') return;
             if (!visibleTabs.value.length) { currentTab.value = 'dashboard'; return; }
             if (!visibleTabs.value.find(t => t.id === currentTab.value)) {
-                currentTab.value = visibleTabs.value[0]?.id || 'dashboard';
+                currentTab.value = visibleTabs.value[0] ? visibleTabs.value[0].id : 'dashboard';
             }
         };
         const ensureSubTabValidity = () => {
@@ -269,7 +272,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                 ensureTabValidity();
                 ensureSubTabValidity();
                 await fetchData();
-                if (currentTab.value === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
+                if (currentTab.value === 'admins' && adminProfile.value && adminProfile.value.is_master) fetchAdminConsole();
             } catch(e) {} finally { loading.value = false; }
         };
         const hydrateSession = async () => {
@@ -316,16 +319,23 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         };
 
         const analyzeLocal = (s) => {
-             const points = (s.intel?.length || 0) + (s.interactions?.length || 0);
+             const intelCount = s.intel ? s.intel.length : 0;
+             const interactionCount = s.interactions ? s.interactions.length : 0;
+             const points = intelCount + interactionCount;
              const completeness = Math.min(100, Math.floor(points * 5));
              const tags = [];
-             if(s.intel?.some(i => i.category === 'Social Media')) tags.push('Digital');
-             if(s.interactions?.length > 5) tags.push('Frequent Contact');
-             return { summary: \`Profile is \${completeness}% complete based on data density.\`, tags };
+             if(s.intel && s.intel.some(i => i.category === 'Social Media')) tags.push('Digital');
+             if(s.interactions && s.interactions.length > 5) tags.push('Frequent Contact');
+             return { summary: `Profile is ${completeness}% complete based on data density.`, tags };
         };
 
         // Skills Logic
-        const getSkillScore = (name) => selected.value.skills?.find(s => s.skill_name === name)?.score || 50;
+        const getSkillScore = (name) => {
+            const skillList = (selected.value && selected.value.skills) ? selected.value.skills : [];
+            const skill = Array.isArray(skillList) ? skillList.find(s => s.skill_name === name) : null;
+            return (skill && skill.score) || 50;
+        };
+
         const updateSkill = async (name, val) => {
             if (!hasPermission('manageIntel')) { notify('Access Denied', 'Editing capabilities is restricted', 'error'); return; }
             await api('/skills', { method: 'POST', body: JSON.stringify({ subject_id: selected.value.id, skill_name: name, score: val }) });
@@ -459,8 +469,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                     
                     bounds.push([loc.lat, loc.lng]); // Add to bounds
 
-                    const avatar = loc.avatar_path || (selected.value?.avatar_path);
-                    const name = loc.full_name || (selected.value?.full_name);
+                    const avatar = loc.avatar_path || (selected.value ? selected.value.avatar_path : undefined);
+                    const name = loc.full_name || (selected.value ? selected.value.full_name : undefined);
                     const iconHtml = \`<div class="avatar-marker-fun"><img src="\${resolveImg(avatar) || 'https://ui-avatars.com/api/?name='+name}"></div>\`;
                     const icon = L.divIcon({ html: iconHtml, className: '', iconSize: [40, 40], iconAnchor: [20, 20] });
                     L.marker([loc.lat, loc.lng], { icon }).addTo(map).bindPopup(\`<b>\${name}</b><br>\${loc.name}\`);
@@ -501,7 +511,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const changeTab = (t) => { 
             if (!canSeeTab(t)) { notify('Access Denied', 'You cannot view this tab', 'error'); return; }
             currentTab.value = t; 
-            if (t === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
+            if (t === 'admins' && adminProfile.value && adminProfile.value.is_master) fetchAdminConsole();
         };
         const changeSubTab = (t) => { 
             if (!visibleSubjectTabs.value.includes(t)) { notify('Access Denied', 'This section is hidden for you', 'error'); return; }
@@ -544,10 +554,10 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
              if(t === 'edit-rel' && item) {
                 forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type };
              }
-             if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
-             if(t === 'cmd') nextTick(() => cmdInput.value?.focus());
-             // MINI PROFILE LOGIC
-             if(t === 'mini-profile' && item) modal.data = item;
+            if(t === 'share-secure') { forms.share.requireLocation = false; forms.share.allowedTabs = ['Profile', 'Intel', 'Capabilities', 'History', 'Network', 'Files', 'Map']; fetchShareLinks(); }
+            if(t === 'cmd') nextTick(() => { const el = cmdInput.value; if (el) el.focus(); });
+            // MINI PROFILE LOGIC
+            if(t === 'mini-profile' && item) modal.data = item;
         };
         const closeModal = () => { modal.active = null; };
 
@@ -565,7 +575,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                 } else {
                     await fetchData();
                     if(currentTab.value === 'map' && canSeeTab('map')) { mapData.value = await api('/map-data'); initMap('warRoomMap', mapData.value); }
-                    if(currentTab.value === 'admins' && adminProfile.value?.is_master) await fetchAdminConsole();
+                    if(currentTab.value === 'admins' && adminProfile.value && adminProfile.value.is_master) await fetchAdminConsole();
                 }
                 ensureTabValidity();
                 ensureSubTabValidity();
@@ -719,7 +729,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         };
         const saveAdmin = async () => {
             if (processing.value) return;
-            if (!adminProfile.value?.is_master) { notify('Access Denied', 'Only the master admin can do this', 'error'); return; }
+            if (!isMaster()) { notify('Access Denied', 'Only the master admin can do this', 'error'); return; }
             if (!editingAdminId.value && !forms.admin.password) { notify('Missing Data', 'New admins need a password', 'error'); return; }
             processing.value = true;
             try {
@@ -733,18 +743,18 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             } finally { processing.value = false; }
         };
         const toggleAdminStatus = async (admin) => {
-            if (!adminProfile.value?.is_master) return notify('Access Denied', 'Master only', 'error');
+            if (!isMaster()) return notify('Access Denied', 'Master only', 'error');
             await api('/admins/' + admin.id, { method: 'PATCH', body: JSON.stringify({ is_disabled: !admin.is_disabled }) });
             await fetchAdminConsole();
         };
         const forceLogoutAdmin = async (admin) => {
-            if (!adminProfile.value?.is_master) return notify('Access Denied', 'Master only', 'error');
+            if (!isMaster()) return notify('Access Denied', 'Master only', 'error');
             await api('/admins/' + admin.id, { method: 'PATCH', body: JSON.stringify({ forceLogout: true }) });
             await fetchAdminConsole();
             notify('Logged Out', admin.email + ' sessions revoked', 'success');
         };
         const fetchAdminConsole = async () => {
-            if (!adminProfile.value?.is_master) return;
+            if (!isMaster()) return;
             const [list, logs] = await Promise.all([api('/admins'), api('/admins/logins')]);
             admins.value = list;
             adminLogs.value = logs;
@@ -754,7 +764,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const getShareUrl = (t) => window.location.origin + '/share/' + t;
         const getThreatColor = (l, bg) => { const c = { 'Critical': 'red', 'High': 'orange', 'Medium': 'yellow', 'Low': 'green' }[l] || 'gray'; return bg ? \`bg-\${c}-100 text-\${c}-800 border-2 border-\${c}-500\` : \`text-\${c}-600\`; };
         const openSettings = () => { 
-            if (!adminProfile.value?.is_master) { notify('Master Only', 'Only the master admin can reset data', 'error'); return; }
+            if (!isMaster()) { notify('Master Only', 'Only the master admin can reset data', 'error'); return; }
             if(confirm("RESET SYSTEM?")) { api('/nuke', {method:'POST'}).then(() => { localStorage.clear(); window.location.href = '/'; }); } 
         };
         const handleLogout = () => { localStorage.removeItem('token'); location.reload(); };
@@ -900,7 +910,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                     }
                 });
             });
-            if (val === 'admins' && adminProfile.value?.is_master) fetchAdminConsole();
+            if (val === 'admins' && isMaster()) fetchAdminConsole();
         });
 
         onMounted(async () => { 
