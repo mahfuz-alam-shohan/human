@@ -794,7 +794,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                  network.on("click", (params) => {
                      if(params.nodes.length > 0) {
                          const nodeId = params.nodes[0];
-                         const nodeData = data.nodes.find(n => n.id === nodeId);
+                         const nodeData = nodes.find(n => n.id === nodeId);
                          if(nodeData) openModal('mini-profile', { id: nodeId, full_name: nodeData.label, occupation: nodeData.occupation, avatar_path: nodeData.image, nationality: nodeData.group === 'Low' ? '' : '', threat_level: nodeData.group });
                      }
                  });
