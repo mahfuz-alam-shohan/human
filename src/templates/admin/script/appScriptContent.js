@@ -62,7 +62,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const toasts = ref([]);
         const showMapSidebar = ref(window.innerWidth >= 768);
         const showProfileMapList = ref(false); // Mobile Drawer State
-        
+        const relationSearch = ref('');
+
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
         let pickerMapInstance = null;
@@ -139,6 +140,39 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const filteredMapData = computed(() => !mapSearchQuery.value ? mapData.value : mapData.value.filter(d => d.full_name.toLowerCase().includes(mapSearchQuery.value.toLowerCase()) || d.name.toLowerCase().includes(mapSearchQuery.value.toLowerCase())));
         const groupedIntel = computed(() => selected.value?.intel ? selected.value.intel.reduce((a, i) => (a[i.category] = a[i.category] || []).push(i) && a, {}) : {});
         const cmdResults = computed(() => cmdQuery.value ? subjects.value.filter(s => s.full_name.toLowerCase().includes(cmdQuery.value.toLowerCase())).slice(0, 5).map(s => ({ title: s.full_name, desc: s.occupation, action: () => { viewSubject(s.id); closeModal(); } })) : []);
+        const relationCandidates = computed(() => {
+            const term = relationSearch.value.trim().toLowerCase();
+            const excludeIds = new Set();
+            if (selected.value?.id) excludeIds.add(selected.value.id);
+            (selected.value?.relationships || []).forEach(r => {
+                const tid = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                if (tid) excludeIds.add(tid);
+            });
+            let pool = subjects.value.filter(s => !excludeIds.has(s.id));
+            if (term) {
+                pool = pool.filter(s => [s.full_name, s.occupation, s.nationality].filter(Boolean).some(v => v.toLowerCase().includes(term)));
+            }
+            return pool.slice(0, 8);
+        });
+        const selectedRelTarget = computed(() => {
+            if (!forms.rel.targetId) return null;
+            const direct = subjects.value.find(s => s.id === forms.rel.targetId);
+            if (direct) return direct;
+            const rel = selected.value?.relationships?.find(r => {
+                const tid = r.subject_a_id === selected.value.id ? r.subject_b_id : r.subject_a_id;
+                return tid === forms.rel.targetId;
+            });
+            if (rel) {
+                return { 
+                    id: forms.rel.targetId, 
+                    full_name: rel.target_name, 
+                    occupation: rel.target_occupation || '', 
+                    nationality: rel.target_nationality || '', 
+                    avatar_path: rel.target_avatar 
+                };
+            }
+            return null;
+        });
         
         // FIXED RESOLVE IMG
         const resolveImg = (p) => {
@@ -476,7 +510,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                  nextTick(() => initMap('locationPickerMap', [], true));
              }
 
-             if(t === 'add-rel') forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; 
+             if(t === 'add-rel') { forms.rel = { subjectA: selected.value.id, type: '', reciprocal: '' }; relationSearch.value = ''; }
              if(t === 'edit-rel' && item) {
                 forms.rel = { id: item.id, subjectA: selected.value.id, targetId: item.subject_a_id === selected.value.id ? item.subject_b_id : item.subject_a_id, type: item.subject_a_id === selected.value.id ? item.relationship_type : item.role_b, reciprocal: item.subject_a_id === selected.value.id ? item.role_b : item.relationship_type };
              }
@@ -558,6 +592,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const submitRel = async () => { 
             if(processing.value) return;
             if (!hasPermission('manageRelationships')) { notify('Access Denied', 'You cannot change relationships', 'error'); return; }
+            if (modal.active === 'add-rel' && !forms.rel.targetId) { notify('Pick a profile', 'Select who to link with.', 'error'); return; }
             processing.value = true; 
             try { 
                 const method = forms.rel.id ? 'PATCH' : 'POST'; 
@@ -565,6 +600,12 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
                 await api('/relationship', { method: method, body: JSON.stringify(payload) }); 
                 viewSubject(selected.value.id); closeModal(); 
             } finally { processing.value = false; } 
+        };
+
+        const pickRelationTarget = (person) => {
+            if(!person) return;
+            forms.rel.targetId = person.id;
+            relationSearch.value = person.full_name;
         };
         
         const submitMediaLink = async () => { 
@@ -853,7 +894,8 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             getSkillScore, updateSkill, // New Capability Functions
             getSocialInfo, handleIntelInput, // Social Media Logic
             refreshApp,
-            copyCoords, updatePickerMarker // Location Edit
+            copyCoords, updatePickerMarker, // Location Edit
+            relationSearch, relationCandidates, pickRelationTarget, selectedRelTarget
         };
       }
     }).mount('#app');

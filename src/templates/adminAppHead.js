@@ -5,8 +5,8 @@ export const ADMIN_APP_HEAD = `
   <title>PEOPLE OS // PLAYGROUND</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
-  <!-- Fun Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
@@ -14,69 +14,67 @@ export const ADMIN_APP_HEAD = `
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
   <style>
-    /* Kiddy Theme Config */
+    /* Refined Light Theme */
     :root { 
-        --bg-color: #FEF9C3; /* Yellow-100 */
+        --bg-color: #F5F7FB;
         --card-bg: #FFFFFF;
-        --border-color: #000000;
-        --shadow-color: #000000;
-        --primary: #8B5CF6; /* Violet */
+        --border-color: #0F172A;
+        --shadow-color: rgba(15, 23, 42, 0.12);
+        --primary: #1D4ED8;
     }
     
     body { 
-        font-family: 'Comic Neue', cursive; 
+        font-family: 'Inter', system-ui, -apple-system, sans-serif; 
         background-color: var(--bg-color); 
         color: #1f2937;
-        /* Dot pattern background */
-        background-image: radial-gradient(#F59E0B 2px, transparent 2px);
-        background-size: 30px 30px;
-        font-weight: 700;
+        background-image: linear-gradient(180deg, rgba(255,255,255,0.8) 0%, rgba(245,247,251,1) 30%);
+        font-weight: 600;
     }
 
-    h1, h2, h3, h4, .font-heading { font-family: 'Fredoka', sans-serif; }
+    h1, h2, h3, h4, .font-heading { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -0.01em; }
     
     /* "Sticker" Card Style replacing Glass */
     .fun-card { 
-        background: white; 
-        border: 3px solid black; 
-        box-shadow: 5px 5px 0px 0px rgba(0,0,0,1);
+        background: var(--card-bg); 
+        border: 2px solid var(--border-color); 
+        box-shadow: 0px 10px 30px -12px var(--shadow-color);
         border-radius: 1rem; 
-        transition: all 0.1s ease-in-out;
+        transition: all 0.12s ease-in-out;
     }
     
     /* Input Fields - Chunky */
     .fun-input { 
         background: #fff; 
-        border: 3px solid black; 
+        border: 2px solid var(--border-color); 
         color: #000; 
         border-radius: 0.75rem; 
-        font-family: 'Comic Neue', cursive;
-        font-weight: 700;
-        box-shadow: 3px 3px 0px 0px rgba(0,0,0,0.1);
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        box-shadow: 0px 6px 18px -12px var(--shadow-color);
     }
     .fun-input:focus { 
         outline: none; 
-        box-shadow: 3px 3px 0px 0px #8B5CF6; 
-        border-color: #8B5CF6;
+        box-shadow: 0px 0px 0px 3px rgba(29, 78, 216, 0.15); 
+        border-color: var(--primary);
     }
-    .fun-input::placeholder { color: #9CA3AF; font-weight: 400; }
+    .fun-input::placeholder { color: #94A3B8; font-weight: 500; }
 
     /* Buttons - Clicky */
     .fun-btn {
-        border: 3px solid black;
-        box-shadow: 3px 3px 0px 0px black;
-        transition: all 0.1s;
-        font-family: 'Fredoka', sans-serif;
+        border: 2px solid var(--border-color);
+        box-shadow: 0px 6px 18px -12px var(--shadow-color);
+        transition: all 0.12s;
+        font-family: 'Space Grotesk', 'Inter', sans-serif;
     }
     .fun-btn:active {
-        transform: translate(2px, 2px);
-        box-shadow: 1px 1px 0px 0px black;
+        transform: translate(1px, 1px);
+        box-shadow: 0px 4px 12px -10px var(--shadow-color);
     }
     .fun-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Scrollbar */
-    ::-webkit-scrollbar { width: 12px; }
-    ::-webkit-scrollbar-thumb { background: #FCD34D; border: 3px solid black; border-radius: 10px; }
+    ::-webkit-scrollbar { width: 10px; }
+    ::-webkit-scrollbar-thumb { background: #CBD5E1; border: 2px solid transparent; border-radius: 999px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
     /* Utility helpers */
@@ -85,8 +83,8 @@ export const ADMIN_APP_HEAD = `
     .touch-scroll { -webkit-overflow-scrolling: touch; }
 
     .safe-area-pb { padding-bottom: env(safe-area-inset-bottom); }
-    .animate-bounce-in { animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-    @keyframes bounceIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+    .animate-bounce-in { animation: bounceIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    @keyframes bounceIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     
     /* Marker - FIXED */
     .avatar-marker-fun { 
@@ -94,7 +92,7 @@ export const ADMIN_APP_HEAD = `
         border-radius: 50%; 
         background: white;
         border: 3px solid white; 
-        box-shadow: 0 0 0 3px black; /* Faux border that follows radius */
+        box-shadow: 0 0 0 2px var(--border-color); /* Faux border that follows radius */
         overflow: hidden; /* Clips image */
         display: flex;
         align-items: center;

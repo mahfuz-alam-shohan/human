@@ -22,11 +22,59 @@ export const MODALS_SECTION = `
 
                 <!-- ADD/EDIT REL -->
                  <form v-if="['add-rel', 'edit-rel'].includes(modal.active)" @submit.prevent="submitRel" class="space-y-6">
-                    <div class="p-4 bg-blue-100 border-2 border-blue-400 rounded-xl text-sm font-bold text-blue-900 mb-4">{{ modal.active === 'edit-rel' ? 'Editing link for' : 'Linking' }} <strong>{{selected.full_name}}</strong></div>
-                    <select v-if="modal.active === 'add-rel'" v-model="forms.rel.targetId" class="fun-input w-full p-3 text-sm" required>
-                        <option value="" disabled selected>Pick a Person</option>
-                        <option v-for="s in subjects" :value="s.id" v-show="s.id !== selected.id">{{s.full_name}} ({{s.occupation}})</option>
-                    </select>
+                    <div class="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl text-sm font-bold text-blue-900 mb-4">{{ modal.active === 'edit-rel' ? 'Editing link for' : 'Linking' }} <strong>{{selected.full_name}}</strong></div>
+
+                    <!-- Target Picker -->
+                    <div v-if="modal.active === 'add-rel'" class="space-y-3">
+                        <div class="relative">
+                            <input v-model="relationSearch" placeholder="Search by name, role, or origin" class="fun-input w-full p-3 text-sm pl-10" required>
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-gray-400"></i>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-1">
+                            <button 
+                                v-for="person in relationCandidates" 
+                                :key="person.id" 
+                                type="button"
+                                @click="pickRelationTarget(person)"
+                                class="flex items-center gap-3 p-3 rounded-xl border-2 transition-all"
+                                :class="forms.rel.targetId === person.id ? 'border-blue-500 bg-blue-50 shadow-[2px_2px_0px_#1E3A8A]' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'">
+                                <div class="w-12 h-12 rounded-full overflow-hidden border-2 border-black bg-gray-100 shrink-0">
+                                    <img v-if="resolveImg(person.avatar_path)" :src="resolveImg(person.avatar_path)" class="w-full h-full object-cover">
+                                    <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{person.full_name.charAt(0)}}</div>
+                                </div>
+                                <div class="text-left min-w-0">
+                                    <div class="font-black text-sm text-gray-900 truncate">{{ person.full_name }}</div>
+                                    <div class="text-[11px] font-bold text-gray-500 truncate">{{ person.occupation || 'Unknown role' }}</div>
+                                    <div class="text-[10px] font-bold text-blue-600 uppercase tracking-wide" v-if="person.nationality">{{ person.nationality }}</div>
+                                </div>
+                                <i class="fa-solid" :class="forms.rel.targetId === person.id ? 'fa-check text-blue-600' : 'fa-plus text-gray-400'" aria-hidden="true"></i>
+                            </button>
+                            <div v-if="relationCandidates.length === 0" class="col-span-full text-center text-xs font-bold text-gray-500 py-4 border-2 border-dashed border-gray-200 rounded-xl">No matches yet. Try another search.</div>
+                        </div>
+                        <div v-if="selectedRelTarget" class="flex items-center gap-3 bg-blue-50 border-2 border-blue-300 rounded-xl p-3">
+                            <div class="w-12 h-12 rounded-full overflow-hidden border-2 border-black bg-white shrink-0">
+                                <img v-if="resolveImg(selectedRelTarget.avatar_path)" :src="resolveImg(selectedRelTarget.avatar_path)" class="w-full h-full object-cover">
+                                <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{selectedRelTarget.full_name.charAt(0)}}</div>
+                            </div>
+                            <div class="min-w-0">
+                                <div class="font-black text-sm text-gray-900 truncate">{{ selectedRelTarget.full_name }}</div>
+                                <div class="text-[11px] font-bold text-gray-500 truncate">{{ selectedRelTarget.occupation || 'Unknown role' }}</div>
+                                <div class="text-[10px] font-bold text-blue-600 uppercase tracking-wide" v-if="selectedRelTarget.nationality">{{ selectedRelTarget.nationality }}</div>
+                            </div>
+                            <span class="ml-auto text-[11px] font-black text-blue-700 bg-blue-100 px-2 py-1 rounded-lg border border-blue-200">Selected</span>
+                        </div>
+                    </div>
+                    <div v-else class="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border-2 border-gray-200">
+                        <div class="w-12 h-12 rounded-full overflow-hidden border-2 border-black bg-gray-100 shrink-0">
+                            <img v-if="resolveImg(selectedRelTarget?.avatar_path || modal.data?.avatar_path || '')" :src="resolveImg(selectedRelTarget?.avatar_path || modal.data?.avatar_path || '')" class="w-full h-full object-cover">
+                            <div v-else class="w-full h-full flex items-center justify-center font-black text-gray-400">{{ selectedRelTarget?.full_name?.charAt(0) || '?' }}</div>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="font-black text-sm text-gray-900 truncate">{{ selectedRelTarget?.full_name || 'Existing target' }}</div>
+                            <div class="text-[11px] font-bold text-gray-500 truncate">{{ selectedRelTarget?.occupation || 'Existing relationship' }}</div>
+                        </div>
+                    </div>
+
                     <div class="border-t-2 border-dashed border-gray-300 pt-4 mt-2">
                          <label class="block text-xs font-black uppercase text-gray-400 mb-2">The Connection</label>
                          <div class="grid grid-cols-2 gap-4">
