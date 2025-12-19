@@ -24,7 +24,6 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             { id: 'targets', icon: 'fa-solid fa-address-book', label: 'Database' },
             { id: 'map', icon: 'fa-solid fa-map-location-dot', label: 'Global Map' },
             { id: 'network', icon: 'fa-solid fa-circle-nodes', label: 'Network' },
-            { id: 'control', icon: 'fa-solid fa-book', label: 'Control' },
             { id: 'admins', icon: 'fa-solid fa-user-shield', label: 'Admins' },
         ];
         const defaultAllowed = {
@@ -64,34 +63,6 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const showMapSidebar = ref(window.innerWidth >= 768);
         const showProfileMapList = ref(false); // Mobile Drawer State
         const relationSearch = ref('');
-
-        const controlGuide = reactive({
-            accessProtocols: [
-                { title: 'Master Admin Gateway', desc: 'Use company SSO or the vault-issued master credentials to reach this console. MFA is mandatory before any control actions.', items: ['Login from the mother-company admin hub and follow the SSO redirect.', 'Store the fallback password in the corporate vault only.', 'Rotate the master password every 90 days; revoke stale tokens via the Logout All Sessions control.'] },
-                { title: 'Delegated Operators', desc: 'Create limited admins for day-to-day operators and restrict what they can touch.', items: ['Enable only the tabs they need (Briefing, Database, Map, Network).', 'Disable accounts immediately after offboarding using the Disable toggle.', 'Use session revoke before changing ownership of shared machines.'] },
-                { title: 'Environment Boundaries', desc: 'Keep a hard line between the mother-company network and this site.', items: ['Allow API calls only from trusted CIDR blocks or VPN egress.', 'Use service tokens for backend-to-backend calls, user tokens for humans.', 'Mirror audit logs back to the mother-company SIEM via the /admins/logins feed.'] }
-            ],
-            apiCatalog: [
-                { name: 'Authenticate', method: 'POST', path: '/api/login', purpose: 'Swap master/admin credentials for a JWT.', sample: "curl -X POST https://your-site/api/login\n  -H 'Content-Type: application/json'\n  -d '{\"email\":\"admin@company.com\",\"password\":\"<PASSWORD>\"}'" },
-                { name: 'Who Am I', method: 'GET', path: '/api/me', purpose: 'Verify the active admin identity and permissions.', sample: "curl -H 'Authorization: Bearer <TOKEN>' https://your-site/api/me" },
-                { name: 'Subjects', method: 'GET', path: '/api/subjects', purpose: 'Pull all profiles into the mother-company data lake.', sample: "curl -H 'Authorization: Bearer <TOKEN>' https://your-site/api/subjects" },
-                { name: 'Create/Update Subject', method: 'POST/PATCH', path: '/api/subjects[/:id]', purpose: 'Provision or update dossiers from upstream systems.', sample: "curl -X PATCH https://your-site/api/subjects/<ID>\n  -H 'Authorization: Bearer <TOKEN>'\n  -H 'Content-Type: application/json'\n  -d '{\"status\":\"Active\"}'" },
-                { name: 'Network Graph', method: 'GET', path: '/api/global-network', purpose: 'Sync the relationship graph for corporate tooling.', sample: "curl -H 'Authorization: Bearer <TOKEN>' https://your-site/api/global-network" },
-                { name: 'Map Data', method: 'GET', path: '/api/map-data', purpose: 'Plot all locations on the mother-company map.', sample: "curl -H 'Authorization: Bearer <TOKEN>' https://your-site/api/map-data" }
-            ],
-            runbooks: [
-                { title: 'Ship Controlled Changes', steps: ['Raise a ticket in the mother-company tracker describing the change.', 'Develop in a feature branch; request peer review.', 'Use the admin console to roll back by disabling affected operators if something goes wrong.', 'Refresh data from this page after deployments to confirm stats and feeds are healthy.'] },
-                { title: 'Emergency Containment', steps: ['Disable non-master admins.', 'Rotate the master credential via the vault and update the fallback password here.', 'Purge active tokens with Logout All Sessions.', 'Audit the latest 200 logins to confirm containment.'] },
-                { title: 'API Rollout', steps: ['Use /api/me to validate tokens from the mother-company gateway.', 'Enable only the endpoints the integration needs.', 'Throttle callers at the gateway; watch the Recent Buzz feed for anomalies.', 'Log outbound calls in the mother-company SIEM for parity.'] }
-            ],
-            buildNotes: [
-                'Keep API payloads small; prefer PATCH for single-field updates to limit blast radius.',
-                'Tag every subject sync with an x-origin header so you can trace mother-company writes.',
-                'Use the relationship presets to keep role labels consistent across systems.',
-                'Prefer share links with expiration when granting temporary visibility outside the org.',
-                'Document every endpoint invocation in the mother-company runbook with examples from the API catalog below.'
-            ]
-        });
 
         const locationSearchQuery = ref('');
         const locationSearchResults = ref([]);
@@ -158,7 +129,6 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
         const hasPermission = (perm) => adminProfile.value?.is_master || !!allowedSections.value.permissions?.[perm];
         const canSeeTab = (tab) => {
             if (tab === 'detail') return true;
-            if (tab === 'control') return !!adminProfile.value?.is_master;
             if (tab === 'admins') return !!adminProfile.value?.is_master;
             return adminProfile.value?.is_master || allowedSections.value.mainTabs.includes(tab);
         };
@@ -925,8 +895,7 @@ export const ADMIN_APP_SCRIPT_CONTENT = `
             getSocialInfo, handleIntelInput, // Social Media Logic
             refreshApp,
             copyCoords, updatePickerMarker, // Location Edit
-            relationSearch, relationCandidates, pickRelationTarget, selectedRelTarget,
-            controlGuide
+            relationSearch, relationCandidates, pickRelationTarget, selectedRelTarget
         };
       }
     }).mount('#app');
