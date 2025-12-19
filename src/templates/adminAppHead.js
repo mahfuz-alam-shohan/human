@@ -14,6 +14,9 @@ export const ADMIN_APP_HEAD = `
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
   <style>
+    /* Hide Vue templates until mounted to avoid raw mustache flashing */
+    [v-cloak] { display: none !important; }
+
     /* Refined Light Theme */
     :root { 
         --bg-color: #F5F7FB;
